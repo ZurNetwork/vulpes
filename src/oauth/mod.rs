@@ -128,6 +128,12 @@ pub enum AuthError {
     /// raises this; [`Authenticator::with_client`] takes a client you built.
     #[error("failed to build the default HTTP client")]
     HttpClient(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// The redirect URI is not a loopback target. Carries the URI as offered.
+    #[error(
+        "a loopback client's redirect_uri must be http://127.0.0.1 or http://[::1] \
+         (with an optional port and path), got `{0}`"
+    )]
+    NotALoopbackRedirect(String),
 }
 
 /// How to configure the OAuth client.
@@ -151,14 +157,59 @@ pub struct OAuthConfig {
     pub scopes: String,
 }
 
+/// The only two hosts an atproto loopback client may redirect to.
+///
+/// The spec is explicit that these are **IP literals**, not names: `localhost`
+/// is the shape of the `client_id`, while the redirect targets default to
+/// "`http://127.0.0.1/` and `http://[::1]/`"
+/// (<https://atproto.com/specs/oauth>). Compared as written, so an unusual
+/// spelling of the same address (`127.000.000.001`, `[0:0:0:0:0:0:0:1]`) is
+/// refused rather than guessed at — the safe direction for a check whose job is
+/// to keep an authorization code off a host you do not control.
+const LOOPBACK_HOSTS: [&str; 2] = ["127.0.0.1", "[::1]"];
+
 impl OAuthConfig {
     /// A loopback client redirecting to `redirect_uri`, asking for
     /// [`DEFAULT_SCOPES`].
-    pub fn loopback(redirect_uri: Uri<String>) -> Self {
-        Self {
+    ///
+    /// The URI is **validated**: it must be `http` to one of
+    /// [`LOOPBACK_HOSTS`], with an optional port and path and no userinfo. A
+    /// redirect URI is where the authorization **code** is delivered, and
+    /// jacquard derives the loopback `client_id` from this very list — so a
+    /// non-loopback value here is not a typo that fails later, it is a client
+    /// that hands codes to another origin. Rejected at construction.
+    ///
+    /// ```
+    /// # use fluent_uri::Uri;
+    /// # use zurid::oauth::OAuthConfig;
+    /// let ok = Uri::parse("http://127.0.0.1:8080/callback".to_owned()).unwrap();
+    /// assert!(OAuthConfig::loopback(ok).is_ok());
+    ///
+    /// // Not loopback: the code would be delivered to someone else.
+    /// let evil = Uri::parse("http://evil.example.com/callback".to_owned()).unwrap();
+    /// assert!(OAuthConfig::loopback(evil).is_err());
+    /// ```
+    pub fn loopback(redirect_uri: Uri<String>) -> Result<Self, AuthError> {
+        let refuse = || AuthError::NotALoopbackRedirect(redirect_uri.as_str().to_owned());
+
+        if !redirect_uri.scheme().as_str().eq_ignore_ascii_case("http") {
+            return Err(refuse());
+        }
+        let authority = redirect_uri.authority().ok_or_else(refuse)?;
+        // Userinfo is how `http://127.0.0.1@evil.example.com/` reads as
+        // loopback to a human. `host()` already sees through it — this refuses
+        // the shape outright, so nobody has to re-derive that it is safe.
+        if authority.userinfo().is_some() {
+            return Err(refuse());
+        }
+        if !LOOPBACK_HOSTS.contains(&authority.host()) {
+            return Err(refuse());
+        }
+
+        Ok(Self {
             redirect_uri,
             scopes: DEFAULT_SCOPES.to_string(),
-        }
+        })
     }
 
     /// Request `scopes` instead of the default.
@@ -183,7 +234,7 @@ type Client<S> = Arc<OAuthClient<JacquardResolver<reqwest::Client>, JacquardAuth
 /// # async fn run<S: OAuthStateStore + 'static>(store: S, vault: SecretVault)
 /// # -> Result<(), Box<dyn std::error::Error>> {
 /// let redirect = Uri::parse("http://127.0.0.1:8080/callback")?.to_owned();
-/// let auth = Authenticator::new(OAuthConfig::loopback(redirect), store, vault)?;
+/// let auth = Authenticator::new(OAuthConfig::loopback(redirect)?, store, vault)?;
 ///
 /// // Leg 1: send the visitor here. The handle is VALIDATED before it reaches
 /// // the resolver — see this module's SSRF note.
@@ -316,6 +367,52 @@ mod tests {
 
     fn config() -> OAuthConfig {
         OAuthConfig::loopback(redirect_uri("http://127.0.0.1:8080/callback"))
+            .expect("a loopback redirect")
+    }
+
+    // Every loopback shape the spec sanctions: both literals, with and without
+    // a port, with and without a path.
+    #[test]
+    fn a_loopback_redirect_is_accepted() {
+        for uri in [
+            "http://127.0.0.1",
+            "http://127.0.0.1/",
+            "http://127.0.0.1:8080/callback",
+            "http://[::1]",
+            "http://[::1]:8080/callback",
+            "http://127.0.0.1:8080/callback?next=%2Fhome",
+        ] {
+            assert!(
+                OAuthConfig::loopback(redirect_uri(uri)).is_ok(),
+                "`{uri}` is a valid loopback redirect"
+            );
+        }
+    }
+
+    // A redirect URI is where the authorization CODE lands. Anything that is
+    // not literally loopback-over-http is refused — including the shapes that
+    // READ as loopback: a userinfo prefix, a look-alike name, and `localhost`
+    // (which the atproto spec makes the client_id's host, not a redirect host).
+    #[test]
+    fn a_non_loopback_redirect_is_refused() {
+        for uri in [
+            "http://evil.example.com/callback",
+            "http://127.0.0.1@evil.example.com/callback",
+            "http://localhost:8080/callback",
+            "http://127.0.0.1.evil.example.com/callback",
+            "https://127.0.0.1:8080/callback",
+            "http://[::2]:8080/callback",
+            "http://169.254.169.254/callback",
+            "urn:ietf:wg:oauth:2.0:oob",
+        ] {
+            assert!(
+                matches!(
+                    OAuthConfig::loopback(redirect_uri(uri)),
+                    Err(AuthError::NotALoopbackRedirect(_))
+                ),
+                "`{uri}` must not pass as a loopback redirect"
+            );
+        }
     }
 
     // THE SSRF BOUNDARY. jacquard's resolver treats an input beginning

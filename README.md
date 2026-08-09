@@ -122,7 +122,7 @@ versioning. Pick one.
 
 ```rust
 let auth = zurid::oauth::Authenticator::new(
-    zurid::oauth::OAuthConfig::loopback(redirect_uri),
+    zurid::oauth::OAuthConfig::loopback(redirect_uri)?,   // http://127.0.0.1 or http://[::1]
     oauth_state,
     vault,
 )?;
