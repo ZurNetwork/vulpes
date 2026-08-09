@@ -115,3 +115,79 @@ impl MemoryPlcOperationLog {
             .cloned()
     }
 }
+
+/// An in-memory [`OAuthStateStore`](crate::OAuthStateStore), holding the sealed
+/// blobs the OAuth bridge hands it. Only compiled with the `oauth` feature,
+/// which is the only thing that drives it.
+#[cfg(feature = "oauth")]
+#[derive(Default)]
+pub struct MemoryOAuthStateStore {
+    sessions: Mutex<Vec<(SessionKey, Vec<u8>)>>,
+    requests: Mutex<Vec<(String, Vec<u8>)>>,
+}
+
+/// The `(account_did, session_id)` pair an established session is keyed by.
+#[cfg(feature = "oauth")]
+type SessionKey = (String, String);
+
+#[cfg(feature = "oauth")]
+#[async_trait]
+impl crate::OAuthStateStore for MemoryOAuthStateStore {
+    async fn get_session(
+        &self,
+        account_did: &str,
+        session_id: &str,
+    ) -> StorageResult<Option<Vec<u8>>> {
+        let key = (account_did.to_string(), session_id.to_string());
+        let sessions = self.sessions.lock().expect("session lock");
+        Ok(sessions
+            .iter()
+            .find(|(stored, _)| stored == &key)
+            .map(|(_, data)| data.clone()))
+    }
+
+    async fn upsert_session(
+        &self,
+        account_did: &str,
+        session_id: &str,
+        data: &[u8],
+    ) -> StorageResult<()> {
+        let key = (account_did.to_string(), session_id.to_string());
+        let mut sessions = self.sessions.lock().expect("session lock");
+        sessions.retain(|(stored, _)| stored != &key);
+        sessions.push((key, data.to_vec()));
+        Ok(())
+    }
+
+    async fn delete_session(&self, account_did: &str, session_id: &str) -> StorageResult<()> {
+        let key = (account_did.to_string(), session_id.to_string());
+        self.sessions
+            .lock()
+            .expect("session lock")
+            .retain(|(stored, _)| stored != &key);
+        Ok(())
+    }
+
+    async fn get_auth_request(&self, state: &str) -> StorageResult<Option<Vec<u8>>> {
+        let requests = self.requests.lock().expect("request lock");
+        Ok(requests
+            .iter()
+            .find(|(stored, _)| stored == state)
+            .map(|(_, data)| data.clone()))
+    }
+
+    async fn save_auth_request(&self, state: &str, data: &[u8]) -> StorageResult<()> {
+        let mut requests = self.requests.lock().expect("request lock");
+        requests.retain(|(stored, _)| stored != state);
+        requests.push((state.to_string(), data.to_vec()));
+        Ok(())
+    }
+
+    async fn delete_auth_request(&self, state: &str) -> StorageResult<()> {
+        self.requests
+            .lock()
+            .expect("request lock")
+            .retain(|(stored, _)| stored != state);
+        Ok(())
+    }
+}

@@ -17,3 +17,6 @@ mod plc_log;
 
 #[cfg(feature = "minter")]
 mod minter;
+
+#[cfg(feature = "oauth")]
+mod oauth_bridge;
