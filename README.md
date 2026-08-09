@@ -162,6 +162,12 @@ namespace you name — at a real label boundary, so `evil-example.com` is not a
 subdomain of `example.com`. Mount it outside your CSRF and session layers; a
 resolver carries neither.
 
+The authority is read from the request URI (HTTP/2 and HTTP/3 send no `Host`
+header — it rides `:authority`) with the `Host` header as the fallback, so the
+same handle resolves over every protocol version. Because the answer depends on
+the authority rather than the path, every response carries `Vary: Host` and
+`Cache-Control: no-store`.
+
 ---
 
 ## The policy preset

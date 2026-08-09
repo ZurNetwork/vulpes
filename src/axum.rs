@@ -2,11 +2,11 @@
 //! you operate, as a router you can merge into your app.
 //!
 //! A client resolving the handle `alice.example.com` fetches
-//! `https://alice.example.com/.well-known/atproto-did`; the handle arrives in
-//! the `Host` header, and the response is the bare DID as `text/plain`. That is
-//! the HTTPS half of atproto handle resolution — the half you serve when you
-//! issue subdomains of a domain you control, behind one wildcard DNS record and
-//! certificate.
+//! `https://alice.example.com/.well-known/atproto-did`; the handle arrives as
+//! the request's **authority**, and the response is the bare DID as
+//! `text/plain`. That is the HTTPS half of atproto handle resolution — the half
+//! you serve when you issue subdomains of a domain you control, behind one
+//! wildcard DNS record and certificate.
 //!
 //! The route carries no authentication, changes no state, and reads no cookie,
 //! so mount it **outside** any CSRF or session layer — like a health check. A
@@ -15,15 +15,22 @@
 //! ```text
 //! GET /.well-known/atproto-did    Host: alice.example.com
 //! → 200 text/plain  did:plc:ewvi7nxzyoun6zhxrhs64oiz
-//! → 404                            unknown handle, or a Host that is not ours
+//!   Cache-Control: no-store       Vary: Host
+//! → 404                            unknown handle, or an authority that is not ours
 //! ```
+//!
+//! Both ways the authority can arrive are honored: HTTP/1.1's `Host` header and
+//! HTTP/2 and HTTP/3's `:authority` pseudo-header, which hyper surfaces on the
+//! request URI. The response is a function of that authority rather than of the
+//! path — one URL, a different DID per handle — so it carries `Vary: Host` and
+//! `Cache-Control: no-store`.
 
 use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::State,
-    http::{HeaderMap, StatusCode, header},
+    extract::{Request, State},
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -168,23 +175,65 @@ pub fn handle_from_host(host: &str, handle_domain: &HandleDomain) -> Option<Hand
     Handle::try_new(host).ok()
 }
 
-/// `GET /.well-known/atproto-did` — resolve the handle in the `Host` header to
-/// its DID, returned as a bare `text/plain` body.
+/// The authority a request addressed, however the protocol version carried it.
 ///
-/// A `Host` outside the configured namespace, or one no identity holds, is
+/// HTTP/2 and HTTP/3 do **not** send a `Host` header: the authority travels in
+/// the `:authority` pseudo-header, which hyper puts on the request URI. Reading
+/// only `Host` therefore 404s every h2 request — the same handle resolving over
+/// HTTP/1.1 and not over HTTP/2, which is the kind of bug that only shows up
+/// once a load balancer negotiates h2 upstream.
+///
+/// The URI is preferred and the header is the fallback, matching RFC 9113
+/// §8.3.1: where both are present, `:authority` is authoritative.
+fn request_authority(request: &Request) -> Option<&str> {
+    request
+        .uri()
+        .authority()
+        .map(|authority| authority.as_str())
+        .or_else(|| {
+            request
+                .headers()
+                .get(header::HOST)
+                .and_then(|host| host.to_str().ok())
+        })
+}
+
+/// `GET /.well-known/atproto-did` — resolve the handle this request addressed
+/// to its DID, returned as a bare `text/plain` body.
+///
+/// An authority outside the configured namespace, or one no identity holds, is
 /// `404`. A resolver failure is `500`: the request was fine, and the client may
 /// retry.
+///
+/// Every response carries `Cache-Control: no-store` and `Vary: Host`. The body
+/// is a function of the **authority**, not of the path — one URL, a different
+/// answer per handle — so a cache keyed on the path alone would serve one
+/// user's DID for another's handle. `Vary` states the dependency and `no-store`
+/// keeps an identity binding out of shared caches entirely.
 async fn atproto_did<R: HandleResolver + 'static>(
     State(state): State<WellKnownState<R>>,
-    headers: HeaderMap,
+    request: Request,
 ) -> Response {
-    let Some(host) = headers
-        .get(header::HOST)
-        .and_then(|host| host.to_str().ok())
-    else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some(handle) = handle_from_host(host, &state.handle_domain) else {
+    // Parsed to an owned `Handle` before the first await: the request body is
+    // `Send` but not `Sync`, so borrowing the request across one would make this
+    // future non-`Send` and no longer a valid axum handler.
+    let handle = request_authority(&request)
+        .and_then(|authority| handle_from_host(authority, &state.handle_domain));
+
+    let mut response = resolve(&state, handle).await;
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::VARY, HeaderValue::from_static("Host"));
+    response
+}
+
+/// The resolution itself, split out so the cache headers are applied on **every**
+/// path — a hit, a miss and a failure alike — rather than once per `return`.
+async fn resolve<R: HandleResolver + 'static>(
+    state: &WellKnownState<R>,
+    handle: Option<Handle>,
+) -> Response {
+    let Some(handle) = handle else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -203,9 +252,147 @@ async fn atproto_did<R: HandleResolver + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Did, StorageResult};
+    use async_trait::async_trait;
 
     fn domain() -> HandleDomain {
         HandleDomain::try_new("example.com").unwrap()
+    }
+
+    /// A resolver that answers for exactly one handle.
+    struct OneHandle {
+        handle: &'static str,
+        did: &'static str,
+    }
+
+    #[async_trait]
+    impl HandleResolver for OneHandle {
+        async fn did_for_handle(&self, handle: &Handle) -> StorageResult<Option<Did>> {
+            Ok((handle.as_str() == self.handle).then(|| Did::new(self.did)))
+        }
+    }
+
+    fn state() -> WellKnownState<OneHandle> {
+        WellKnownState {
+            resolver: Arc::new(OneHandle {
+                handle: "alice.example.com",
+                did: "did:plc:ewvi7nxzyoun6zhxrhs64oiz",
+            }),
+            handle_domain: domain(),
+        }
+    }
+
+    /// An HTTP/1.1-shaped request: origin-form URI, authority in `Host`.
+    fn http1_request(host: &str) -> Request {
+        Request::builder()
+            .uri(ATPROTO_DID_PATH)
+            .header(header::HOST, host)
+            .body(axum::body::Body::empty())
+            .expect("a valid request")
+    }
+
+    /// An HTTP/2-shaped request: the authority on the URI (where hyper puts
+    /// `:authority`) and **no** `Host` header at all.
+    fn http2_request(authority: &str) -> Request {
+        Request::builder()
+            .uri(format!("https://{authority}{ATPROTO_DID_PATH}"))
+            .body(axum::body::Body::empty())
+            .expect("a valid request")
+    }
+
+    async fn body_text(response: Response) -> String {
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("the body reads");
+        String::from_utf8(bytes.to_vec()).expect("a utf-8 body")
+    }
+
+    #[tokio::test]
+    async fn an_http1_host_header_resolves() {
+        let response = atproto_did(State(state()), http1_request("alice.example.com")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            body_text(response).await,
+            "did:plc:ewvi7nxzyoun6zhxrhs64oiz"
+        );
+    }
+
+    // HTTP/2 and HTTP/3 send NO `Host` header — the authority rides the
+    // `:authority` pseudo-header, which hyper puts on the request URI. Reading
+    // only `Host` would 404 every h2 request, so the same handle would resolve
+    // over HTTP/1.1 and not over HTTP/2.
+    #[tokio::test]
+    async fn an_http2_authority_resolves_without_a_host_header() {
+        let request = http2_request("alice.example.com");
+        assert!(
+            request.headers().get(header::HOST).is_none(),
+            "the h2 shape carries no Host header — that is the point"
+        );
+
+        let response = atproto_did(State(state()), request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            body_text(response).await,
+            "did:plc:ewvi7nxzyoun6zhxrhs64oiz"
+        );
+    }
+
+    // The URI authority wins where both are present (RFC 9113 §8.3.1), so a
+    // spoofed `Host` cannot steer the answer away from the authority the
+    // connection actually addressed.
+    #[tokio::test]
+    async fn the_uri_authority_wins_over_a_conflicting_host_header() {
+        let request = Request::builder()
+            .uri(format!("https://alice.example.com{ATPROTO_DID_PATH}"))
+            .header(header::HOST, "mallory.example.com")
+            .body(axum::body::Body::empty())
+            .expect("a valid request");
+
+        let response = atproto_did(State(state()), request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            body_text(response).await,
+            "did:plc:ewvi7nxzyoun6zhxrhs64oiz"
+        );
+    }
+
+    // The body depends on the AUTHORITY, not the path: one URL, a different DID
+    // per handle. Both headers must be present on every response — including the
+    // 404s, which are just as cacheable a wrong answer.
+    #[tokio::test]
+    async fn every_response_is_uncacheable_and_varies_on_host() {
+        let cases = [
+            http1_request("alice.example.com"),  // 200
+            http1_request("nobody.example.com"), // 404, unknown handle
+            http1_request("alice.other.test"),   // 404, foreign authority
+            Request::builder()
+                .uri(ATPROTO_DID_PATH)
+                .body(axum::body::Body::empty())
+                .expect("a valid request"), // 404, no authority at all
+        ];
+        for request in cases {
+            let response = atproto_did(State(state()), request).await;
+            assert_eq!(
+                response.headers().get(header::CACHE_CONTROL),
+                Some(&HeaderValue::from_static("no-store")),
+            );
+            assert_eq!(
+                response.headers().get(header::VARY),
+                Some(&HeaderValue::from_static("Host")),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unknown_handle_is_404() {
+        let response = atproto_did(State(state()), http1_request("nobody.example.com")).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_foreign_authority_is_404() {
+        let response = atproto_did(State(state()), http2_request("alice.other.test")).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[test]
