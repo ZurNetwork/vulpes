@@ -29,10 +29,47 @@
 //! is what lets a grant survive a deploy, lets `/callback` be served by a
 //! different instance than `/login`, and gives jacquard's refresh machinery a
 //! durable place to write rotated tokens.
+//!
+//! # ⚠ Server-side request forgery: install a guarded connector
+//!
+//! Signing a visitor in is, by construction, **a server making HTTP requests to
+//! a host the visitor named**. That is the shape of an SSRF, and it cannot be
+//! designed away — resolving a handle means talking to that handle's domain.
+//! What can be controlled is how much of the request an attacker steers.
+//!
+//! **What zurid closes.** [`Authenticator::start`] takes a validated
+//! [`Handle`], not a string. A handle's charset is `[a-z0-9-]` plus dots, so it
+//! can never carry a scheme or a path — which makes jacquard's
+//! "an `https://…` input is a PDS/entryway URL, fetch it directly" branch
+//! (`jacquard_oauth::resolver`) **unreachable** through this type. An attacker
+//! cannot hand you `https://169.254.169.254/latest/meta-data/` and have the
+//! server fetch it.
+//!
+//! **What zurid does NOT close.** Once a handle is accepted, jacquard performs
+//! the fetches the protocol requires, and it applies **no host or scheme guard
+//! of its own**:
+//!
+//! - `https://<handle>/.well-known/atproto-did` — the handle's own domain, which
+//!   the visitor chose, and which may resolve to a private address;
+//! - the DID document's `serviceEndpoint` — an arbitrary URL published by
+//!   whoever controls that DID;
+//! - the authorization-server metadata and token endpoints derived from it.
+//!
+//! A DNS name under an attacker's control can point at `127.0.0.1`, at a link-local
+//! metadata service, or at anything else your network reaches — including on a
+//! re-resolve after a check (DNS rebinding).
+//!
+//! **So a security-conscious deployment must supply its own connector** via
+//! [`Authenticator::with_client`]: a `reqwest::Client` whose resolver or
+//! connector refuses private, loopback, link-local and unique-local addresses
+//! (and re-checks on redirect). zurid's default client sets connect and overall
+//! timeouts, which bound the damage; it does **not** filter addresses, because
+//! which ranges are private is a deployment fact this crate cannot know.
 
 mod store;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use fluent_uri::Uri;
 use jacquard::identity::JacquardResolver;
@@ -45,7 +82,7 @@ use jacquard_oauth::{
 };
 use smol_str::SmolStr;
 
-use crate::{Did, OAuthStateStore, SecretVault};
+use crate::{Did, Handle, OAuthStateStore, SecretVault};
 
 pub use store::JacquardAuthStore;
 
@@ -56,6 +93,18 @@ pub use store::JacquardAuthStore;
 /// for what you need and no more — narrower granular scopes exist, and a scope
 /// you request at sign-in is a scope you must justify to the user.
 pub const DEFAULT_SCOPES: &str = "atproto transition:generic";
+
+/// How long the default HTTP client waits to establish a TCP/TLS connection.
+///
+/// Every fetch on the sign-in path targets a host the visitor named, so an
+/// unbounded connect is a request-pinning primitive: point a handle's domain at
+/// a blackholed address and the worker never comes back.
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The default HTTP client's total per-request budget — connect, send, and read
+/// the whole response. Bounds a slow-drip response body just as
+/// [`DEFAULT_CONNECT_TIMEOUT`] bounds a hanging connect.
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Why an OAuth operation failed.
 ///
@@ -75,6 +124,10 @@ pub enum AuthError {
     /// `state`, a failed issuer check, or a failed token exchange.
     #[error("failed to complete the authorization flow")]
     Complete(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// The default HTTP client could not be built. Only [`Authenticator::new`]
+    /// raises this; [`Authenticator::with_client`] takes a client you built.
+    #[error("failed to build the default HTTP client")]
+    HttpClient(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// How to configure the OAuth client.
@@ -125,15 +178,17 @@ type Client<S> = Arc<OAuthClient<JacquardResolver<reqwest::Client>, JacquardAuth
 ///
 /// ```no_run
 /// # use fluent_uri::Uri;
-/// # use zurid::{SecretVault, OAuthStateStore};
+/// # use zurid::{Handle, SecretVault, OAuthStateStore};
 /// # use zurid::oauth::{Authenticator, OAuthConfig};
 /// # async fn run<S: OAuthStateStore + 'static>(store: S, vault: SecretVault)
 /// # -> Result<(), Box<dyn std::error::Error>> {
 /// let redirect = Uri::parse("http://127.0.0.1:8080/callback")?.to_owned();
 /// let auth = Authenticator::new(OAuthConfig::loopback(redirect), store, vault)?;
 ///
-/// // Leg 1: send the visitor here.
-/// let authorize_url = auth.start("alice.example.com").await?;
+/// // Leg 1: send the visitor here. The handle is VALIDATED before it reaches
+/// // the resolver — see this module's SSRF note.
+/// let handle = Handle::try_new("alice.example.com")?;
+/// let authorize_url = auth.start(&handle).await?;
 ///
 /// // Leg 2: at your redirect endpoint, with the query parameters it carried.
 /// let did = auth.complete("the-code".into(), Some("the-state".into()), None).await?;
@@ -146,8 +201,38 @@ pub struct Authenticator<S: OAuthStateStore + 'static> {
 
 impl<S: OAuthStateStore + 'static> Authenticator<S> {
     /// Build the authenticator over `store` (where the handshake's state lands)
-    /// and `vault` (which seals it before it gets there).
+    /// and `vault` (which seals it before it gets there), driving a default
+    /// `reqwest` client with [`DEFAULT_CONNECT_TIMEOUT`] and
+    /// [`DEFAULT_REQUEST_TIMEOUT`].
+    ///
+    /// **That default client filters no addresses.** Every deployment holding
+    /// real identities should build its own SSRF-guarded client and pass it to
+    /// [`with_client`](Authenticator::with_client) instead — see this module's
+    /// SSRF note for what the handle boundary does and does not close.
     pub fn new(config: OAuthConfig, store: S, vault: SecretVault) -> Result<Self, AuthError> {
+        let client = reqwest::Client::builder()
+            .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
+            .timeout(DEFAULT_REQUEST_TIMEOUT)
+            .build()
+            .map_err(|err| AuthError::HttpClient(Box::new(err)))?;
+        Self::with_client(config, store, vault, client)
+    }
+
+    /// Build the authenticator over an HTTP `client` you already configured —
+    /// the seam an **SSRF-guarded connector** is installed through, and the
+    /// place to set your own timeouts, proxy or connection pool.
+    ///
+    /// Mirrors [`HttpPlcDirectory::with_client`](crate::HttpPlcDirectory::with_client).
+    /// jacquard performs the handle, DID-document and authorization-server
+    /// fetches through this client and applies no host or scheme guard of its
+    /// own, so a client that refuses private, loopback and link-local
+    /// destinations is the only place that guard can live.
+    pub fn with_client(
+        config: OAuthConfig,
+        store: S,
+        vault: SecretVault,
+        client: reqwest::Client,
+    ) -> Result<Self, AuthError> {
         let scopes = Scopes::new(SmolStr::new(&config.scopes))
             .map_err(|err| AuthError::InvalidScopes(err.to_string()))?
             .convert();
@@ -158,7 +243,7 @@ impl<S: OAuthStateStore + 'static> Authenticator<S> {
             config: metadata,
         };
         let auth_store = JacquardAuthStore::new(store, vault);
-        let oauth = OAuthClient::new(auth_store, client_data, reqwest::Client::new());
+        let oauth = OAuthClient::new(auth_store, client_data, client);
         Ok(Self {
             oauth: Arc::new(oauth),
         })
@@ -168,10 +253,19 @@ impl<S: OAuthStateStore + 'static> Authenticator<S> {
     /// Request (minting and persisting the PKCE verifier and DPoP key against
     /// the OAuth `state`), and return the URL to send the visitor to.
     ///
+    /// Takes a **validated** [`Handle`] rather than a string on purpose: the
+    /// resolver treats an input beginning `https://` as a service URL to fetch
+    /// directly, and a `Handle` cannot spell one. Converting at this boundary is
+    /// what makes that branch unreachable — see the module's SSRF note for the
+    /// fetches it does *not* close.
+    ///
     /// Errors if the handle cannot be resolved or the PDS is unreachable.
-    pub async fn start(&self, handle: &str) -> Result<String, AuthError> {
+    pub async fn start(&self, handle: &Handle) -> Result<String, AuthError> {
         self.oauth
-            .start_auth(handle, AuthorizeOptions::<jacquard::DefaultStr>::default())
+            .start_auth(
+                handle.as_str(),
+                AuthorizeOptions::<jacquard::DefaultStr>::default(),
+            )
             .await
             .map_err(|err| AuthError::Start(Box::new(err)))
     }
@@ -204,5 +298,74 @@ impl<S: OAuthStateStore + 'static> Authenticator<S> {
             .map_err(|err| AuthError::Complete(Box::new(err)))?;
         let account_did = session.data.read().await.account_did.clone();
         Ok(Did::new(account_did.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::MemoryOAuthStateStore;
+
+    fn vault() -> SecretVault {
+        SecretVault::from_bytes(&[7u8; crate::ROOT_KEY_LEN]).expect("a 32-byte test root key")
+    }
+
+    fn redirect_uri(raw: &str) -> Uri<String> {
+        Uri::parse(raw.to_owned()).expect("a valid redirect uri")
+    }
+
+    fn config() -> OAuthConfig {
+        OAuthConfig::loopback(redirect_uri("http://127.0.0.1:8080/callback"))
+    }
+
+    // THE SSRF BOUNDARY. jacquard's resolver treats an input beginning
+    // `https://` as a service URL and fetches it DIRECTLY — an attacker-chosen
+    // URL the server would then request. `start` takes a `Handle`, and no
+    // `https://…` string survives handle validation, so that branch cannot be
+    // reached through this API. Every shape of it is refused here.
+    #[test]
+    fn an_https_url_can_never_become_a_handle() {
+        for url in [
+            "https://169.254.169.254/latest/meta-data/",
+            "https://127.0.0.1:8080/",
+            "https://example.com",
+            "HTTPS://EXAMPLE.COM",
+            "https://alice.example.com",
+        ] {
+            assert!(
+                Handle::try_new(url).is_err(),
+                "`{url}` must not validate as a handle — it would reach jacquard's \
+                 fetch-this-service-URL branch"
+            );
+        }
+    }
+
+    // The default client is built with both timeouts, so a handle pointed at a
+    // blackholed address cannot pin a worker forever.
+    #[test]
+    fn the_default_authenticator_builds() {
+        Authenticator::new(config(), MemoryOAuthStateStore::default(), vault())
+            .expect("the default authenticator builds");
+    }
+
+    // `with_client` is the seam an SSRF-guarded connector is installed through:
+    // a caller-built client must be accepted and drive the handshake.
+    #[test]
+    fn with_client_accepts_a_caller_supplied_client() {
+        let guarded = reqwest::Client::builder()
+            .connect_timeout(Duration::from_millis(250))
+            .build()
+            .expect("a caller-configured client");
+        Authenticator::with_client(config(), MemoryOAuthStateStore::default(), vault(), guarded)
+            .expect("a caller-supplied client is accepted");
+    }
+
+    #[test]
+    fn invalid_scopes_are_refused_at_construction() {
+        let config = config().with_scopes("not a valid scope\u{7f}");
+        assert!(matches!(
+            Authenticator::new(config, MemoryOAuthStateStore::default(), vault()),
+            Err(AuthError::InvalidScopes(_))
+        ));
     }
 }

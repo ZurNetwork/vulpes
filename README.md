@@ -127,13 +127,28 @@ let auth = zurid::oauth::Authenticator::new(
     vault,
 )?;
 
-let url = auth.start("alice.example.com").await?;                      // redirect here
+let handle = Handle::try_new("alice.example.com")?;
+let url = auth.start(&handle).await?;                                  // redirect here
 let did = auth.complete(code, state, iss).await?;                      // at your callback
 ```
 
 `jacquard` does the protocol; zurid makes its state durable *and* encrypted, and
 keeps the protocol library behind one seam. Currently builds a loopback client —
 see [FORKS.md](FORKS.md) F13.
+
+> **⚠ SSRF: install a guarded connector.** `start` takes a validated `Handle`,
+> never a string, so an attacker cannot pass `https://169.254.169.254/…` and
+> reach the resolver's "this input is a service URL, fetch it" branch. That is
+> the only part zurid closes. Once a handle is accepted, `jacquard` fetches
+> `https://<handle>/.well-known/atproto-did`, then whatever `serviceEndpoint`
+> the DID document names — **with no host or scheme guard of its own**, on names
+> the visitor controls and which may resolve to a loopback or link-local address
+> (including on a re-resolve, i.e. DNS rebinding). zurid's default client sets
+> connect and request timeouts but filters no addresses. Supply your own via
+> `Authenticator::with_client(config, store, vault, client)` — a `reqwest::Client`
+> whose connector refuses private, loopback, link-local and unique-local
+> destinations. Which ranges are private is a deployment fact this crate cannot
+> know, so it does not guess.
 
 ### `axum` — serving handle resolution
 

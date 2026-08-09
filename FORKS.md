@@ -48,6 +48,29 @@ believes they control). That is a domain call, so the conservative behaviour
 ships and the permissive one sits behind an `#[ignore]`d test with a TODO. Un-ignore it
 to adopt the alternative.
 
+### F29. `Authenticator::start` takes a `Handle`, and the connector is the caller's
+
+**Where:** `src/oauth/mod.rs`, `Authenticator::{start, with_client}`.
+
+The source passes the raw login string straight to jacquard. jacquard's resolver
+treats an input beginning `https://` as a PDS/entryway URL and **fetches it
+directly**, so a raw string is an attacker-steered outbound request — the
+classic SSRF shape. `start` therefore takes a validated `Handle`: a handle's
+charset (`[a-z0-9-]` plus dots) cannot spell a scheme, so that branch is
+unreachable by construction rather than by a check that can be forgotten.
+
+That closes the *input*, not the *fetches the protocol requires*. jacquard still
+resolves `https://<handle>/.well-known/atproto-did` and then whatever
+`serviceEndpoint` the DID document names, with no host or scheme guard of its
+own. `Authenticator::with_client` was added (mirroring
+`HttpPlcDirectory::with_client`) so a deployment can install an SSRF-guarded
+connector; the default client sets connect and request timeouts but deliberately
+filters no addresses, because which ranges are private is a deployment fact.
+Documented prominently on the module and in the README.
+
+Consumption impact: `auth.start(&handle)` instead of `auth.start(&str)` — the
+call site almost always already has a `Handle`.
+
 ### F13. OAuth clients are loopback-only
 
 **Where:** `src/oauth/mod.rs`, `OAuthConfig`.
