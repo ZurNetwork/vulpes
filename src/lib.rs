@@ -33,6 +33,37 @@
 //! | `postgres` | [`postgres`] — sqlx stores plus the migration SQL |
 //! | `axum` | [`axum`] — the handle-resolution route |
 //!
+//! # Quickstart
+//!
+//! ```no_run
+//! # #[cfg(feature = "minter")]
+//! # async fn run(
+//! #     keys: std::sync::Arc<dyn zurid::KeyStore>,
+//! #     log: std::sync::Arc<dyn zurid::PlcOperationLog>,
+//! # ) -> Result<(), Box<dyn std::error::Error>> {
+//! use std::sync::Arc;
+//! use zurid::{Handle, MintPolicy, Minter, NoopPlcDirectory};
+//!
+//! // `keys` and `log` are your storage; with the `postgres` feature they are
+//! // `PgKeyStore` and `PgPlcOperationLog`, both built from an `sqlx::PgPool`.
+//! let minter = Minter::new(
+//!     keys,
+//!     log,
+//!     Arc::new(NoopPlcDirectory), // swap for `HttpPlcDirectory::canonical()` to register
+//!     MintPolicy::identity_only(),
+//! )?;
+//!
+//! let handle = Handle::try_new("alice.example.com")?;
+//! let did = minter.mint(&handle).await?;
+//! println!("minted {did}");
+//!
+//! // Later: re-point the handle, or retire the identity.
+//! minter.update_handle(&did, &Handle::try_new("alice.example.org")?).await?;
+//! minter.tombstone(&did).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Security posture
 //!
 //! Read [`SecretVault`]'s module documentation before deploying: zurid encrypts
@@ -59,6 +90,12 @@ mod vault;
 
 pub mod plc;
 
+#[cfg(test)]
+mod memory;
+
+#[cfg(feature = "minter")]
+mod minter;
+
 pub use did::{Did, DidError};
 pub use directory::{CANONICAL_DIRECTORY, NoopPlcDirectory, PlcDirectory};
 pub use error::{DirectoryError, DirectoryResult, StorageError, StorageResult};
@@ -72,3 +109,5 @@ pub use vault::{ROOT_KEY_LEN, SecretVault, VaultError};
 
 #[cfg(feature = "directory")]
 pub use directory::HttpPlcDirectory;
+#[cfg(feature = "minter")]
+pub use minter::{MintError, Minter};
