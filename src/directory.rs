@@ -11,6 +11,9 @@
 //!
 //! Spec: <https://web.plc.directory/spec/v0.1/did-plc>.
 
+#[cfg(feature = "directory")]
+use std::time::Duration;
+
 use async_trait::async_trait;
 
 use crate::DirectoryResult;
@@ -23,6 +26,11 @@ use crate::DirectoryResult;
 #[async_trait]
 pub trait PlcDirectory: Send + Sync {
     /// Submit `operation` (its JSON body) registering or updating `did`.
+    ///
+    /// `did` is a `&str` and [`Did::new`](crate::Did::new) validates nothing, so
+    /// an implementation that puts it in a URL, a path or a shell command must
+    /// **validate or escape it first** — see [`HttpPlcDirectory`], which parses
+    /// it against the W3C DID ABNF before interpolating.
     async fn submit(&self, did: &str, operation: &serde_json::Value) -> DirectoryResult<()>;
 }
 
@@ -47,6 +55,21 @@ impl PlcDirectory for NoopPlcDirectory {
 /// The canonical PLC directory.
 pub const CANONICAL_DIRECTORY: &str = "https://plc.directory";
 
+/// How long [`HttpPlcDirectory`]'s default client waits to establish a
+/// connection.
+#[cfg(feature = "directory")]
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The default client's total per-submission budget — connect, send, and read
+/// the response.
+///
+/// A submission sits in the middle of minting: `mint` has already written
+/// custody and logged the genesis when it calls this, and `update_handle` and
+/// `tombstone` block their log write on it. Without a timeout, one unresponsive
+/// directory pins those tasks indefinitely.
+#[cfg(feature = "directory")]
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// The real submitter: `POST {base_url}/{did}` with the signed operation as
 /// JSON.
 ///
@@ -63,15 +86,21 @@ pub struct HttpPlcDirectory {
 #[cfg(feature = "directory")]
 impl HttpPlcDirectory {
     /// Build a submitter targeting `base_url` (any trailing slash is trimmed, so
-    /// the request path is a single-slashed `/{did}`).
+    /// the request path is a single-slashed `/{did}`), over a client with
+    /// [`DEFAULT_CONNECT_TIMEOUT`] and [`DEFAULT_REQUEST_TIMEOUT`].
+    ///
+    /// Falls back to `reqwest`'s own defaults if the client cannot be built —
+    /// which in practice means the TLS backend failed to initialize, and the
+    /// first submission is going to fail anyway. Refusing to construct here
+    /// would trade a clear submission error for an obscure one at boot; use
+    /// [`with_client`](HttpPlcDirectory::with_client) when you want to see that
+    /// failure yourself.
     pub fn new(base_url: impl Into<String>) -> Self {
-        Self {
-            base_url: base_url.into().trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
-        }
+        Self::with_client(base_url, default_client())
     }
 
-    /// Build a submitter targeting [`CANONICAL_DIRECTORY`].
+    /// Build a submitter targeting [`CANONICAL_DIRECTORY`], with the same
+    /// default timeouts as [`new`](HttpPlcDirectory::new).
     pub fn canonical() -> Self {
         Self::new(CANONICAL_DIRECTORY)
     }
@@ -86,10 +115,32 @@ impl HttpPlcDirectory {
     }
 }
 
+/// The timeout-bearing client [`HttpPlcDirectory::new`] uses when the caller
+/// supplies none.
+#[cfg(feature = "directory")]
+fn default_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
+        .timeout(DEFAULT_REQUEST_TIMEOUT)
+        .build()
+        .unwrap_or_default()
+}
+
 #[cfg(feature = "directory")]
 #[async_trait]
 impl PlcDirectory for HttpPlcDirectory {
     async fn submit(&self, did: &str, operation: &serde_json::Value) -> DirectoryResult<()> {
+        // The DID is interpolated straight into a URL path, so it is validated
+        // against the W3C DID ABNF FIRST. `Did::new` performs no validation and
+        // the trait takes a `&str`, so without this a caller could hand over
+        // `../../admin` or `x?query=` and steer the request off the endpoint
+        // entirely. The ABNF's `idchar` set (ALPHA / DIGIT / `.` / `-` / `_` /
+        // `%HH`) plus `:` is already URL-path-safe — a `/`, `?` or `#` cannot
+        // survive the parse — so a value that passes needs no further escaping,
+        // and one that fails was never a DID a directory would accept.
+        let did = crate::Did::parse(did).map_err(crate::DirectoryError::new)?;
+        let did = did.as_str();
+
         let url = format!("{}/{}", self.base_url, did);
         let response = self
             .client
@@ -157,6 +208,32 @@ mod tests {
             line.starts_with("POST /did:plc:x "),
             "path must be single-slashed `/did:plc:x`, got request line: {line:?}"
         );
+    }
+
+    // The DID lands in a URL PATH. `Did::new` validates nothing and the trait
+    // takes a `&str`, so a caller can offer anything; a value that would escape
+    // the `{base}/{did}` shape — a path traversal, a query or fragment, a whole
+    // second URL — must be refused BEFORE a request is built. No listener is
+    // started here on purpose: reaching the network at all would be the bug.
+    #[tokio::test]
+    async fn a_did_that_is_not_a_did_never_becomes_a_url() {
+        let directory = HttpPlcDirectory::new("http://127.0.0.1:1/");
+        for hostile in [
+            "../../admin",
+            "did:plc:x/../../admin",
+            "did:plc:x?force=1",
+            "did:plc:x#frag",
+            "https://evil.example.com/",
+            "did:plc:x evil",
+            "",
+            "not-a-did",
+        ] {
+            let result = directory.submit(hostile, &serde_json::json!({})).await;
+            assert!(
+                result.is_err(),
+                "`{hostile}` must be refused before a request is built"
+            );
+        }
     }
 
     // The no-op directory accepts anything without touching the network — the
