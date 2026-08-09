@@ -14,6 +14,7 @@
 //! the directory's recovery window. Which role sits where is
 //! [policy](crate::MintPolicy), not a hard-coded fact.
 
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{Did, SecretVault, VaultError};
@@ -25,15 +26,33 @@ pub const SECRET_KEY_LEN: usize = 32;
 /// form `atrium_crypto`'s keypair `export`/`import` round-trips).
 ///
 /// Zeroized on drop; its [`Debug`] is redacted so key material can never reach a
-/// log line.
+/// log line; and its [`PartialEq`] is **constant-time** (see the impl).
 ///
 /// ```
 /// # use zurid::SecretKey;
 /// let key = SecretKey::new(vec![0xAB; 32]);
 /// assert_eq!(format!("{key:?}"), "SecretKey(<redacted>)");
 /// ```
-#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct SecretKey(Vec<u8>);
+
+/// Constant-time, on purpose.
+///
+/// The derived `PartialEq` compares `Vec<u8>` byte by byte and **returns at the
+/// first difference**, so how long a comparison takes says how many leading
+/// bytes of the key the other operand got right. Anywhere an attacker can
+/// propose a key and time the answer, that turns a 2²⁵⁶ search into a
+/// byte-at-a-time one. `subtle`'s `ct_eq` looks at every byte regardless.
+///
+/// Length is compared first and in the clear: a private scalar's length is
+/// public (32 bytes), so it is not a secret to leak.
+impl PartialEq for SecretKey {
+    fn eq(&self, other: &Self) -> bool {
+        bool::from(self.0.ct_eq(&other.0))
+    }
+}
+
+impl Eq for SecretKey {}
 
 impl SecretKey {
     /// Wrap raw private-key bytes. No validation: the bytes come from a trusted
@@ -205,6 +224,29 @@ mod tests {
         let shown = format!("{:?}", keys());
         assert_eq!(shown.matches("<redacted>").count(), 3);
         assert!(!shown.contains("[170, 170"));
+    }
+
+    // Equality still means equality — the constant-time comparison must agree
+    // with the obvious one on every case that matters, including a difference
+    // in the LAST byte (which a short-circuiting compare would reach late) and
+    // one in the FIRST (which it would reach immediately).
+    #[test]
+    fn secret_key_equality_is_exact() {
+        let key = SecretKey::new(vec![0xAB; SECRET_KEY_LEN]);
+        assert_eq!(key, SecretKey::new(vec![0xAB; SECRET_KEY_LEN]));
+
+        let mut last_differs = vec![0xAB; SECRET_KEY_LEN];
+        last_differs[SECRET_KEY_LEN - 1] = 0xAC;
+        assert_ne!(key, SecretKey::new(last_differs));
+
+        let mut first_differs = vec![0xAB; SECRET_KEY_LEN];
+        first_differs[0] = 0xAC;
+        assert_ne!(key, SecretKey::new(first_differs));
+
+        // A length mismatch is not equality either. Lengths are public (a
+        // scalar is 32 bytes), so comparing them in the clear leaks nothing.
+        assert_ne!(key, SecretKey::new(vec![0xAB; SECRET_KEY_LEN - 1]));
+        assert_ne!(key, SecretKey::new(Vec::new()));
     }
 
     #[test]

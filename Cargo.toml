@@ -51,6 +51,8 @@ data-encoding = "2"
 chacha20poly1305 = "0.10"
 # Wipe secret material from memory on drop.
 zeroize = { version = "1", features = ["derive"] }
+# Constant-time equality over private key bytes — see `SecretKey`'s `PartialEq`.
+subtle = "2"
 
 # --- minter ---
 # secp256k1 keygen + atproto-canonical ECDSA-SHA256 sign (low-S, 64-byte r‖s) +
