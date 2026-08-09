@@ -24,6 +24,18 @@
 //! # }
 //! ```
 //!
+//! # A name collision fails loudly
+//!
+//! The DDL is plain `CREATE TABLE` / `CREATE SCHEMA`, **not**
+//! `… IF NOT EXISTS`. zurid's names are unprefixed and could collide with a
+//! table you already own (see `FORKS.md` F9), and `IF NOT EXISTS` would turn
+//! that collision into a *success*: the migration would be recorded as applied
+//! having created nothing, zurid would then read and write a schema it does not
+//! control, and no later `migrate` would ever create the real table. Each
+//! migration runs in a transaction, so a collision instead fails the call,
+//! records nothing, and leaves your table untouched — recoverable by renaming
+//! one side, which the silent version is not.
+//!
 //! The migrations are embedded by a build script rather than by `sqlx::migrate!`
 //! — see `build.rs` for why (in short: so zurid never turns on sqlx's `macros`
 //! feature in your build).

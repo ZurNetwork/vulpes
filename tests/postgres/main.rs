@@ -12,6 +12,7 @@
 mod pg;
 
 mod key_store;
+mod migrations;
 mod oauth_state;
 mod plc_log;
 

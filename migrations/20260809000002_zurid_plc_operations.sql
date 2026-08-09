@@ -24,7 +24,7 @@
 --            it never contains private key material (only public keys, handles,
 --            and a signature).
 -- created_at When the operation was logged. Application-supplied.
-CREATE TABLE IF NOT EXISTS plc_operations (
+CREATE TABLE plc_operations (
     seq        bigserial   PRIMARY KEY,
     did        text        NOT NULL,
     cid        text        NOT NULL UNIQUE,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS plc_operations (
 
 -- The hot path is "the DID's most recent operation" (the `prev` for the next
 -- one): filter by did, take the highest seq.
-CREATE INDEX IF NOT EXISTS plc_operations_did_seq ON plc_operations (did, seq DESC);
+CREATE INDEX plc_operations_did_seq ON plc_operations (did, seq DESC);
 
 -- NO CHAIN FORK. A minted did:plc is a strictly LINEAR chain: every non-genesis
 -- operation chains onto exactly one `prev`, and a given operation may be chained
@@ -61,6 +61,6 @@ CREATE INDEX IF NOT EXISTS plc_operations_did_seq ON plc_operations (did, seq DE
 -- Scoped `WHERE prev IS NOT NULL`: a genesis operation has `prev = NULL` and is
 -- already one-per-DID by construction (its hash defines the DID), and PostgreSQL
 -- treats NULLs as distinct, so genesis rows are correctly exempt.
-CREATE UNIQUE INDEX IF NOT EXISTS plc_operations_did_prev_unique
+CREATE UNIQUE INDEX plc_operations_did_prev_unique
     ON plc_operations (did, prev)
     WHERE prev IS NOT NULL;

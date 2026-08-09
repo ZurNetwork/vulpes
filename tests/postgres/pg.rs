@@ -77,8 +77,30 @@ pub async fn fresh_pool() -> (PgPool, TestDb) {
     (pool, db)
 }
 
+/// An **empty** private database plus a pool on it — zurid's migrations have
+/// **not** been run.
+///
+/// The migration set itself is what a test using this is examining: that it
+/// applies from scratch, and that it refuses to run onto a schema that already
+/// holds one of its names.
+#[allow(dead_code)]
+pub async fn fresh_unmigrated_pool() -> (PgPool, TestDb) {
+    let db = create_named_db(None).await;
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&db.url)
+        .await
+        .expect("the test pool connects");
+    (pool, db)
+}
+
 /// Clone the migrated template into a uniquely-named database for one test.
 async fn create_db() -> TestDb {
+    create_named_db(Some(TEMPLATE)).await
+}
+
+/// A uniquely-named database, cloned from `template` or empty when `None`.
+async fn create_named_db(template: Option<&str>) -> TestDb {
     let shared = shared().await;
     let name = format!("t_{}", uuid::Uuid::now_v7().simple());
     {
@@ -88,8 +110,11 @@ async fn create_db() -> TestDb {
             .expect("an admin connection for the clone");
         // Identifiers cannot be bind parameters; every part here is
         // harness-generated (a uuid and a constant), never external input.
+        let from = template
+            .map(|template| format!(r#" TEMPLATE "{template}""#))
+            .unwrap_or_default();
         sqlx::query(sqlx::AssertSqlSafe(format!(
-            r#"CREATE DATABASE "{name}" TEMPLATE "{TEMPLATE}""#
+            r#"CREATE DATABASE "{name}"{from}"#
         )))
         .execute(&mut admin)
         .await

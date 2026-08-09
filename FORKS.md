@@ -252,6 +252,14 @@ Consequence for other consumers: the names are unprefixed and could collide.
 Documented rather than solved; making them configurable is not worth the
 machinery.
 
+The DDL is therefore plain `CREATE TABLE` / `CREATE SCHEMA`, not
+`… IF NOT EXISTS`. With `IF NOT EXISTS` a collision would be recorded as a
+successful migration that created nothing — after which zurid reads and writes a
+table it does not control and no later `migrate` ever creates the real one.
+Each migration runs in a transaction, so the collision instead fails the call,
+records nothing, and leaves the consumer's table untouched. Loud and recoverable
+beats silent and permanent.
+
 ### F10. Three migrations, renumbered, with the fork index folded in
 
 The source has four relevant migrations across two crates, one of which is a

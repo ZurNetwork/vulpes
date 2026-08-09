@@ -10,12 +10,12 @@
 --
 -- The blobs are opaque to SQL by design: zurid's OAuth layer serializes and
 -- seals them, so this schema stores bytes and never sees a token.
-CREATE SCHEMA IF NOT EXISTS atproto_oauth;
+CREATE SCHEMA atproto_oauth;
 
 -- Established OAuth sessions: the token set and DPoP key, keyed by account DID +
 -- session id. Persisting these lets the upstream grant and the refresh machinery
 -- survive a restart or a move between replicas.
-CREATE TABLE IF NOT EXISTS atproto_oauth.client_session (
+CREATE TABLE atproto_oauth.client_session (
     account_did text        NOT NULL,
     session_id  text        NOT NULL,
     data        bytea       NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS atproto_oauth.client_session (
 -- created_at is load-bearing, not bookkeeping: the read refuses any row older
 -- than the store's TTL (so a sign-in that was started and abandoned cannot be
 -- completed days later), and `PgOAuthStateStore::prune_expired` sweeps them.
-CREATE TABLE IF NOT EXISTS atproto_oauth.auth_request (
+CREATE TABLE atproto_oauth.auth_request (
     state      text        PRIMARY KEY NOT NULL,
     data       bytea       NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
@@ -40,5 +40,5 @@ CREATE TABLE IF NOT EXISTS atproto_oauth.auth_request (
 -- The prune filters on created_at and nothing else, so without this index it is
 -- a sequential scan of the whole table — which is exactly the shape that makes
 -- an operator quietly stop running the sweep.
-CREATE INDEX IF NOT EXISTS atproto_oauth_auth_request_created_at
+CREATE INDEX atproto_oauth_auth_request_created_at
     ON atproto_oauth.auth_request (created_at);

@@ -23,7 +23,7 @@
 --               re-wrapped under a new root key (or a KMS) later without a
 --               data-migration guess.
 -- created_at    When custody was taken. Application-supplied (no DEFAULT now()).
-CREATE TABLE IF NOT EXISTS account_keys (
+CREATE TABLE account_keys (
     did          text        PRIMARY KEY,
     wrapped_keys bytea       NOT NULL,
     key_version  integer     NOT NULL DEFAULT 1,

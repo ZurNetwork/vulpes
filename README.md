@@ -118,6 +118,13 @@ The migrations ship two ways: embedded (call `migrate`) or as files under
 `migrations/`, to copy into your own directory if you would rather own the
 versioning. Pick one.
 
+The DDL is plain `CREATE TABLE`, not `CREATE TABLE IF NOT EXISTS`: zurid's names
+are unprefixed and could collide with a table you already own, and `IF NOT
+EXISTS` would record that collision as a *successful* migration that created
+nothing — after which zurid reads and writes a schema it does not control. Each
+migration runs in a transaction, so a collision fails the call, records nothing,
+and leaves your table untouched.
+
 ### `oauth` — sign-in over atproto
 
 ```rust
