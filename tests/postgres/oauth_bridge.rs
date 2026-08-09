@@ -177,6 +177,43 @@ async fn an_auth_request_saves_gets_and_deletes() {
     );
 }
 
+/// The callback path end to end: the sealed record decodes on the FIRST read and
+/// is consumed by it, so a second callback replaying the same `state` — the
+/// racing-callback case jacquard's get-then-delete leaves open — finds nothing
+/// rather than a second copy of the PKCE verifier and DPoP key.
+#[tokio::test]
+async fn an_auth_request_is_single_use_through_the_bridge() {
+    let (bridge, _pool, _db) = fresh_bridge().await;
+    let request = auth_request("state-race");
+    bridge.save_auth_req_info(&request).await.expect("save");
+
+    let first = bridge
+        .get_auth_req_info("state-race")
+        .await
+        .expect("get")
+        .expect("the first callback gets the record");
+    assert_eq!(
+        first, request,
+        "consuming the row must not cost the exact round-trip"
+    );
+
+    assert!(
+        bridge
+            .get_auth_req_info("state-race")
+            .await
+            .expect("get")
+            .is_none(),
+        "a replayed callback must find the request already consumed"
+    );
+
+    // jacquard deletes right after its get; against a consumed row that is a
+    // no-op and must not error, or the callback fails after a good login.
+    bridge
+        .delete_auth_req_info("state-race")
+        .await
+        .expect("the follow-up delete stays a no-op");
+}
+
 #[tokio::test]
 async fn a_missing_session_reads_as_none() {
     let (bridge, _pool, _db) = fresh_bridge().await;

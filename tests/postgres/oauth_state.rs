@@ -97,12 +97,57 @@ async fn an_auth_request_saves_reads_and_deletes() {
         Some(b"sealed-request".as_slice())
     );
 
-    // The callback consumes the in-flight request once it has been used.
+    // The read above already consumed the row (see
+    // `reading_an_auth_request_consumes_it`); jacquard's follow-up delete must
+    // still succeed against an absent row rather than erroring.
     store.delete_auth_request("state-xyz").await.unwrap();
     assert!(
         store.get_auth_request("state-xyz").await.unwrap().is_none(),
-        "the auth request is gone after delete"
+        "the auth request is gone"
     );
+}
+
+// SINGLE USE. The read CONSUMES the row, atomically: the blob holds one
+// authorization's PKCE verifier and DPoP key, and jacquard's callback does a get
+// followed by a SEPARATE delete — a window in which two callbacks carrying the
+// same `state` would both come away with it. A second read must see nothing.
+#[tokio::test]
+async fn reading_an_auth_request_consumes_it() {
+    let (pool, _db) = fresh_pool().await;
+    let store = PgOAuthStateStore::new(pool.clone());
+
+    store
+        .save_auth_request("state-once", b"sealed-request")
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_auth_request("state-once")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(b"sealed-request".as_slice()),
+        "the first read gets the blob"
+    );
+    assert!(
+        store
+            .get_auth_request("state-once")
+            .await
+            .unwrap()
+            .is_none(),
+        "the read consumed the row — a replay must find nothing"
+    );
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM atproto_oauth.auth_request WHERE state = $1")
+            .bind("state-once")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0, "the row is gone, not merely hidden");
+
+    // The follow-up delete jacquard issues must stay a harmless no-op.
+    store.delete_auth_request("state-once").await.unwrap();
 }
 
 // A re-issued `state` overwrites rather than erroring, so a retried sign-in does

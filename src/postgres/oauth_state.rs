@@ -68,6 +68,14 @@ impl OAuthStateStore for PgOAuthStateStore {
         Ok(())
     }
 
+    /// Read the in-flight request **and delete it**, in one `DELETE … RETURNING`.
+    ///
+    /// Single-use atomically, per the [trait's
+    /// contract](OAuthStateStore::get_auth_request): jacquard's callback does a
+    /// get and then a separate delete, so a plain `SELECT` would let two
+    /// concurrent callbacks bearing the same `state` both walk away with the
+    /// PKCE verifier and DPoP key. PostgreSQL serializes the row lock, so
+    /// exactly one caller sees the row.
     async fn get_auth_request(&self, state: &str) -> StorageResult<Option<Vec<u8>>> {
         sqlx::query_scalar(include_str!(
             "../../queries/oauth_state/get_auth_request.sql"

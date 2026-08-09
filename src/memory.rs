@@ -168,12 +168,13 @@ impl crate::OAuthStateStore for MemoryOAuthStateStore {
         Ok(())
     }
 
+    /// Single-use, as the trait's contract requires: the read **removes** the
+    /// entry under the same lock, so two concurrent callbacks bearing one
+    /// `state` cannot both come away with the PKCE verifier.
     async fn get_auth_request(&self, state: &str) -> StorageResult<Option<Vec<u8>>> {
-        let requests = self.requests.lock().expect("request lock");
-        Ok(requests
-            .iter()
-            .find(|(stored, _)| stored == state)
-            .map(|(_, data)| data.clone()))
+        let mut requests = self.requests.lock().expect("request lock");
+        let found = requests.iter().position(|(stored, _)| stored == state);
+        Ok(found.map(|index| requests.swap_remove(index).1))
     }
 
     async fn save_auth_request(&self, state: &str, data: &[u8]) -> StorageResult<()> {

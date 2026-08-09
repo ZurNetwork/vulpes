@@ -146,13 +146,34 @@ pub trait OAuthStateStore: Send + Sync {
     /// called when refresh fails permanently.
     async fn delete_session(&self, account_did: &str, session_id: &str) -> StorageResult<()>;
 
-    /// Read an in-flight authorization request's sealed blob by its `state`.
+    /// Read an in-flight authorization request's sealed blob by its `state`,
+    /// **consuming it**.
+    ///
+    /// # Single-use is part of the contract
+    ///
+    /// A successful read must make every later read of the same `state` return
+    /// `Ok(None)`, and the consumption must be **atomic** — one statement, one
+    /// row lock, not a read followed by a delete. The blob holds the PKCE
+    /// verifier and the DPoP key for one authorization; two concurrent
+    /// callbacks carrying the same `state` must not both come away with it.
+    ///
+    /// Implementing this as a plain lookup and leaning on
+    /// [`delete_auth_request`](OAuthStateStore::delete_auth_request) to clean up
+    /// leaves exactly that window open, because the protocol library's own
+    /// get-then-delete is two round trips. A `DELETE … RETURNING` (or the
+    /// backend's equivalent) is the shape to reach for.
     async fn get_auth_request(&self, state: &str) -> StorageResult<Option<Vec<u8>>>;
 
     /// Insert or replace an in-flight authorization request's sealed blob.
     async fn save_auth_request(&self, state: &str, data: &[u8]) -> StorageResult<()>;
 
-    /// Delete an in-flight authorization request once it has been consumed.
+    /// Delete an in-flight authorization request.
+    ///
+    /// Belt to [`get_auth_request`](OAuthStateStore::get_auth_request)'s braces:
+    /// the read already consumed the row, so on the happy path this deletes
+    /// nothing. It stays because an abandoned flow — a visitor who never
+    /// returns from the PDS — is dropped here, and because deleting an absent
+    /// row must never be an error.
     async fn delete_auth_request(&self, state: &str) -> StorageResult<()>;
 }
 
