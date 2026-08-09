@@ -58,6 +58,11 @@ pub enum VaultError {
     /// rather than silently weakening encryption.
     #[error("root key must be exactly {ROOT_KEY_LEN} bytes, got {0}")]
     RootKeyLength(usize),
+    /// The supplied root key was all zeroes — the value a zeroed buffer, an
+    /// unset environment variable decoded from an empty string, or a
+    /// `[0u8; 32]` placeholder produces. Never a key anybody generated.
+    #[error("root key is all zeroes — that is an unset or zeroed value, not a key")]
+    AllZeroRootKey,
     /// The blob is shorter than the nonce it must start with.
     #[error("sealed blob is too short to hold a nonce")]
     BlobTooShort,
@@ -108,10 +113,21 @@ impl std::fmt::Debug for SecretVault {
 
 impl SecretVault {
     /// Build the vault from exactly [`ROOT_KEY_LEN`] bytes.
+    ///
+    /// An **all-zero** key is refused. A key is 32 bytes of entropy from
+    /// somewhere; 32 zeroes is what a zeroed buffer, a placeholder, or an unset
+    /// environment variable decoded as empty produces. It is a perfectly valid
+    /// XChaCha20-Poly1305 key, which is the danger — everything would encrypt
+    /// and decrypt happily under a key every attacker can guess, and the
+    /// misconfiguration would surface as nothing at all. Cheap to refuse here,
+    /// impossible to notice later.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, VaultError> {
         let key: [u8; ROOT_KEY_LEN] = bytes
             .try_into()
             .map_err(|_| VaultError::RootKeyLength(bytes.len()))?;
+        if key == [0u8; ROOT_KEY_LEN] {
+            return Err(VaultError::AllZeroRootKey);
+        }
         Ok(Self(key))
     }
 
@@ -253,10 +269,28 @@ mod tests {
     #[test]
     fn root_key_must_be_32_bytes() {
         assert!(matches!(
-            SecretVault::from_bytes(&[0u8; 16]),
+            SecretVault::from_bytes(&[1u8; 16]),
             Err(VaultError::RootKeyLength(16))
         ));
-        assert!(SecretVault::from_bytes(&[0u8; ROOT_KEY_LEN]).is_ok());
+        assert!(SecretVault::from_bytes(&[1u8; ROOT_KEY_LEN]).is_ok());
+    }
+
+    // An all-zero key is a perfectly valid XChaCha20-Poly1305 key, which is
+    // exactly why it must be refused: a zeroed buffer, a `[0u8; 32]`
+    // placeholder or an unset env var would encrypt and decrypt happily under a
+    // key every attacker can guess, and the misconfiguration would surface as
+    // nothing at all.
+    #[test]
+    fn an_all_zero_root_key_is_refused() {
+        assert!(matches!(
+            SecretVault::from_bytes(&[0u8; ROOT_KEY_LEN]),
+            Err(VaultError::AllZeroRootKey)
+        ));
+        // A single non-zero byte is enough to be a key as far as this check
+        // goes — it is a footgun guard, not an entropy estimator.
+        let mut nearly_zero = [0u8; ROOT_KEY_LEN];
+        nearly_zero[ROOT_KEY_LEN - 1] = 1;
+        assert!(SecretVault::from_bytes(&nearly_zero).is_ok());
     }
 
     // The root key is wiped on drop. Reading freed memory is not something a
