@@ -96,6 +96,9 @@ mod memory;
 #[cfg(feature = "minter")]
 mod minter;
 
+#[cfg(feature = "postgres")]
+pub mod postgres;
+
 pub use did::{Did, DidError};
 pub use directory::{CANONICAL_DIRECTORY, NoopPlcDirectory, PlcDirectory};
 pub use error::{DirectoryError, DirectoryResult, StorageError, StorageResult};
