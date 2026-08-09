@@ -383,6 +383,27 @@ mod tests {
         }
     }
 
+    // The URI authority is a NEW input shape, and unlike a `Host` header it can
+    // carry userinfo — `alice.example.com@evil.test` reads as ours to a human
+    // and is not. `Handle::try_new`'s charset has no `@`, so it fails closed;
+    // pinned here because that is a load-bearing consequence of a rule written
+    // elsewhere, and a charset change must not quietly open this.
+    #[tokio::test]
+    async fn an_authority_carrying_userinfo_is_404() {
+        for authority in [
+            "alice.example.com@evil.test",
+            "evil.test@alice.example.com",
+            "user:pass@alice.example.com",
+        ] {
+            let response = atproto_did(State(state()), http2_request(authority)).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "`{authority}` carries userinfo and must not resolve"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn an_unknown_handle_is_404() {
         let response = atproto_did(State(state()), http1_request("nobody.example.com")).await;
