@@ -353,6 +353,11 @@ The write path is the crate's reason to exist, so it is on by default;
 - `Did` and `Handle` are `Serialize`/`Deserialize` with `#[serde(transparent)]`,
   which the source's were not. Both are values that cross API boundaries;
   transparent means a DID is `"did:plc:…"` on the wire, never a tuple wrapper.
+  `Did`'s `Deserialize` is **hand-written and validating**: a derived one would
+  be `Did::new` with extra steps, so every JSON body and cached record could
+  route around the F2 grammar and a `Did` would prove nothing about its
+  contents. Deserialization is an untrusted boundary, so it parses. The wire
+  shape is unchanged in both directions.
 
 ---
 

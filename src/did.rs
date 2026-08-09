@@ -10,7 +10,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// The scheme every DID starts with.
 const DID_SCHEME: &str = "did:";
@@ -26,9 +26,10 @@ const PLC_METHOD: &str = "plc";
 ///   your own store, or handed over by a PDS at sign-in. No validation, because
 ///   re-validating a value the network already accepted can only reject data
 ///   that legitimately exists.
-/// - [`FromStr`] / [`TryFrom`] **parse** untrusted input against the W3C DID
-///   syntax (`did:<method-name>:<method-specific-id>`), and are what you want at
-///   any boundary where a user or a remote peer supplies the string.
+/// - [`FromStr`] / [`TryFrom`] / [`Deserialize`] **parse** untrusted input
+///   against the W3C DID syntax (`did:<method-name>:<method-specific-id>`), and
+///   are what you want at any boundary where a user or a remote peer supplies
+///   the string.
 ///
 /// ```
 /// use zurid::Did;
@@ -41,10 +42,33 @@ const PLC_METHOD: &str = "plc";
 /// assert!("https://example.com".parse::<Did>().is_err());
 /// // A method name must be lowercase alphanumeric.
 /// assert!("did:PLC:abc".parse::<Did>().is_err());
+/// // Deserialization validates too — JSON is untrusted input.
+/// assert!(serde_json::from_str::<Did>("\"not a did\"").is_err());
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
 pub struct Did(String);
+
+/// Deserialization is a **parse**, not a wrapper.
+///
+/// A derived `Deserialize` would be `Did::new` with extra steps: every JSON
+/// body, config file and cached record could produce a `Did` holding anything
+/// at all, silently routing around the validation [`FromStr`] exists to
+/// provide. Deserialization is where a value arrives from somewhere else, which
+/// is precisely the untrusted boundary — so it parses.
+///
+/// The value still serializes as the bare string (`#[serde(transparent)]` on
+/// the type), so the wire shape is unchanged in both directions: `"did:plc:…"`,
+/// never a tuple wrapper.
+///
+/// Values already in your own store come in through [`Did::new`], which is
+/// unchecked on purpose — see the type docs.
+impl<'de> Deserialize<'de> for Did {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
 
 /// Why a string was rejected as a [`Did`] by [`FromStr`]/[`TryFrom`].
 ///
@@ -297,11 +321,44 @@ mod tests {
     }
 
     // The newtype serializes as the bare string (`#[serde(transparent)]`), so a
-    // DID in a JSON payload is `"did:plc:…"`, never `{"0":"did:plc:…"}`.
+    // DID in a JSON payload is `"did:plc:…"`, never `{"0":"did:plc:…"}`. The
+    // hand-written `Deserialize` must keep that wire shape.
     #[test]
     fn serializes_transparently() {
         let did = Did::new("did:plc:abc");
         assert_eq!(serde_json::to_string(&did).unwrap(), "\"did:plc:abc\"");
         assert_eq!(serde_json::from_str::<Did>("\"did:plc:abc\"").unwrap(), did);
+    }
+
+    // Deserialization is where a value arrives from somewhere else, so it
+    // PARSES rather than wrapping. A derived impl would be `Did::new` with extra
+    // steps, letting every JSON body route around the grammar `FromStr`
+    // enforces — after which a `Did` proves nothing about its contents.
+    #[test]
+    fn deserialization_validates() {
+        for hostile in [
+            "\"not a did\"",
+            "\"https://example.com\"",
+            "\"did:PLC:abc\"",
+            "\"did:plc:\"",
+            "\"did:plc:a b\"",
+            "\"\"",
+        ] {
+            assert!(
+                serde_json::from_str::<Did>(hostile).is_err(),
+                "{hostile} must not deserialize into a Did"
+            );
+        }
+
+        // Every shape the grammar allows still round-trips.
+        for valid in [
+            "did:plc:ewvi7nxzyoun6zhxrhs64oiz",
+            "did:web:example.com%3A8443:user:alice",
+        ] {
+            let json = format!("\"{valid}\"");
+            let parsed: Did = serde_json::from_str(&json).expect("a valid DID deserializes");
+            assert_eq!(parsed.as_str(), valid);
+            assert_eq!(serde_json::to_string(&parsed).unwrap(), json);
+        }
     }
 }
