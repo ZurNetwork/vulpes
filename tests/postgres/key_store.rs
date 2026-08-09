@@ -4,7 +4,7 @@
 //! the column.
 
 use zurid::postgres::PgKeyStore;
-use zurid::{CustodyEnvelope, CustodyKeys, Did, KeyStore, SecretKey, SecretVault};
+use zurid::{CustodyEnvelope, CustodyKeys, Did, KeyRole, KeyStore, SecretKey, SecretVault};
 
 use crate::pg::fresh_pool;
 
@@ -140,6 +140,43 @@ async fn an_unknown_key_version_is_refused() {
     assert!(
         failure.to_string().contains("9999"),
         "the failure should name the version it did not understand, got: {failure}"
+    );
+}
+
+// BACK-COMPAT. Custody written before the associated data gained its
+// domain-separation tag is stamped `key_version = 1`, and must keep opening —
+// these are the private keys behind live identities, and a scheme change that
+// stranded them would take the identities with it.
+#[tokio::test]
+async fn a_legacy_v1_row_still_opens() {
+    let (pool, _db) = fresh_pool().await;
+    let did = Did::new("did:plc:legacy");
+
+    // Written exactly as pre-tag zurid would have: bare-DID associated data,
+    // stamped version 1.
+    let mut plaintext = Vec::new();
+    for role in [
+        KeyRole::ColdRecovery,
+        KeyRole::Operational,
+        KeyRole::Signing,
+    ] {
+        plaintext.extend_from_slice(keys().role(role).expose());
+    }
+    let legacy = vault().seal(did.as_str().as_bytes(), &plaintext).unwrap();
+    sqlx::query(
+        "INSERT INTO account_keys (did, wrapped_keys, key_version, created_at) \
+         VALUES ($1, $2, 1, now())",
+    )
+    .bind(did.as_str())
+    .bind(&legacy)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        PgKeyStore::new(pool, vault()).get(&did).await.unwrap(),
+        Some(keys()),
+        "a pre-tag custody row must keep opening under its recorded version"
     );
 }
 

@@ -124,9 +124,26 @@ impl std::fmt::Display for KeyRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum CustodyEnvelope {
-    /// Associated data is the bare DID bytes.
+    /// Associated data is the **bare DID bytes**. Read-only: still opened for
+    /// rows written before [`V2`](CustodyEnvelope::V2), never written.
     V1,
+    /// Associated data is [`CUSTODY_AAD_TAG`] followed by the DID bytes.
+    ///
+    /// The tag is domain separation. One [`SecretVault`] seals every family of
+    /// secret zurid holds, and V1's associated data was a bare DID — the same
+    /// bytes another family could plausibly use for its own row key. Two
+    /// families sharing an associated-data value means a blob from one opens as
+    /// the other, and "which family is this blob?" is then answered by whichever
+    /// code path happened to read it. A per-family tag makes the collision
+    /// unrepresentable rather than merely unlikely — the same reason
+    /// [`JacquardAuthStore`](crate::oauth::JacquardAuthStore) prefixes its own.
+    V2,
 }
+
+/// The domain-separation tag [`CustodyEnvelope::V2`] prefixes its associated
+/// data with. NUL-terminated, so the tag can never run into the DID that
+/// follows it.
+pub const CUSTODY_AAD_TAG: &[u8] = b"zurid.custody\0";
 
 /// A `key_version` naming no envelope scheme this build knows.
 ///
@@ -140,13 +157,21 @@ pub struct UnknownCustodyEnvelope(pub i32);
 
 impl CustodyEnvelope {
     /// The scheme new custody is sealed under. Reads still accept every
-    /// variant; only writes are pinned here.
-    pub const CURRENT: Self = Self::V1;
+    /// variant — that is how a V1 row keeps opening — but only this one is ever
+    /// written.
+    pub const CURRENT: Self = Self::V2;
 
     /// The AEAD associated data this scheme binds a blob to its DID with.
     fn aad(self, did: &Did) -> Vec<u8> {
+        let did = did.as_str().as_bytes();
         match self {
-            Self::V1 => did.as_str().as_bytes().to_vec(),
+            Self::V1 => did.to_vec(),
+            Self::V2 => {
+                let mut aad = Vec::with_capacity(CUSTODY_AAD_TAG.len() + did.len());
+                aad.extend_from_slice(CUSTODY_AAD_TAG);
+                aad.extend_from_slice(did);
+                aad
+            }
         }
     }
 }
@@ -155,6 +180,7 @@ impl From<CustodyEnvelope> for i32 {
     fn from(envelope: CustodyEnvelope) -> Self {
         match envelope {
             CustodyEnvelope::V1 => 1,
+            CustodyEnvelope::V2 => 2,
         }
     }
 }
@@ -165,6 +191,7 @@ impl TryFrom<i32> for CustodyEnvelope {
     fn try_from(version: i32) -> Result<Self, Self::Error> {
         match version {
             1 => Ok(Self::V1),
+            2 => Ok(Self::V2),
             other => Err(UnknownCustodyEnvelope(other)),
         }
     }
@@ -328,6 +355,7 @@ mod tests {
             Ok(CustodyEnvelope::CURRENT)
         );
         assert_eq!(CustodyEnvelope::try_from(1), Ok(CustodyEnvelope::V1));
+        assert_eq!(CustodyEnvelope::try_from(2), Ok(CustodyEnvelope::V2));
 
         for unknown in [0, -1, 99, i32::MAX] {
             assert_eq!(
@@ -336,6 +364,63 @@ mod tests {
                 "key_version {unknown} names no scheme and must be refused"
             );
         }
+    }
+
+    // New custody is sealed under V2, whose associated data carries the
+    // domain-separation tag. Asserted on the AAD itself, because that is the
+    // property — a blob from another family sealed under a bare DID cannot be
+    // mistaken for custody.
+    #[test]
+    fn the_current_envelope_is_domain_separated() {
+        assert_eq!(CustodyEnvelope::CURRENT, CustodyEnvelope::V2);
+
+        let v2 = CustodyEnvelope::V2.aad(&did());
+        assert!(
+            v2.starts_with(CUSTODY_AAD_TAG),
+            "V2 associated data must carry the custody tag"
+        );
+        assert_eq!(&v2[CUSTODY_AAD_TAG.len()..], did().as_str().as_bytes());
+
+        // V1 is the bare DID — exactly the collision V2 exists to remove.
+        assert_eq!(CustodyEnvelope::V1.aad(&did()), did().as_str().as_bytes());
+        assert_ne!(CustodyEnvelope::V1.aad(&did()), v2);
+    }
+
+    // Back-compat, and the reason the version column is read. A bundle sealed
+    // under V1 — every custody row written before this change — still opens
+    // when the row says V1, and does NOT open when read as V2.
+    #[test]
+    fn a_v1_bundle_still_opens_under_v1_and_not_under_v2() {
+        // Seal a V1 blob the way the old code did: bare-DID associated data.
+        let mut plaintext = Vec::new();
+        for role in KeyRole::ALL {
+            plaintext.extend_from_slice(keys().role(role).expose());
+        }
+        let legacy = vault().seal(did().as_str().as_bytes(), &plaintext).unwrap();
+
+        assert_eq!(
+            CustodyKeys::open(&vault(), &did(), &legacy, CustodyEnvelope::V1).unwrap(),
+            keys(),
+            "a pre-existing V1 row must keep opening"
+        );
+        assert!(
+            matches!(
+                CustodyKeys::open(&vault(), &did(), &legacy, CustodyEnvelope::V2),
+                Err(VaultError::Open)
+            ),
+            "the schemes are genuinely different associated data, not a relabel"
+        );
+    }
+
+    // And the mirror: a freshly sealed bundle opens under V2 and not under V1,
+    // so a row mislabelled as legacy fails closed rather than opening.
+    #[test]
+    fn a_current_bundle_does_not_open_under_v1() {
+        let blob = keys().seal(&vault(), &did()).unwrap();
+        assert!(matches!(
+            CustodyKeys::open(&vault(), &did(), &blob, CustodyEnvelope::V1),
+            Err(VaultError::Open)
+        ));
     }
 
     #[test]
@@ -396,10 +481,13 @@ mod tests {
     }
 
     // A blob that authenticates but holds the wrong number of bytes (a foreign
-    // or corrupt record) is refused rather than sliced into garbage keys.
+    // or corrupt record) is refused rather than sliced into garbage keys. Sealed
+    // under the CURRENT scheme's own associated data, so the tag genuinely
+    // verifies and the length check is what does the rejecting.
     #[test]
     fn a_short_authenticated_bundle_is_refused() {
-        let blob = vault().seal(did().as_str().as_bytes(), &[0u8; 64]).unwrap();
+        let aad = CustodyEnvelope::CURRENT.aad(&did());
+        let blob = vault().seal(&aad, &[0u8; 64]).unwrap();
         assert!(matches!(
             CustodyKeys::open(&vault(), &did(), &blob, CustodyEnvelope::CURRENT),
             Err(VaultError::PlaintextLength {

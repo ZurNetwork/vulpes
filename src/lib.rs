@@ -108,7 +108,8 @@ pub use directory::{CANONICAL_DIRECTORY, NoopPlcDirectory, PlcDirectory};
 pub use error::{DirectoryError, DirectoryResult, StorageError, StorageResult};
 pub use handle::{HANDLE_MAX_LEN, Handle, HandleError, LABEL_MAX_LEN};
 pub use keys::{
-    CustodyEnvelope, CustodyKeys, KeyRole, SECRET_KEY_LEN, SecretKey, UnknownCustodyEnvelope,
+    CUSTODY_AAD_TAG, CustodyEnvelope, CustodyKeys, KeyRole, SECRET_KEY_LEN, SecretKey,
+    UnknownCustodyEnvelope,
 };
 pub use policy::{
     MAX_ROTATION_KEYS, MAX_VERIFICATION_METHODS, MIN_ROTATION_KEYS, MintPolicy, PolicyError,

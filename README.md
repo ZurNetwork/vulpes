@@ -223,11 +223,14 @@ config or environment variable is fine for development and is *not* a hardware
 boundary. For real identities, keep it in a KMS or HSM. The seam is one type
 wide, so that swap is not a schema change.
 
-**Associated data binds a blob to its row.** Custody is sealed under its DID;
-OAuth state under its primary key, length-prefixed so the same bytes cannot be
-re-split into a different key. An attacker with database *write* access cannot
-lift one identity's keys onto another DID, or one user's session onto another
-row — the tag check fails.
+**Associated data binds a blob to its row, and each family is tagged.** Custody
+is sealed under `zurid.custody\0` + its DID; OAuth state under a table-name tag
++ its primary key, length-prefixed so the same bytes cannot be re-split into a
+different key. An attacker with database *write* access cannot lift one
+identity's keys onto another DID, one user's session onto another row, or a blob
+of one family onto another — the tag check fails. Which scheme sealed a custody
+blob is recorded per row (`key_version`) and **read back**: an unknown version is
+an error, never a guess.
 
 **Fails closed.** A value that will not open is an error, never a `None`. A
 legacy plaintext row, a tampered blob, the wrong root key — all error at the

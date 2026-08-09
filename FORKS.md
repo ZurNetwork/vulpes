@@ -305,9 +305,14 @@ The write path is the crate's reason to exist, so it is on by default;
 
 ### F27 / F28. Small additions
 
-- `key_version` is written as the named constant `1` (the source inlined the
-  literal). The column exists so custody can be re-wrapped under a new root key
-  later.
+- `key_version` is a `CustodyEnvelope` rather than an inlined literal, and is
+  **read back**: `PgKeyStore::get` decodes the column and refuses a value it does
+  not know instead of opening the blob under a guessed scheme. `V1` is the
+  source's format (bare-DID associated data); `V2` — what zurid writes — prefixes
+  the associated data with `zurid.custody\0`, domain-separating custody from
+  every other family sealed under the same root key. **V1 rows still open**, so
+  the originating service's existing `account_keys` are not stranded; they are
+  simply never written again.
 - `Did` and `Handle` are `Serialize`/`Deserialize` with `#[serde(transparent)]`,
   which the source's were not. Both are values that cross API boundaries;
   transparent means a DID is `"did:plc:…"` on the wire, never a tuple wrapper.
