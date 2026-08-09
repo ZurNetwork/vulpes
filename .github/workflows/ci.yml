@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, "feature/**", "bug/**"]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # --locked: build exactly what Cargo.lock pins; a stale lockfile fails
+      # loudly here rather than drifting silently.
+      - run: cargo clippy --all-features --all-targets --locked -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The PostgreSQL suite boots throwaway containers via testcontainers;
+      # ubuntu-latest runners ship a Docker daemon, so no service block is
+      # needed (and none would do — each test clones its own database).
+      - run: cargo test --all-features --locked
+
+  features:
+    name: features (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every feature must compile alone and with everything else. Listed
+        # explicitly rather than via cargo-hack: the set is small, and an
+        # explicit list is one less tool to keep pinned.
+        features:
+          - ""
+          - "minter"
+          - "directory"
+          - "oauth"
+          - "postgres"
+          - "axum"
+          - "minter,postgres"
+          - "oauth,postgres"
+          - "axum,postgres"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --no-default-features --features "${{ matrix.features }}" --all-targets --locked
+      - name: all features
+        if: matrix.features == ''
+        run: cargo check --all-features --all-targets --locked
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    env:
+      # A broken intra-doc link is a broken promise about the API surface.
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --all-features --no-deps --locked
