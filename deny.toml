@@ -1,0 +1,59 @@
+# cargo-deny: the dependency advisory gate.
+#
+# The job of this file is NOT to be green — it is to be green for reasons
+# somebody wrote down. Every entry below names an advisory that fires against
+# this lockfile today, says why it is not exploitable here, and says what would
+# make it go away. A NEW advisory has no entry, so it fails CI loudly.
+#
+# Re-check the list whenever `Cargo.lock` moves: an entry that no longer fires
+# is noise, and cargo-deny will say so (`unused-allowed-advisory`).
+#
+# Run it the way CI does — the feature-gated dependencies (jacquard, sqlx,
+# reqwest, axum) are not in the default graph at all:
+#
+#     cargo deny --all-features check advisories
+
+[advisories]
+version = 2
+# An unmaintained crate is a supply-chain fact worth a CI failure, not a shrug.
+unmaintained = "all"
+yanked = "deny"
+
+ignore = [
+  # --- rsa 0.9.x: Marvin Attack (timing sidechannel on PKCS#1 v1.5 decrypt) ---
+  # NO FIXED VERSION EXISTS upstream. Reached only through jacquard's JOSE
+  # stack, which uses RSA to VERIFY signatures on authorization-server metadata
+  # and to sign DPoP proofs — never to decrypt an attacker-chosen ciphertext,
+  # which is what the attack requires. Drops out if the advisory is fixed or if
+  # every authorization server we speak to is EC.
+  { id = "RUSTSEC-2023-0071", reason = "no fixed version upstream; the vulnerable PKCS#1 v1.5 decrypt path is not reachable — jacquard verifies and signs, never decrypts" },
+
+  # --- hickory-proto 0.24.x: O(n^2) name compression on message ENCODING ---
+  # No fix in the 0.24 line, and jacquard-identity pins `hickory-resolver ^0.24`,
+  # so this cannot be lifted by a lockfile bump. zurid is a DNS *client*: it
+  # encodes the queries it composes itself (`_atproto.<handle>`, bounded by the
+  # 253-char handle limit), and never encodes attacker-supplied messages.
+  # Drops out when jacquard moves to hickory 0.25+.
+  { id = "RUSTSEC-2026-0119", reason = "no fix in the 0.24 line jacquard pins; the O(n^2) path is message ENCODING, and zurid only encodes its own bounded queries" },
+
+  # --- time 0.3.45: stack exhaustion parsing RFC 2822 ---
+  # DEV-DEPENDENCY ONLY (testcontainers -> bollard). Never in a consumer's
+  # build, and nothing here parses RFC 2822 dates at all.
+  #
+  # A FIX IS AVAILABLE — time 0.3.47 — but it requires Rust 1.88 and this crate
+  # promises `rust-version = "1.85"`. Taking it would raise the version needed
+  # to run the test suite. That is an MSRV decision, so it is left to the
+  # Engineer rather than taken here; see FORKS F32.
+  { id = "RUSTSEC-2026-0009", reason = "dev-dependency only (testcontainers/bollard); the fix in 0.3.47 costs the 1.85 MSRV, which is an Engineer call — see FORKS F32" },
+
+  # --- atomic-polyfill: unmaintained ---
+  # Pulled in transitively and used on targets zurid does not build for; there
+  # is no advisory of a defect, only that the crate is no longer maintained.
+  # Drops out when the crate holding it migrates to `portable-atomic`.
+  { id = "RUSTSEC-2023-0089", reason = "unmaintained, not vulnerable; transitive, and the polyfill is for targets zurid does not build for" },
+
+  # NOTE: the 2026-08-09 review also listed GHSA-7gcf-g7xr-8hxj (serde_with).
+  # It does NOT fire against this lockfile — cargo-deny reads the RustSec
+  # database, which carries no matching advisory. Deliberately NOT ignored: an
+  # entry for something that does not fire would hide it if it ever appeared.
+]

@@ -80,6 +80,24 @@ jobs:
         if: matrix.features == ''
         run: cargo check --all-features --all-targets --locked
 
+  advisories:
+    name: advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # --all-features is load-bearing: jacquard, sqlx, reqwest and axum are all
+      # optional, so the DEFAULT crate graph does not contain the dependencies
+      # most worth auditing.
+      #
+      # The advisories that fire against today's lockfile are allow-listed in
+      # deny.toml, each with a reason and an exit condition — so this job is
+      # green for reasons somebody wrote down, and a NEW advisory (which has no
+      # entry) fails it.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+          arguments: --all-features
+
   docs:
     name: docs
     runs-on: ubuntu-latest

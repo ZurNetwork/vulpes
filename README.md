@@ -255,6 +255,12 @@ serializes onto the new tip.
 
 **No unsafe code**, enforced by `#![forbid(unsafe_code)]`.
 
+**Dependency advisories are a CI gate.** `cargo deny --all-features check
+advisories` runs on every PR. The advisories that fire against today's lockfile
+are allow-listed in `deny.toml` — each with why it is not exploitable here and
+what would retire the entry — so the job is green for written-down reasons, and
+a new advisory fails it.
+
 ---
 
 ## Testing

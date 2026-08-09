@@ -43,6 +43,21 @@ tampering and does not cover the other fields; what it does is stop a bad row
 from **wedging** the identity — a rotation-key list the directory refuses would
 otherwise leave no handle change and no tombstone possible, permanently.
 
+### F32. `time` 0.3.47 would fix RUSTSEC-2026-0009 but costs the 1.85 MSRV
+
+**Where:** `deny.toml`, the `RUSTSEC-2026-0009` entry.
+
+The advisory (stack exhaustion parsing RFC 2822 dates) reaches zurid only as a
+**dev-dependency**, through `testcontainers → bollard → time 0.3.45`. It is
+never in a consumer's build, and nothing here parses RFC 2822 at all.
+
+A fix exists — `time` 0.3.47 — and `cargo update -p time --precise 0.3.47`
+resolves cleanly. It requires **Rust 1.88**, and the manifest promises
+`rust-version = "1.85"`. Taking it would raise the version needed to run the
+test suite while leaving the library's own MSRV untouched, which is a
+compatibility promise to change deliberately rather than as a side effect of an
+audit. Allow-listed with this note instead; the Engineer's call.
+
 ### F31. Migration files are edited in place, pre-1.0
 
 **Where:** `migrations/`.
