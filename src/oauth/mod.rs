@@ -166,7 +166,7 @@ pub struct OAuthConfig {
 /// spelling of the same address (`127.000.000.001`, `[0:0:0:0:0:0:0:1]`) is
 /// refused rather than guessed at — the safe direction for a check whose job is
 /// to keep an authorization code off a host you do not control.
-const LOOPBACK_HOSTS: [&str; 2] = ["127.0.0.1", "[::1]"];
+pub const LOOPBACK_HOSTS: [&str; 2] = ["127.0.0.1", "[::1]"];
 
 impl OAuthConfig {
     /// A loopback client redirecting to `redirect_uri`, asking for

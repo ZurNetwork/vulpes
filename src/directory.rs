@@ -55,21 +55,6 @@ impl PlcDirectory for NoopPlcDirectory {
 /// The canonical PLC directory.
 pub const CANONICAL_DIRECTORY: &str = "https://plc.directory";
 
-/// How long [`HttpPlcDirectory`]'s default client waits to establish a
-/// connection.
-#[cfg(feature = "directory")]
-pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// The default client's total per-submission budget — connect, send, and read
-/// the response.
-///
-/// A submission sits in the middle of minting: `mint` has already written
-/// custody and logged the genesis when it calls this, and `update_handle` and
-/// `tombstone` block their log write on it. Without a timeout, one unresponsive
-/// directory pins those tasks indefinitely.
-#[cfg(feature = "directory")]
-pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// The real submitter: `POST {base_url}/{did}` with the signed operation as
 /// JSON.
 ///
@@ -85,9 +70,22 @@ pub struct HttpPlcDirectory {
 
 #[cfg(feature = "directory")]
 impl HttpPlcDirectory {
+    /// How long the default client waits to establish a connection.
+    pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// The default client's total per-submission budget — connect, send, and
+    /// read the response.
+    ///
+    /// A submission sits in the middle of minting: [`Minter::mint`](crate::Minter::mint)
+    /// has already written custody and logged the genesis when it calls this,
+    /// and `update_handle` and `tombstone` block their log write on it. Without
+    /// a timeout, one unresponsive directory pins those tasks indefinitely.
+    pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
     /// Build a submitter targeting `base_url` (any trailing slash is trimmed, so
     /// the request path is a single-slashed `/{did}`), over a client with
-    /// [`DEFAULT_CONNECT_TIMEOUT`] and [`DEFAULT_REQUEST_TIMEOUT`].
+    /// [`DEFAULT_CONNECT_TIMEOUT`](HttpPlcDirectory::DEFAULT_CONNECT_TIMEOUT)
+    /// and [`DEFAULT_REQUEST_TIMEOUT`](HttpPlcDirectory::DEFAULT_REQUEST_TIMEOUT).
     ///
     /// Falls back to `reqwest`'s own defaults if the client cannot be built —
     /// which in practice means the TLS backend failed to initialize, and the
@@ -96,13 +94,23 @@ impl HttpPlcDirectory {
     /// [`with_client`](HttpPlcDirectory::with_client) when you want to see that
     /// failure yourself.
     pub fn new(base_url: impl Into<String>) -> Self {
-        Self::with_client(base_url, default_client())
+        Self::with_client(base_url, Self::default_client())
     }
 
     /// Build a submitter targeting [`CANONICAL_DIRECTORY`], with the same
     /// default timeouts as [`new`](HttpPlcDirectory::new).
     pub fn canonical() -> Self {
         Self::new(CANONICAL_DIRECTORY)
+    }
+
+    /// The timeout-bearing client [`new`](HttpPlcDirectory::new) uses when the
+    /// caller supplies none.
+    fn default_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .connect_timeout(Self::DEFAULT_CONNECT_TIMEOUT)
+            .timeout(Self::DEFAULT_REQUEST_TIMEOUT)
+            .build()
+            .unwrap_or_default()
     }
 
     /// Build a submitter over a `reqwest` client you already configured
@@ -113,17 +121,6 @@ impl HttpPlcDirectory {
             client,
         }
     }
-}
-
-/// The timeout-bearing client [`HttpPlcDirectory::new`] uses when the caller
-/// supplies none.
-#[cfg(feature = "directory")]
-fn default_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
-        .timeout(DEFAULT_REQUEST_TIMEOUT)
-        .build()
-        .unwrap_or_default()
 }
 
 #[cfg(feature = "directory")]
