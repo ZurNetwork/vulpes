@@ -96,6 +96,8 @@ mod memory;
 #[cfg(feature = "minter")]
 mod minter;
 
+#[cfg(feature = "axum")]
+pub mod axum;
 #[cfg(feature = "oauth")]
 pub mod oauth;
 #[cfg(feature = "postgres")]
