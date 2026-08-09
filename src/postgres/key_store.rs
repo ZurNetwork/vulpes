@@ -3,15 +3,12 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row as _};
 
 use crate::postgres::storage;
-use crate::{CustodyKeys, Did, KeyStore, SecretVault, StorageError, StorageResult};
-
-/// The envelope scheme this store writes. Recorded per row so custody can be
-/// re-wrapped under a new root key (or a KMS) later without guessing what the
-/// existing bytes are.
-const KEY_VERSION: i32 = 1;
+use crate::{
+    CustodyEnvelope, CustodyKeys, Did, KeyStore, SecretVault, StorageError, StorageResult,
+};
 
 /// PostgreSQL [`KeyStore`]: seals custody keys under a [`SecretVault`] and
 /// persists the ciphertext in `account_keys`.
@@ -44,7 +41,7 @@ impl KeyStore for PgKeyStore {
         sqlx::query(include_str!("../../queries/key_store/put.sql"))
             .bind(did.as_str())
             .bind(&sealed)
-            .bind(KEY_VERSION)
+            .bind(i32::from(CustodyEnvelope::CURRENT))
             .bind(Utc::now())
             .execute(&self.pool)
             .await
@@ -52,22 +49,33 @@ impl KeyStore for PgKeyStore {
         Ok(())
     }
 
-    /// Load the sealed blob for `did` and open it, or `None` if unknown.
+    /// Load the sealed blob for `did` and open it **under the envelope scheme
+    /// the row records**, or `None` if the DID is unknown.
+    ///
+    /// The `key_version` column is read, not assumed: a value naming no scheme
+    /// this build knows — a row written by a newer zurid, met during a rolling
+    /// deploy or after a rollback — is an explicit error. Opening it under a
+    /// guessed scheme would at best fail the AEAD tag and at worst hand back
+    /// bytes that were never these keys.
     ///
     /// A decryption failure — the wrong root key, a blob lifted from another
-    /// row, tampering — is an error, never a `None`.
+    /// row, tampering — is likewise an error, never a `None`.
     async fn get(&self, did: &Did) -> StorageResult<Option<CustodyKeys>> {
-        let sealed: Option<Vec<u8>> =
-            sqlx::query_scalar(include_str!("../../queries/key_store/get.sql"))
-                .bind(did.as_str())
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(storage)?;
+        let row = sqlx::query(include_str!("../../queries/key_store/get.sql"))
+            .bind(did.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?;
 
-        let Some(sealed) = sealed else {
+        let Some(row) = row else {
             return Ok(None);
         };
-        let keys = CustodyKeys::open(&self.vault, did, &sealed).map_err(StorageError::new)?;
+        let sealed: Vec<u8> = row.try_get("wrapped_keys").map_err(storage)?;
+        let version: i32 = row.try_get("key_version").map_err(storage)?;
+        let envelope = CustodyEnvelope::try_from(version).map_err(StorageError::new)?;
+
+        let keys =
+            CustodyKeys::open(&self.vault, did, &sealed, envelope).map_err(StorageError::new)?;
         Ok(Some(keys))
     }
 }

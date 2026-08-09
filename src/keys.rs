@@ -114,6 +114,62 @@ impl std::fmt::Display for KeyRole {
     }
 }
 
+/// Which envelope scheme a custody blob was sealed under.
+///
+/// Stored alongside every blob (the `key_version` column), so the bytes are
+/// never opened by guesswork: a reader asks the row which scheme it is and gets
+/// a value it can exhaustively match, or an error. That is what makes changing
+/// the scheme possible at all — without it, "which AAD does this blob use?" has
+/// no answer and every change is a flag day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum CustodyEnvelope {
+    /// Associated data is the bare DID bytes.
+    V1,
+}
+
+/// A `key_version` naming no envelope scheme this build knows.
+///
+/// Almost always a row written by a **newer** zurid than the one reading it —
+/// a rolling deploy, or a rollback. Refused loudly rather than opened under a
+/// guessed scheme, because the wrong guess is either a tag failure (best case)
+/// or plaintext read as key material (worst).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("custody key_version {0} is not an envelope scheme this build of zurid knows")]
+pub struct UnknownCustodyEnvelope(pub i32);
+
+impl CustodyEnvelope {
+    /// The scheme new custody is sealed under. Reads still accept every
+    /// variant; only writes are pinned here.
+    pub const CURRENT: Self = Self::V1;
+
+    /// The AEAD associated data this scheme binds a blob to its DID with.
+    fn aad(self, did: &Did) -> Vec<u8> {
+        match self {
+            Self::V1 => did.as_str().as_bytes().to_vec(),
+        }
+    }
+}
+
+impl From<CustodyEnvelope> for i32 {
+    fn from(envelope: CustodyEnvelope) -> Self {
+        match envelope {
+            CustodyEnvelope::V1 => 1,
+        }
+    }
+}
+
+impl TryFrom<i32> for CustodyEnvelope {
+    type Error = UnknownCustodyEnvelope;
+
+    fn try_from(version: i32) -> Result<Self, Self::Error> {
+        match version {
+            1 => Ok(Self::V1),
+            other => Err(UnknownCustodyEnvelope(other)),
+        }
+    }
+}
+
 /// The full set of secp256k1 private keys held for one minted `did:plc`, named
 /// by role.
 ///
@@ -140,12 +196,17 @@ impl CustodyKeys {
         }
     }
 
-    /// Seal this bundle under `vault`, binding it to `did` as associated data.
+    /// Seal this bundle under `vault`, binding it to `did` as associated data,
+    /// using [`CustodyEnvelope::CURRENT`].
     ///
-    /// The DID is the AEAD `aad`, so a sealed bundle is cryptographically tied
-    /// to its row: an attacker with database write access cannot move one
-    /// identity's custody blob onto another DID — the tag check fails on
-    /// [`open`](CustodyKeys::open) under the moved-to DID.
+    /// The DID is bound in as AEAD `aad`, so a sealed bundle is
+    /// cryptographically tied to its row: an attacker with database write
+    /// access cannot move one identity's custody blob onto another DID — the
+    /// tag check fails on [`open`](CustodyKeys::open) under the moved-to DID.
+    ///
+    /// **Record [`CustodyEnvelope::CURRENT`] beside the blob** (the
+    /// `key_version` column), and pass it back to `open`. Writes are pinned to
+    /// the current scheme deliberately; there is no way to ask for an older one.
     pub fn seal(&self, vault: &SecretVault, did: &Did) -> Result<Vec<u8>, VaultError> {
         // `Zeroizing` wipes the concatenated plaintext bundle on drop, so raw
         // key bytes do not linger in the heap after sealing.
@@ -161,13 +222,20 @@ impl CustodyKeys {
             }
             plaintext.extend_from_slice(bytes);
         }
-        vault.seal(did.as_str().as_bytes(), &plaintext)
+        vault.seal(&CustodyEnvelope::CURRENT.aad(did), &plaintext)
     }
 
     /// Open a blob produced by [`seal`](CustodyKeys::seal). `did` must be the
-    /// DID it was sealed under.
-    pub fn open(vault: &SecretVault, did: &Did, blob: &[u8]) -> Result<Self, VaultError> {
-        let plaintext = vault.open(did.as_str().as_bytes(), blob)?;
+    /// DID it was sealed under, and `envelope` the scheme recorded beside the
+    /// blob — not a guess, and not an assumption that it is
+    /// [`CURRENT`](CustodyEnvelope::CURRENT).
+    pub fn open(
+        vault: &SecretVault,
+        did: &Did,
+        blob: &[u8],
+        envelope: CustodyEnvelope,
+    ) -> Result<Self, VaultError> {
+        let plaintext = vault.open(&envelope.aad(did), blob)?;
         let expected = KeyRole::ALL.len() * SECRET_KEY_LEN;
         if plaintext.len() != expected {
             return Err(VaultError::PlaintextLength {
@@ -249,6 +317,27 @@ mod tests {
         assert_ne!(key, SecretKey::new(Vec::new()));
     }
 
+    // The `key_version` column is a round trip, and an unknown value is an
+    // explicit error rather than a fall-through to the current scheme. A row
+    // written by a newer zurid — met during a rolling deploy or after a
+    // rollback — must be refused, never opened under a guessed scheme.
+    #[test]
+    fn a_custody_envelope_round_trips_and_rejects_the_unknown() {
+        assert_eq!(
+            CustodyEnvelope::try_from(i32::from(CustodyEnvelope::CURRENT)),
+            Ok(CustodyEnvelope::CURRENT)
+        );
+        assert_eq!(CustodyEnvelope::try_from(1), Ok(CustodyEnvelope::V1));
+
+        for unknown in [0, -1, 99, i32::MAX] {
+            assert_eq!(
+                CustodyEnvelope::try_from(unknown),
+                Err(UnknownCustodyEnvelope(unknown)),
+                "key_version {unknown} names no scheme and must be refused"
+            );
+        }
+    }
+
     #[test]
     fn role_lookup_matches_the_named_fields() {
         let keys = keys();
@@ -260,7 +349,10 @@ mod tests {
     #[test]
     fn seal_open_round_trips() {
         let blob = keys().seal(&vault(), &did()).unwrap();
-        assert_eq!(CustodyKeys::open(&vault(), &did(), &blob).unwrap(), keys());
+        assert_eq!(
+            CustodyKeys::open(&vault(), &did(), &blob, CustodyEnvelope::CURRENT).unwrap(),
+            keys()
+        );
     }
 
     // The sealed blob must NOT contain the plaintext key bytes.
@@ -283,7 +375,7 @@ mod tests {
         let blob = keys().seal(&vault(), &did()).unwrap();
         let other = Did::new("did:plc:mallory");
         assert!(matches!(
-            CustodyKeys::open(&vault(), &other, &blob),
+            CustodyKeys::open(&vault(), &other, &blob, CustodyEnvelope::CURRENT),
             Err(VaultError::Open)
         ));
     }
@@ -309,7 +401,7 @@ mod tests {
     fn a_short_authenticated_bundle_is_refused() {
         let blob = vault().seal(did().as_str().as_bytes(), &[0u8; 64]).unwrap();
         assert!(matches!(
-            CustodyKeys::open(&vault(), &did(), &blob),
+            CustodyKeys::open(&vault(), &did(), &blob, CustodyEnvelope::CURRENT),
             Err(VaultError::PlaintextLength {
                 expected: 96,
                 actual: 64

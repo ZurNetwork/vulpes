@@ -4,7 +4,7 @@
 //! the column.
 
 use zurid::postgres::PgKeyStore;
-use zurid::{CustodyKeys, Did, KeyStore, SecretKey, SecretVault};
+use zurid::{CustodyEnvelope, CustodyKeys, Did, KeyStore, SecretKey, SecretVault};
 
 use crate::pg::fresh_pool;
 
@@ -74,12 +74,18 @@ async fn a_blob_grafted_onto_another_did_fails_to_open() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    sqlx::query("INSERT INTO account_keys (did, wrapped_keys, key_version, created_at) VALUES ($1, $2, 1, now())")
-        .bind("did:plc:thief")
-        .bind(&wrapped)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO account_keys (did, wrapped_keys, key_version, created_at) \
+         VALUES ($1, $2, $3, now())",
+    )
+    .bind("did:plc:thief")
+    .bind(&wrapped)
+    // The SAME envelope the legitimate row records — so what this proves is the
+    // associated-data binding, not a version mismatch.
+    .bind(i32::from(CustodyEnvelope::CURRENT))
+    .execute(&pool)
+    .await
+    .unwrap();
 
     assert!(
         store.get(&Did::new("did:plc:thief")).await.is_err(),
@@ -107,6 +113,53 @@ async fn a_wrong_root_key_fails_closed() {
         PgKeyStore::new(pool, other_vault).get(&did).await.is_err(),
         "the wrong root key must error, not read as absent"
     );
+}
+
+// A `key_version` this build does not know — a row written by a NEWER zurid,
+// met during a rolling deploy or after a rollback — is an explicit error. The
+// alternative is opening the blob under a guessed scheme, which at best fails
+// the AEAD tag and at worst hands back bytes that were never these keys.
+#[tokio::test]
+async fn an_unknown_key_version_is_refused() {
+    let (pool, _db) = fresh_pool().await;
+    let store = PgKeyStore::new(pool.clone(), vault());
+    let did = Did::new("did:plc:future");
+    store.put(&did, &keys()).await.unwrap();
+
+    // Stamp the row as a scheme from the future, leaving the blob untouched.
+    sqlx::query("UPDATE account_keys SET key_version = 9999 WHERE did = $1")
+        .bind(did.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let failure = store
+        .get(&did)
+        .await
+        .expect_err("an unknown key_version must be refused, not guessed at");
+    assert!(
+        failure.to_string().contains("9999"),
+        "the failure should name the version it did not understand, got: {failure}"
+    );
+}
+
+// The version written is the one the reader is told to expect — the round trip
+// that makes changing the scheme possible at all.
+#[tokio::test]
+async fn custody_records_the_current_envelope_version() {
+    let (pool, _db) = fresh_pool().await;
+    let did = Did::new("did:plc:versioned");
+    PgKeyStore::new(pool.clone(), vault())
+        .put(&did, &keys())
+        .await
+        .unwrap();
+
+    let stored: i32 = sqlx::query_scalar("SELECT key_version FROM account_keys WHERE did = $1")
+        .bind(did.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, i32::from(CustodyEnvelope::CURRENT));
 }
 
 // One DID mints once: the primary key makes a second custody write an error
