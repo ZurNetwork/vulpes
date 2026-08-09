@@ -227,9 +227,13 @@ legacy plaintext row, a tampered blob, the wrong root key — all error at the
 read. Absence and failure are kept apart on purpose: conflating them turns a
 database fault into "this session does not exist".
 
-**Keys are zeroized and redacted.** `SecretKey` wipes on drop; its `Debug` — and
-`SecretVault`'s — print `<redacted>`. A routine update decrypts exactly one
-private key, the signer; the rest of custody stays sealed.
+**Keys are zeroized and redacted.** `SecretKey` wipes on drop, and so does
+`SecretVault`'s root key — every clone independently, since each holds its own
+copy. That matters most for the root key: it is the one whose disclosure loses
+every other secret at once, so leaving it in freed heap for a crash dump to pick
+up would undo the envelope model. Both types' `Debug` prints `<redacted>`. A
+routine update decrypts exactly one private key, the signer; the rest of custody
+stays sealed.
 
 **The chain cannot fork.** Two concurrent updates would otherwise read the same
 tip, build *different* operations (different CIDs, so uniqueness on `cid` does

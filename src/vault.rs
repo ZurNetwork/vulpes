@@ -17,6 +17,11 @@
 //!
 //! # Root-key custody is the caller's problem
 //!
+//! The root key is [`Zeroize`]d when the vault drops — including every clone,
+//! each of which holds its own copy — so it does not linger in freed heap for a
+//! crash dump or a later allocation to pick up. That is hygiene, not a
+//! boundary: while the process runs, the key is in its memory by definition.
+//!
 //! zurid takes 32 bytes and never asks where they came from. Sourcing them from
 //! config or an environment variable is acceptable only for development: a
 //! process-readable root key is not a hardware boundary. For anything holding
@@ -35,7 +40,7 @@
 
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// The root key length in bytes (XChaCha20-Poly1305 takes a 256-bit key).
 pub const ROOT_KEY_LEN: usize = 32;
@@ -78,7 +83,11 @@ pub enum VaultError {
 
 /// The 32-byte root key that seals every at-rest secret, held in memory only.
 ///
-/// [`Debug`] is redacted so the root key can never reach a log line.
+/// [`Debug`] is redacted so the root key can never reach a log line, and the
+/// bytes are **zeroized on drop** — every clone independently, since each holds
+/// its own copy. It is the one key whose disclosure loses every other secret at
+/// once, so leaving it in freed heap for a crash dump or a later allocation to
+/// pick up would undo the whole envelope model.
 ///
 /// ```
 /// # use zurid::SecretVault;
@@ -88,7 +97,7 @@ pub enum VaultError {
 /// // The same blob will not open under a different row key.
 /// assert!(vault.open(b"other-row", &blob).is_err());
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct SecretVault([u8; ROOT_KEY_LEN]);
 
 impl std::fmt::Debug for SecretVault {
@@ -248,6 +257,41 @@ mod tests {
             Err(VaultError::RootKeyLength(16))
         ));
         assert!(SecretVault::from_bytes(&[0u8; ROOT_KEY_LEN]).is_ok());
+    }
+
+    // The root key is wiped on drop. Reading freed memory is not something a
+    // test may do, so the property is pinned two ways: the type-level
+    // `ZeroizeOnDrop` bound — which is exactly what makes `drop` wipe — and the
+    // behaviour of the wipe itself, run explicitly on a live value.
+    #[test]
+    fn the_root_key_is_zeroized() {
+        fn assert_zeroize_on_drop<T: ZeroizeOnDrop>() {}
+        assert_zeroize_on_drop::<SecretVault>();
+
+        let mut vault = vault();
+        let blob = vault.seal(AAD, PLAINTEXT).unwrap();
+        vault.zeroize();
+        assert!(
+            matches!(vault.open(AAD, &blob), Err(VaultError::Open)),
+            "after the wipe the vault no longer holds the key it sealed under"
+        );
+    }
+
+    // Each clone owns its own copy, so dropping one must not wipe another's key.
+    // A vault shared behind an Arc-of-bytes would fail this: the first drop
+    // would blind every remaining holder.
+    #[test]
+    fn dropping_a_clone_leaves_the_original_usable() {
+        let vault = vault();
+        let blob = vault.seal(AAD, PLAINTEXT).unwrap();
+
+        drop(vault.clone());
+
+        assert_eq!(
+            vault.open(AAD, &blob).unwrap().as_slice(),
+            PLAINTEXT,
+            "a dropped clone must not take the original's key with it"
+        );
     }
 
     // The vault's Debug must never reveal its bytes.
