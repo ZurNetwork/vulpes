@@ -46,7 +46,7 @@ mod oauth_state;
 mod plc_log;
 
 pub use key_store::PgKeyStore;
-pub use oauth_state::PgOAuthStateStore;
+pub use oauth_state::{DEFAULT_AUTH_REQUEST_TTL, PgOAuthStateStore};
 pub use plc_log::PgPlcOperationLog;
 
 // `static EMBEDDED_MIGRATIONS: &[(i64, &str, &str)] = &[(version, description, sql), …];`

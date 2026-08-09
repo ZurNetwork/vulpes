@@ -5,8 +5,10 @@
 //! delete removes, an absent row reads as `None` rather than erroring, and the
 //! two row families do not collide.
 
+use std::time::Duration;
+
 use zurid::OAuthStateStore;
-use zurid::postgres::PgOAuthStateStore;
+use zurid::postgres::{DEFAULT_AUTH_REQUEST_TTL, PgOAuthStateStore};
 
 use crate::pg::fresh_pool;
 
@@ -148,6 +150,124 @@ async fn reading_an_auth_request_consumes_it() {
 
     // The follow-up delete jacquard issues must stay a harmless no-op.
     store.delete_auth_request("state-once").await.unwrap();
+}
+
+/// Age a saved auth request by moving its `created_at` back — the only way to
+/// exercise a TTL without sleeping through it.
+async fn backdate(pool: &sqlx::PgPool, state: &str, seconds: i64) {
+    sqlx::query(
+        "UPDATE atproto_oauth.auth_request \
+         SET created_at = now() - make_interval(secs => $2) WHERE state = $1",
+    )
+    .bind(state)
+    .bind(seconds as f64)
+    .execute(pool)
+    .await
+    .expect("backdate the request");
+}
+
+// A row past its TTL reads as ABSENT. An auth request holds a live PKCE verifier
+// and DPoP key for a sign-in still in flight; "the visitor never came back" and
+// "the callback arrived a week later" are otherwise the same row, so a redirect
+// captured today would still complete a sign-in started long ago.
+#[tokio::test]
+async fn an_expired_auth_request_reads_as_absent() {
+    let (pool, _db) = fresh_pool().await;
+    let store = PgOAuthStateStore::new(pool.clone()).with_auth_request_ttl(Duration::from_secs(60));
+
+    store
+        .save_auth_request("state-stale", b"sealed-request")
+        .await
+        .unwrap();
+    backdate(&pool, "state-stale", 61).await;
+
+    assert!(
+        store
+            .get_auth_request("state-stale")
+            .await
+            .unwrap()
+            .is_none(),
+        "a row past its TTL must read as absent, not as a usable authorization"
+    );
+
+    // Expiry is enforced in the READ, not by a sweeper — the row is still there
+    // and still refused, so a lapsed prune job cannot extend the window.
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM atproto_oauth.auth_request WHERE state = $1")
+            .bind("state-stale")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        remaining, 1,
+        "the read refuses it without needing the sweep"
+    );
+}
+
+// The other side of the boundary: a row inside the TTL still reads, so the TTL
+// does not simply break every sign-in.
+#[tokio::test]
+async fn an_auth_request_inside_its_ttl_still_reads() {
+    let (pool, _db) = fresh_pool().await;
+    let store = PgOAuthStateStore::new(pool.clone()).with_auth_request_ttl(Duration::from_secs(60));
+
+    store
+        .save_auth_request("state-fresh", b"sealed-request")
+        .await
+        .unwrap();
+    backdate(&pool, "state-fresh", 30).await;
+
+    assert_eq!(
+        store
+            .get_auth_request("state-fresh")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(b"sealed-request".as_slice()),
+        "a request well inside its TTL must still complete"
+    );
+}
+
+// `prune_expired` drops exactly the expired rows and leaves the live ones.
+#[tokio::test]
+async fn prune_expired_drops_only_the_stale_requests() {
+    let (pool, _db) = fresh_pool().await;
+    let store = PgOAuthStateStore::new(pool.clone()).with_auth_request_ttl(Duration::from_secs(60));
+
+    for state in ["stale-one", "stale-two", "live"] {
+        store.save_auth_request(state, b"sealed").await.unwrap();
+    }
+    backdate(&pool, "stale-one", 600).await;
+    backdate(&pool, "stale-two", 61).await;
+
+    assert_eq!(
+        store.prune_expired().await.unwrap(),
+        2,
+        "both expired requests are pruned"
+    );
+
+    let remaining: Vec<String> =
+        sqlx::query_scalar("SELECT state FROM atproto_oauth.auth_request ORDER BY state")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, vec!["live".to_string()], "the live row survives");
+
+    assert_eq!(
+        store.prune_expired().await.unwrap(),
+        0,
+        "a second sweep with nothing to do prunes nothing"
+    );
+}
+
+#[tokio::test]
+async fn the_default_ttl_is_ten_minutes() {
+    let (pool, _db) = fresh_pool().await;
+    assert_eq!(
+        PgOAuthStateStore::new(pool).auth_request_ttl(),
+        DEFAULT_AUTH_REQUEST_TTL,
+    );
+    assert_eq!(DEFAULT_AUTH_REQUEST_TTL, Duration::from_secs(600));
 }
 
 // A re-issued `state` overwrites rather than erroring, so a retried sign-in does

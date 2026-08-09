@@ -27,8 +27,18 @@ CREATE TABLE IF NOT EXISTS atproto_oauth.client_session (
 -- `state`. Short-lived — written when the flow starts, read then deleted at the
 -- callback. Persisting them is what lets the redirect land on a different
 -- process than the one that started the flow.
+--
+-- created_at is load-bearing, not bookkeeping: the read refuses any row older
+-- than the store's TTL (so a sign-in that was started and abandoned cannot be
+-- completed days later), and `PgOAuthStateStore::prune_expired` sweeps them.
 CREATE TABLE IF NOT EXISTS atproto_oauth.auth_request (
     state      text        PRIMARY KEY NOT NULL,
     data       bytea       NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- The prune filters on created_at and nothing else, so without this index it is
+-- a sequential scan of the whole table — which is exactly the shape that makes
+-- an operator quietly stop running the sweep.
+CREATE INDEX IF NOT EXISTS atproto_oauth_auth_request_created_at
+    ON atproto_oauth.auth_request (created_at);
