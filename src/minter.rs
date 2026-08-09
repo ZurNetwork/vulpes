@@ -39,8 +39,9 @@ use crate::plc::{
     TombstoneOperation,
 };
 use crate::{
-    CustodyKeys, Did, DirectoryError, Handle, KeyRole, KeyStore, MintPolicy, PlcDirectory,
-    PlcOperationLog, PlcOperationRecord, PolicyError, SecretKey, StorageError,
+    CustodyKeys, Did, DirectoryError, Handle, KeyRole, KeyStore, MAX_ROTATION_KEYS,
+    MIN_ROTATION_KEYS, MintPolicy, PlcDirectory, PlcOperationLog, PlcOperationRecord, PolicyError,
+    SecretKey, StorageError,
 };
 
 /// Why a mint, update or tombstone failed.
@@ -100,6 +101,16 @@ pub enum MintError {
         /// The DID whose prior operation could not be parsed.
         did: Did,
         /// What was wrong with it.
+        detail: String,
+    },
+    /// The prior operation's `rotationKeys` break the `did:plc` spec's limits
+    /// (1–5 keys, no duplicates), so carrying them forward verbatim would sign
+    /// an operation the directory refuses.
+    #[error("cannot update {did}: its prior operation's `rotationKeys` are invalid ({detail})")]
+    InvalidPriorRotationKeys {
+        /// The DID whose update was refused.
+        did: Did,
+        /// Which limit was broken.
         detail: String,
     },
 }
@@ -339,16 +350,29 @@ impl Minter {
     /// rotation key can still reverse it, which is why the cold-recovery key is
     /// retained rather than destroyed.
     ///
+    /// The prior operation must be a chainable `plc_operation`, exactly as an
+    /// update requires. An already-tombstoned DID is **refused**: a tombstone
+    /// chaining a tombstone is not a valid operation for the directory to
+    /// accept, and signing one would burn the retry path an operator reaches for
+    /// when they are unsure whether the first one landed.
+    ///
     /// Submit-before-record, like [`update_handle`](Minter::update_handle): a
     /// failed submission never advances the local chain, so a retry re-reads the
     /// correct `prev` and re-signs the *same* tombstone.
     pub async fn tombstone(&self, did: &Did) -> Result<(), MintError> {
         let signer = self.signer_keypair(did).await?;
-        let prev = self
+        let prior = self
             .op_log
-            .latest_cid(did)
+            .latest_op(did)
             .await?
             .ok_or_else(|| MintError::NoPriorOperation(did.clone()))?;
+        if prior.op_type != OP_TYPE_OPERATION {
+            return Err(MintError::NotChainable {
+                did: did.clone(),
+                op_type: prior.op_type,
+            });
+        }
+        let prev = prior.cid;
 
         let operation = TombstoneOperation::new(prev.clone());
         let signature = signer.sign(&operation.signing_bytes()?).map_err(crypto)?;
@@ -420,11 +444,18 @@ impl Minter {
             did: did.clone(),
             detail,
         };
+        // SECURITY-TODO(engineer): B2 — operation log has no integrity binding;
+        // mitigation (HMAC column / sig-verify / re-derive) is an Engineer
+        // decision. Everything below is read out of a stored row and carried
+        // into an operation this minter then SIGNS, so whoever can write that
+        // row chooses what gets signed. `check_prior_rotation_keys` bounds the
+        // blast radius (see its own note); it does not detect tampering.
         let json: serde_json::Value = serde_json::from_str(&prior.operation_json)
             .map_err(|err| malformed(format!("its stored JSON does not parse: {err}")))?;
 
         let rotation_keys: Vec<String> = serde_json::from_value(json["rotationKeys"].clone())
             .map_err(|err| malformed(format!("`rotationKeys` is not a string array: {err}")))?;
+        self.check_prior_rotation_keys(did, &rotation_keys)?;
         let verification_methods: BTreeMap<String, String> =
             serde_json::from_value(json["verificationMethods"].clone()).map_err(|err| {
                 malformed(format!("`verificationMethods` is not a string map: {err}"))
@@ -463,6 +494,56 @@ impl Minter {
             also_known_as: vec![handle.at_uri()],
             services,
         })
+    }
+
+    /// Re-check a prior operation's `rotationKeys` against the `did:plc` spec's
+    /// own limits — 1–5 keys, no duplicates
+    /// (<https://web.plc.directory/spec/v0.1/did-plc>) — before carrying them
+    /// forward verbatim.
+    ///
+    /// [`MintPolicy::validate`](crate::MintPolicy::validate) checks the same
+    /// limits for what this minter *mints*, but an update does not mint the
+    /// rotation keys: it copies them out of a stored row. If that row is
+    /// oversized or holds a duplicate, copying it signs an operation the
+    /// directory refuses — and because a refused operation cannot advance the
+    /// chain, the identity is then **wedged**: no handle change, no tombstone,
+    /// no way back. Checked here so a bad row is one rejected call rather than a
+    /// dead identity.
+    // SECURITY-TODO(engineer): B2 — operation log has no integrity binding;
+    // mitigation (HMAC column / sig-verify / re-derive) is an Engineer decision.
+    // This check bounds what a tampered `rotationKeys` can do (it can no longer
+    // wedge the identity); it does NOT detect tampering, and it says nothing
+    // about `verificationMethods`, `services` or `prev`. Whether the log should
+    // authenticate its own rows — and how — is the open call.
+    fn check_prior_rotation_keys(
+        &self,
+        did: &Did,
+        rotation_keys: &[String],
+    ) -> Result<(), MintError> {
+        let invalid = |detail: String| MintError::InvalidPriorRotationKeys {
+            did: did.clone(),
+            detail,
+        };
+        if rotation_keys.len() < MIN_ROTATION_KEYS {
+            return Err(invalid(format!(
+                "{} keys, the spec requires at least {MIN_ROTATION_KEYS}",
+                rotation_keys.len()
+            )));
+        }
+        if rotation_keys.len() > MAX_ROTATION_KEYS {
+            return Err(invalid(format!(
+                "{} keys, the spec allows at most {MAX_ROTATION_KEYS}",
+                rotation_keys.len()
+            )));
+        }
+        for (index, key) in rotation_keys.iter().enumerate() {
+            if rotation_keys[..index].contains(key) {
+                return Err(invalid(
+                    "a rotation key is listed more than once".to_owned(),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -848,6 +929,35 @@ mod tests {
             minter.tombstone(&unknown).await,
             Err(MintError::NoCustody(_))
         ));
+    }
+
+    // A tombstone checks the prior op's TYPE, exactly as an update does. A
+    // tombstone chaining a tombstone is not an operation the directory accepts,
+    // and signing one burns the retry an operator reaches for when they are
+    // unsure the first landed: the local chain would advance past a `prev` the
+    // directory never saw.
+    #[tokio::test]
+    async fn a_tombstone_rejects_an_already_tombstoned_did() {
+        let (minter, _keys, log) = minter();
+
+        let did = minter.mint(&handle()).await.unwrap();
+        minter.tombstone(&did).await.unwrap();
+        let tombstone_cid = log.latest_cid(&did).await.unwrap().unwrap();
+
+        let error = minter
+            .tombstone(&did)
+            .await
+            .expect_err("a DID cannot be tombstoned twice");
+        assert!(
+            matches!(&error, MintError::NotChainable { op_type, .. } if op_type == OP_TYPE_TOMBSTONE),
+            "the rejection names the tombstone clearly, got: {error}"
+        );
+        assert_eq!(
+            log.latest_cid(&did).await.unwrap().unwrap(),
+            tombstone_cid,
+            "the refused tombstone must not have advanced the chain"
+        );
+        assert_eq!(log.records().len(), 2, "genesis + the one tombstone");
     }
 
     // --- update_handle ------------------------------------------------------
@@ -1370,6 +1480,127 @@ mod tests {
             minter.update_handle(&did, &new_handle()).await,
             Err(MintError::PolicyMismatch { .. })
         ));
+    }
+
+    /// A prior operation carrying `rotation_keys` verbatim, and a minter over it.
+    async fn minter_over_prior_rotation_keys(
+        did: &Did,
+        rotation_keys: serde_json::Value,
+    ) -> Minter {
+        let log = Arc::new(MemoryPlcOperationLog::new());
+        log_prior(
+            &log,
+            did,
+            serde_json::json!({
+                "type": "plc_operation",
+                "rotationKeys": rotation_keys,
+                "verificationMethods": {"atproto": "did:key:sign"},
+                "alsoKnownAs": ["at://alice.example.com"],
+                "services": {},
+                "prev": serde_json::Value::Null
+            }),
+        )
+        .await;
+        Minter::new(
+            Arc::new(MemoryKeyStore::new()),
+            log,
+            Arc::new(NoopPlcDirectory),
+            MintPolicy::identity_only(),
+        )
+        .unwrap()
+    }
+
+    // The spec's rotationKeys limits (1–5, no duplicates) are re-run on the
+    // CARRIED-FORWARD keys, not just on what this minter mints. An update does
+    // not mint them — it copies them out of a stored row — and copying an
+    // oversized or duplicated list signs an operation the directory refuses.
+    // Because a refused operation cannot advance the chain, that would WEDGE the
+    // identity: no handle change, no tombstone, no way back. One rejected call
+    // beats a dead identity.
+    #[tokio::test]
+    async fn an_update_rejects_prior_rotation_keys_that_break_the_spec_limits() {
+        let too_many: Vec<String> = (0..=MAX_ROTATION_KEYS)
+            .map(|index| format!("did:key:k{index}"))
+            .collect();
+        let cases: [(&str, serde_json::Value, &str); 3] = [
+            (
+                "did:plc:eeeeeeeeeeeeeeeeeeeeeeee",
+                serde_json::json!([]),
+                "at least",
+            ),
+            (
+                "did:plc:ffffffffffffffffffffffff",
+                serde_json::json!(too_many),
+                "at most",
+            ),
+            (
+                "did:plc:gggggggggggggggggggggggg",
+                serde_json::json!(["did:key:same", "did:key:same"]),
+                "more than once",
+            ),
+        ];
+
+        for (raw_did, rotation_keys, expected) in cases {
+            let did = Did::new(raw_did);
+            let minter = minter_over_prior_rotation_keys(&did, rotation_keys).await;
+
+            let error = minter
+                .update_handle(&did, &new_handle())
+                .await
+                .expect_err("rotationKeys breaking the spec must be refused");
+            assert!(
+                matches!(&error, MintError::InvalidPriorRotationKeys { detail, .. }
+                    if detail.contains(expected)),
+                "expected a rotationKeys rejection mentioning `{expected}`, got: {error}"
+            );
+        }
+    }
+
+    // The guard is a limit check, not a shape change: a prior operation whose
+    // rotationKeys are legal still carries them forward untouched.
+    #[tokio::test]
+    async fn an_update_carries_legal_prior_rotation_keys_forward() {
+        let did = Did::new("did:plc:hhhhhhhhhhhhhhhhhhhhhhhh");
+        let rotation_keys = serde_json::json!(["did:key:cold", "did:key:hot", "did:key:third"]);
+        let log = Arc::new(MemoryPlcOperationLog::new());
+        log_prior(
+            &log,
+            &did,
+            serde_json::json!({
+                "type": "plc_operation",
+                "rotationKeys": rotation_keys,
+                "verificationMethods": {"atproto": "did:key:sign"},
+                "alsoKnownAs": ["at://alice.example.com"],
+                "services": {},
+                "prev": serde_json::Value::Null
+            }),
+        )
+        .await;
+
+        // Real custody, so the update gets past the signer load and reaches the
+        // directory with the document it built.
+        let keys = Arc::new(MemoryKeyStore::new());
+        let operational = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let custody = CustodyKeys {
+            cold_recovery: SecretKey::new(vec![0u8; 32]),
+            operational: SecretKey::new(operational.export()),
+            signing: SecretKey::new(vec![0u8; 32]),
+        };
+        keys.put(&did, &custody).await.unwrap();
+
+        let directory = Arc::new(CapturingDirectory::default());
+        let minter =
+            Minter::new(keys, log, directory.clone(), MintPolicy::identity_only()).unwrap();
+
+        minter
+            .update_handle(&did, &new_handle())
+            .await
+            .expect("three distinct rotation keys are within the spec's limits");
+        assert_eq!(
+            directory.last()["rotationKeys"],
+            rotation_keys,
+            "legal rotation keys are carried forward untouched"
+        );
     }
 
     // A prior operation whose stored JSON is not a PLC operation fails as

@@ -18,6 +18,43 @@ recalled.
 
 ## Open — needs an Engineer call
 
+### F30. The operation log has no integrity binding (security review B2)
+
+**Where:** `src/minter.rs`, `Minter::carry_forward` — marked in-source with
+`// SECURITY-TODO(engineer): B2`.
+
+`update_handle` reads the DID's latest logged operation and carries its
+`rotationKeys`, `verificationMethods` and `services` forward into an operation it
+then **signs**. Nothing authenticates that row. Whoever can write to
+`plc_operations` therefore chooses what the custody key signs — the signing
+oracle the security review named B2.
+
+**Not decided here.** The candidate mitigations are an HMAC column over each row
+under the same root key, verifying the stored `sig` against the operation's own
+rotation keys before trusting it, or re-deriving the document from custody
+instead of reading it back (which costs the "an update decrypts exactly one key"
+property). Each is a different trade between cost, key hygiene and how much of
+the row is covered, and the choice shapes the schema — so it is the Engineer's,
+not the extraction's.
+
+**Shipped meanwhile (H8):** the spec's `rotationKeys` limits (1–5, no
+duplicates) are re-run on the carried-forward list. That does not detect
+tampering and does not cover the other fields; what it does is stop a bad row
+from **wedging** the identity — a rotation-key list the directory refuses would
+otherwise leave no handle change and no tombstone possible, permanently.
+
+### F31. Migration files are edited in place, pre-1.0
+
+**Where:** `migrations/`.
+
+The three migrations were **modified after they were first written** (the
+`IF NOT EXISTS` removal, the `auth_request.created_at` index). sqlx checksums
+migration files, so any database that already applied an older copy will fail
+`migrate` with a version mismatch rather than silently diverging — which is the
+correct behaviour, and safe while zurid is unreleased and unadopted. From the
+first tagged release, a change to shipped DDL must be a **new** migration
+instead. Called out here rather than assumed.
+
 ### F8. An update refuses a prior operation the policy does not describe
 
 **Where:** `src/minter.rs`, `Minter::carry_forward`; the ignored test
