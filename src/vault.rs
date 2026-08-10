@@ -15,6 +15,14 @@
 //! compromise alone — a leaked backup, a read replica, an injection read gadget —
 //! therefore yields no usable secret.
 //!
+//! The same root key also anchors **integrity** where a value is public but
+//! trusted: [`oplog_mac`](SecretVault::oplog_mac) derives a dedicated HMAC
+//! subkey (HKDF, so the AEAD key stays single-purpose) to authenticate each
+//! logged `did:plc` operation. A read compromise reveals nothing new there — the
+//! operation is already public — but a *write* compromise cannot forge a valid
+//! tag without the root key, so a tampered operation-log row is caught before
+//! the minter signs anything based on it.
+//!
 //! # Root-key custody is the caller's problem
 //!
 //! The root key is [`Zeroize`]d when the vault drops — including every clone,

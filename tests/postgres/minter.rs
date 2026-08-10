@@ -152,6 +152,9 @@ async fn a_stale_update_cannot_fork_the_chain_in_postgres() {
         op_type: "plc_operation".to_string(),
         prev: Some(genesis_cid),
         operation_json: r#"{"type":"plc_operation"}"#.to_string(),
+        // The DB refuses this on the (did, prev) unique index regardless of the
+        // tag, so a placeholder is enough — this proves the storage constraint.
+        op_mac: vec![0u8; 32],
     };
     assert!(
         log.append(&forked).await.is_err(),
@@ -165,4 +168,54 @@ async fn a_stale_update_cannot_fork_the_chain_in_postgres() {
         .await
         .unwrap();
     assert_eq!(rows, 2, "genesis + one update — never a third, forked row");
+}
+
+// B2 END TO END: a row altered directly in PostgreSQL — the leaked-credential /
+// injection-write threat — is rejected when the minter next reads it, because
+// the HMAC no longer matches. The attacker can change the columns but cannot
+// forge the tag without the root key, which never touches the database.
+#[tokio::test]
+async fn a_row_tampered_in_postgres_is_rejected_on_the_next_update() {
+    let (pool, _db) = fresh_pool().await;
+    let keys = Arc::new(PgKeyStore::new(pool.clone()));
+    let log = Arc::new(PgPlcOperationLog::new(pool.clone()));
+    let minter = Minter::new(
+        keys,
+        log,
+        Arc::new(NoopPlcDirectory),
+        MintPolicy::identity_only(),
+        vault(),
+    )
+    .unwrap();
+
+    let did = minter
+        .mint(&Handle::try_new("alice.example.com").unwrap())
+        .await
+        .expect("mint");
+
+    // Substitute an attacker's rotation keys straight into the row, leaving the
+    // stored op_mac untouched — exactly what a write-access attacker can do.
+    let forged = serde_json::json!({
+        "type": "plc_operation",
+        "rotationKeys": ["did:key:attacker1", "did:key:attacker2"],
+        "verificationMethods": {"atproto": "did:key:sign"},
+        "alsoKnownAs": ["at://alice.example.com"],
+        "services": {},
+        "prev": serde_json::Value::Null,
+    });
+    sqlx::query("UPDATE plc_operations SET operation = $2 WHERE did = $1")
+        .bind(did.as_str())
+        .bind(&forged)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let error = minter
+        .update_handle(&did, &Handle::try_new("bob.example.com").unwrap())
+        .await
+        .expect_err("a tampered row must be refused, not signed");
+    assert!(
+        matches!(error, zurid::MintError::TamperedPriorOperation(_)),
+        "the altered row fails its MAC check, got: {error}"
+    );
 }

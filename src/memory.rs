@@ -67,6 +67,18 @@ impl MemoryPlcOperationLog {
     pub fn records(&self) -> Vec<PlcOperationRecord> {
         self.records.lock().expect("op log lock").clone()
     }
+
+    /// Overwrite the DID's most recent record in place — how a test simulates an
+    /// attacker with database write access altering a row after it was logged,
+    /// to prove the operation-log MAC catches it. Panics if the DID has none.
+    pub fn replace_latest(&self, did: &Did, record: PlcOperationRecord) {
+        let mut records = self.records.lock().expect("op log lock");
+        let index = records
+            .iter()
+            .rposition(|stored| &stored.did == did)
+            .expect("the DID has a logged operation to replace");
+        records[index] = record;
+    }
 }
 
 #[async_trait]

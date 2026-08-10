@@ -201,7 +201,7 @@ impl RoleKeypairs {
 /// #     log: Arc<dyn zurid::PlcOperationLog>,
 /// #     vault: SecretVault,
 /// # ) -> Result<(), Box<dyn std::error::Error>> {
-/// let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only(), vault, vault())?;
+/// let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only(), vault)?;
 /// let did = minter.mint(&Handle::try_new("alice.example.com")?).await?;
 /// # Ok(())
 /// # }
@@ -263,6 +263,40 @@ impl Minter {
         )?)
     }
 
+    /// Stamp `record` with its operation-log MAC, ready to append.
+    ///
+    /// Every record this minter appends passes through here, so a logged
+    /// operation always carries a tag a later read can verify. The MAC message
+    /// is the record's own [`mac_message`](PlcOperationRecord::mac_message); the
+    /// operation is one this minter just serialized, so it is always valid JSON.
+    fn maced(&self, mut record: PlcOperationRecord) -> PlcOperationRecord {
+        let message = record
+            .mac_message()
+            .expect("a freshly minted operation is always valid JSON");
+        record.op_mac = self.vault.oplog_mac(&message).to_vec();
+        record
+    }
+
+    /// Verify a prior operation's stored MAC before trusting anything it carries.
+    ///
+    /// This is B2's teeth: the row was written by someone, and an attacker with
+    /// database write access can change its columns — but not forge the tag
+    /// without the root key. A row whose JSON will not even parse is
+    /// `MalformedPriorOperation`; a row whose tag does not verify is
+    /// `TamperedPriorOperation`. Either way its carried fields are never signed.
+    fn verify_mac(&self, record: &PlcOperationRecord) -> Result<(), MintError> {
+        let message = record
+            .mac_message()
+            .map_err(|err| MintError::MalformedPriorOperation {
+                did: record.did.clone(),
+                detail: format!("its stored JSON does not parse: {err}"),
+            })?;
+        if !self.vault.verify_oplog_mac(&message, &record.op_mac) {
+            return Err(MintError::TamperedPriorOperation(record.did.clone()));
+        }
+        Ok(())
+    }
+
     /// The policy this minter signs by.
     pub fn policy(&self) -> &MintPolicy {
         &self.policy
@@ -314,14 +348,16 @@ impl Minter {
         // (5) Custody first: sealed here, so the store only ever holds ciphertext.
         let sealed = self.seal_custody(&did, &keypairs.to_custody())?;
         self.key_store.put(&did, &sealed).await?;
-        // (6) Then the chain, so a later operation knows its `prev`.
-        let record = PlcOperationRecord {
+        // (6) Then the chain, so a later operation knows its `prev` — MAC'd, so
+        //     a later read can trust the fields it carries forward.
+        let record = self.maced(PlcOperationRecord {
             did: did.clone(),
             cid: genesis_cid,
             op_type: OP_TYPE_OPERATION.to_string(),
             prev: None,
             operation_json: operation_json.to_string(),
-        };
+            op_mac: Vec::new(),
+        });
         self.op_log.append(&record).await?;
         // (7) Publication last — a separate, retryable step.
         self.directory.submit(did.as_str(), &operation_json).await?;
@@ -374,14 +410,15 @@ impl Minter {
 
         // (4) Publication FIRST — a failed submit must not advance our chain.
         self.directory.submit(did.as_str(), &operation_json).await?;
-        // (5) Then record the now-submitted update as the DID's latest op.
-        let record = PlcOperationRecord {
+        // (5) Then record the now-submitted update as the DID's latest op, MAC'd.
+        let record = self.maced(PlcOperationRecord {
             did: did.clone(),
             cid: cid.clone(),
             op_type: OP_TYPE_OPERATION.to_string(),
             prev: Some(prior.cid),
             operation_json: operation_json.to_string(),
-        };
+            op_mac: Vec::new(),
+        });
         if let Err(err) = self.op_log.append(&record).await {
             // Rejected — either a benign identical replay (duplicate `cid`) or a
             // fork attempt against an already-used `prev`. Benign ONLY if the
@@ -421,6 +458,9 @@ impl Minter {
             .latest_op(did)
             .await?
             .ok_or_else(|| MintError::NoPriorOperation(did.clone()))?;
+        // The prior row supplies the `prev` this tombstone chains onto, so its
+        // integrity is trusted here too — verify the MAC before reading its cid.
+        self.verify_mac(&prior)?;
         if prior.op_type != OP_TYPE_OPERATION {
             return Err(MintError::NotChainable {
                 did: did.clone(),
@@ -437,13 +477,14 @@ impl Minter {
 
         // Publication FIRST, then the record — see `update_handle`.
         self.directory.submit(did.as_str(), &operation_json).await?;
-        let record = PlcOperationRecord {
+        let record = self.maced(PlcOperationRecord {
             did: did.clone(),
             cid,
             op_type: OP_TYPE_TOMBSTONE.to_string(),
             prev: Some(prev),
             operation_json: operation_json.to_string(),
-        };
+            op_mac: Vec::new(),
+        });
         self.op_log.append(&record).await?;
         Ok(())
     }
@@ -490,6 +531,16 @@ impl Minter {
         prior: &PlcOperationRecord,
         handle: &Handle,
     ) -> Result<PlcDocument, MintError> {
+        // B2: verify the row's integrity BEFORE trusting anything it carries.
+        // Everything below is read out of a stored row and carried into an
+        // operation this minter then SIGNS, so whoever can write that row would
+        // otherwise choose what gets signed. The MAC — keyed by a subkey of the
+        // root key, which is not in the database — makes a tampered row fail
+        // here instead. (`check_prior_rotation_keys` still bounds a *malformed*
+        // row that nonetheless carries a valid tag, e.g. a row zurid wrote before
+        // a policy tightened.)
+        self.verify_mac(prior)?;
+
         if prior.op_type != OP_TYPE_OPERATION {
             return Err(MintError::NotChainable {
                 did: did.clone(),
@@ -500,12 +551,6 @@ impl Minter {
             did: did.clone(),
             detail,
         };
-        // SECURITY-TODO(engineer): B2 — operation log has no integrity binding;
-        // mitigation (HMAC column / sig-verify / re-derive) is an Engineer
-        // decision. Everything below is read out of a stored row and carried
-        // into an operation this minter then SIGNS, so whoever can write that
-        // row chooses what gets signed. `check_prior_rotation_keys` bounds the
-        // blast radius (see its own note); it does not detect tampering.
         let json: serde_json::Value = serde_json::from_str(&prior.operation_json)
             .map_err(|err| malformed(format!("its stored JSON does not parse: {err}")))?;
 
@@ -565,12 +610,12 @@ impl Minter {
     /// chain, the identity is then **wedged**: no handle change, no tombstone,
     /// no way back. Checked here so a bad row is one rejected call rather than a
     /// dead identity.
-    // SECURITY-TODO(engineer): B2 — operation log has no integrity binding;
-    // mitigation (HMAC column / sig-verify / re-derive) is an Engineer decision.
-    // This check bounds what a tampered `rotationKeys` can do (it can no longer
-    // wedge the identity); it does NOT detect tampering, and it says nothing
-    // about `verificationMethods`, `services` or `prev`. Whether the log should
-    // authenticate its own rows — and how — is the open call.
+    ///
+    /// This is an **availability** guard, not an authenticity one — it runs
+    /// *after* [`verify_mac`](Minter::verify_mac) has already established the row
+    /// is genuine. Its job is the row zurid itself wrote whose `rotationKeys`
+    /// stopped being valid (a spec or policy tightening), not an attacker's row,
+    /// which the MAC already rejected.
     fn check_prior_rotation_keys(
         &self,
         did: &Did,
@@ -630,6 +675,18 @@ mod tests {
     /// and a MAC written by one minter verifies under another built the same way.
     fn vault() -> SecretVault {
         SecretVault::from_bytes(&TEST_ROOT_KEY).expect("a 32-byte test root key")
+    }
+
+    /// Stamp a hand-built record with a VALID operation-log MAC under the test
+    /// vault — so it stands in for a row zurid legitimately wrote, which is what
+    /// `carry_forward`/`tombstone` verify before trusting. A staged prior without
+    /// this would fail the integrity check for the wrong reason.
+    fn maced(mut record: PlcOperationRecord) -> PlcOperationRecord {
+        let message = record
+            .mac_message()
+            .expect("staged operation is valid JSON");
+        record.op_mac = vault().oplog_mac(&message).to_vec();
+        record
     }
 
     /// Open the sealed custody a store holds back into plaintext keys — what
@@ -1157,13 +1214,14 @@ mod tests {
         keys.put(&did, &sealed).await.unwrap();
 
         let log = Arc::new(MemoryPlcOperationLog::new());
-        let genesis_record = PlcOperationRecord {
+        let genesis_record = maced(PlcOperationRecord {
             did: did.clone(),
             cid: genesis_cid.clone(),
             op_type: OP_TYPE_OPERATION.to_string(),
             prev: None,
             operation_json: genesis_json.to_string(),
-        };
+            op_mac: Vec::new(),
+        });
         log.append(&genesis_record).await.unwrap();
 
         let directory = Arc::new(CapturingDirectory::default());
@@ -1298,6 +1356,100 @@ mod tests {
         ));
     }
 
+    // --- B2: operation-log integrity ---------------------------------------
+
+    // Every operation the minter appends carries a MAC — the mint path included.
+    #[tokio::test]
+    async fn a_minted_operation_is_logged_with_a_valid_mac() {
+        let (minter, _keys, log) = minter();
+
+        let did = minter.mint(&handle()).await.unwrap();
+
+        let genesis = log.latest_op(&did).await.unwrap().expect("genesis logged");
+        assert_eq!(genesis.op_mac.len(), crate::OPLOG_MAC_LEN, "a 32-byte tag");
+        let message = genesis.mac_message().unwrap();
+        assert!(
+            vault().verify_oplog_mac(&message, &genesis.op_mac),
+            "the logged tag verifies under the minter's vault"
+        );
+    }
+
+    // THE B2 PROPERTY. An attacker with database write access alters a prior
+    // operation's carried fields — here the rotation keys — but cannot forge the
+    // MAC without the root key. The update reads that row, the tag no longer
+    // matches, and the minter refuses to sign what it carries rather than
+    // handing DID control to the altered keys.
+    #[tokio::test]
+    async fn an_update_rejects_a_prior_whose_row_was_tampered() {
+        let log = Arc::new(MemoryPlcOperationLog::new());
+        let minter = Minter::new(
+            Arc::new(MemoryKeyStore::new()),
+            log.clone(),
+            Arc::new(NoopPlcDirectory),
+            MintPolicy::identity_only(),
+            vault(),
+        )
+        .unwrap();
+
+        let did = minter.mint(&handle()).await.unwrap();
+
+        // Rewrite the genesis row's operation_json — a valid but ATTACKER-CHOSEN
+        // rotation-key set — WITHOUT updating the MAC (the attacker cannot).
+        let genesis = log.latest_op(&did).await.unwrap().unwrap();
+        let mut forged: serde_json::Value = serde_json::from_str(&genesis.operation_json).unwrap();
+        forged["rotationKeys"] = serde_json::json!(["did:key:attacker1", "did:key:attacker2"]);
+        let tampered = PlcOperationRecord {
+            operation_json: forged.to_string(),
+            ..genesis
+        };
+        log.replace_latest(&did, tampered);
+
+        let error = minter
+            .update_handle(&did, &new_handle())
+            .await
+            .expect_err("a tampered prior row must not be trusted");
+        assert!(
+            matches!(error, MintError::TamperedPriorOperation(_)),
+            "the row fails its integrity check, got: {error}"
+        );
+    }
+
+    // A tombstone reads the prior row for its `prev`, so it verifies the MAC too:
+    // a tampered tip is refused rather than chained onto.
+    #[tokio::test]
+    async fn a_tombstone_rejects_a_tampered_prior() {
+        let log = Arc::new(MemoryPlcOperationLog::new());
+        let minter = Minter::new(
+            Arc::new(MemoryKeyStore::new()),
+            log.clone(),
+            Arc::new(NoopPlcDirectory),
+            MintPolicy::identity_only(),
+            vault(),
+        )
+        .unwrap();
+
+        let did = minter.mint(&handle()).await.unwrap();
+        let genesis = log.latest_op(&did).await.unwrap().unwrap();
+        // Flip a byte of the stored tag: the row itself is intact, the tag is not.
+        let mut bad_mac = genesis.op_mac.clone();
+        bad_mac[0] ^= 0x01;
+        log.replace_latest(
+            &did,
+            PlcOperationRecord {
+                op_mac: bad_mac,
+                ..genesis
+            },
+        );
+
+        assert!(
+            matches!(
+                minter.tombstone(&did).await,
+                Err(MintError::TamperedPriorOperation(_))
+            ),
+            "a tombstone must not chain onto a row whose tag does not verify"
+        );
+    }
+
     /// A log that simulates losing the append race ONCE: while armed, the next
     /// `append` first lands the IDENTICAL record — as a concurrent retry of the
     /// same deterministic update would — so the minter's own append then hits
@@ -1423,13 +1575,14 @@ mod tests {
             .unwrap();
         let winner_signed = winner_op.into_signed(URL_SAFE_NO_PAD.encode(&winner_sig));
         let winner_cid = winner_signed.cid().unwrap();
-        let winner_record = PlcOperationRecord {
+        let winner_record = maced(PlcOperationRecord {
             did: did.clone(),
             cid: winner_cid.clone(),
             op_type: OP_TYPE_OPERATION.to_string(),
             prev: Some(genesis_cid.clone()),
             operation_json: winner_signed.to_json().unwrap().to_string(),
-        };
+            op_mac: Vec::new(),
+        });
         *log.winner.lock().unwrap() = Some(winner_record);
 
         assert!(
@@ -1489,14 +1642,19 @@ mod tests {
 
     /// Log a hand-built prior operation for `did`, so a guard can be exercised
     /// against a shape the minter would never produce.
+    ///
+    /// The row is MAC'd with a valid tag, standing in for a row zurid genuinely
+    /// wrote — so the downstream guard under test (policy, rotation, malformed)
+    /// is what fails, not the integrity check.
     async fn log_prior(log: &MemoryPlcOperationLog, did: &Did, operation: serde_json::Value) {
-        let record = PlcOperationRecord {
+        let record = maced(PlcOperationRecord {
             did: did.clone(),
             cid: compute_cid(operation.to_string().as_bytes()),
             op_type: OP_TYPE_OPERATION.to_string(),
             prev: None,
             operation_json: operation.to_string(),
-        };
+            op_mac: Vec::new(),
+        });
         log.append(&record).await.unwrap();
     }
 

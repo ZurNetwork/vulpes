@@ -42,6 +42,7 @@ impl PlcOperationLog for PgPlcOperationLog {
             .bind(&record.op_type)
             .bind(record.prev.as_deref())
             .bind(&operation)
+            .bind(record.op_mac.as_slice())
             .bind(Utc::now())
             .execute(&self.pool)
             .await
@@ -74,12 +75,17 @@ impl PlcOperationLog for PgPlcOperationLog {
             return Ok(None);
         };
         let operation: serde_json::Value = row.try_get("operation").map_err(storage)?;
+        // `op_mac` is nullable (a row written before the column existed has
+        // none). A NULL comes back as an empty tag, which fails verification —
+        // an un-backfilled legacy row is rejected, never trusted.
+        let op_mac: Option<Vec<u8>> = row.try_get("op_mac").map_err(storage)?;
         Ok(Some(PlcOperationRecord {
             did: did.clone(),
             cid: row.try_get("cid").map_err(storage)?,
             op_type: row.try_get("op_type").map_err(storage)?,
             prev: row.try_get("prev").map_err(storage)?,
             operation_json: operation.to_string(),
+            op_mac: op_mac.unwrap_or_default(),
         }))
     }
 }

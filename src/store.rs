@@ -46,6 +46,58 @@ pub struct PlcOperationRecord {
     /// the directory. Public material only (rotation and verification
     /// `did:key`s, handles, and a signature); **never** a private key.
     pub operation_json: String,
+    /// The HMAC-SHA256 integrity tag over `(did, cid, prev, operation)`, keyed
+    /// by the vault's operation-log subkey (see
+    /// [`SecretVault::oplog_mac`](crate::SecretVault::oplog_mac)).
+    ///
+    /// This is what lets a reader trust a row it did not write: an attacker with
+    /// database *write* access can alter the columns, but cannot mint a matching
+    /// tag without the root key, so a tampered row fails verification. The
+    /// [`Minter`](crate::Minter) sets it on append and checks it before trusting
+    /// a prior operation's carried fields. Empty until
+    /// [`mac_message`](PlcOperationRecord::mac_message) is computed and signed.
+    pub op_mac: Vec<u8>,
+}
+
+impl PlcOperationRecord {
+    /// The bytes the operation-log MAC authenticates: an unambiguous,
+    /// length-prefixed encoding of `(did, cid, prev, operation)`.
+    ///
+    /// The operation is canonicalized by re-parsing its stored JSON and
+    /// re-serializing it (serde_json, sorted keys), so the encoding is **stable
+    /// across the `jsonb` round-trip** a Postgres backend performs — the tag
+    /// computed at write time verifies against the same message recovered at
+    /// read time. Each field is length-prefixed, so no field boundary is
+    /// ambiguous (the same trick the OAuth AAD uses).
+    ///
+    /// `op_type` is deliberately not covered here: it is redundant with the
+    /// operation's own `type`, which *is* covered, and the values a reader
+    /// trusts (rotation keys, verification methods, services) all live in the
+    /// operation.
+    pub fn mac_message(&self) -> Result<Vec<u8>, serde_json::Error> {
+        let operation: serde_json::Value = serde_json::from_str(&self.operation_json)?;
+        let operation_bytes = serde_json::to_vec(&operation)?;
+
+        let mut message = Vec::new();
+        push_field(&mut message, self.did.as_str().as_bytes());
+        push_field(&mut message, self.cid.as_bytes());
+        match &self.prev {
+            None => message.push(0),
+            Some(prev) => {
+                message.push(1);
+                push_field(&mut message, prev.as_bytes());
+            }
+        }
+        push_field(&mut message, &operation_bytes);
+        Ok(message)
+    }
+}
+
+/// Append `field` to `buf`, length-prefixed with its `u64` little-endian length
+/// so two adjacent fields can never be re-split into a different pair.
+fn push_field(buf: &mut Vec<u8>, field: &[u8]) {
+    buf.extend_from_slice(&(field.len() as u64).to_le_bytes());
+    buf.extend_from_slice(field);
 }
 
 /// Custody of the private keys behind minted identities.

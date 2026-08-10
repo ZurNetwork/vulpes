@@ -1,0 +1,18 @@
+-- zurid: the integrity tag for each logged PLC operation.
+--
+-- An update carries a prior operation's rotationKeys, verificationMethods and
+-- services FORWARD into an operation the minter then SIGNS. Nothing else
+-- authenticated that row, so whoever could write `plc_operations` could choose
+-- what the custody key signs (security review B2). This column closes that: it
+-- holds an HMAC-SHA256 over the row's (did, cid, prev, operation), keyed by a
+-- subkey HKDF-derived from the vault root key (label `zurid.oplog.mac.v1`, held
+-- OUTSIDE the database). The minter verifies it before trusting a prior row, so
+-- a tampered row is rejected rather than signed.
+--
+-- op_mac  The 32-byte tag. NULLABLE: a fresh zurid writes it on every append,
+--         but a row that predates this column (a consumer already running an
+--         earlier zurid) has none — the reader treats a NULL or wrong tag as a
+--         FAILED check, so an un-backfilled legacy row fails closed rather than
+--         being trusted. Backfilling those rows is the consumer's adoption task,
+--         not something a fresh install ever needs.
+ALTER TABLE plc_operations ADD COLUMN op_mac bytea;

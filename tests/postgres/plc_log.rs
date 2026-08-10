@@ -14,6 +14,10 @@ fn record(did: &Did, cid: &str, op_type: &str, prev: Option<&str>) -> PlcOperati
         op_type: op_type.to_string(),
         prev: prev.map(str::to_string),
         operation_json: format!(r#"{{"type":"{op_type}"}}"#),
+        // This suite proves the STORAGE contract, not MAC verification (that is
+        // the minter's, tested against the vault). A fixed 32-byte tag stands in
+        // for a real one, so what is checked here is that `op_mac` round-trips.
+        op_mac: vec![0xEE; 32],
     }
 }
 
@@ -190,6 +194,11 @@ async fn latest_op_returns_the_full_most_recent_record() {
     assert_eq!(
         json["type"], "plc_operation",
         "the stored operation body round-trips"
+    );
+    assert_eq!(
+        latest.op_mac,
+        vec![0xEE; 32],
+        "the integrity tag round-trips — the minter needs it back to verify"
     );
 }
 

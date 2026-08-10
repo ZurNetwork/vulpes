@@ -18,40 +18,6 @@ recalled.
 
 ## Open — needs an Engineer call
 
-### F30. The operation log has no integrity binding (security review B2)
-
-**Where:** `src/minter.rs`, `Minter::carry_forward` — marked in-source with
-`// SECURITY-TODO(engineer): B2`.
-
-`update_handle` reads the DID's latest logged operation and carries its
-`rotationKeys`, `verificationMethods` and `services` forward into an operation it
-then **signs**. Nothing authenticates that row. Whoever can write to
-`plc_operations` therefore chooses what the custody key signs — the signing
-oracle the security review named B2.
-
-**Not decided here.** The candidate mitigations are an HMAC column over each row
-under the same root key, verifying the stored `sig` against the operation's own
-rotation keys before trusting it, or re-deriving the document from custody
-instead of reading it back (which costs the "an update decrypts exactly one key"
-property). Each is a different trade between cost, key hygiene and how much of
-the row is covered, and the choice shapes the schema — so it is the Engineer's,
-not the extraction's.
-
-**Shipped meanwhile (H8):** the spec's `rotationKeys` limits (1–5, no
-duplicates) are re-run on the carried-forward list. That is an **availability**
-fix and nothing more — it stops a malformed row from *wedging* the identity (a
-rotation-key list the directory refuses would otherwise leave no handle change
-and no tombstone possible, permanently). It is **not** an authenticity fix, and
-the name `check_prior_rotation_keys` should not be read as one: an attacker who
-substitutes their *own* well-formed rotation keys passes it, and the minter then
-signs a valid operation handing DID control over.
-
-**Until B2 is resolved, treat write access to `plc_operations` as equivalent to
-key custody.** Whoever can write that table can choose what the custody key
-signs, so it warrants the same protection as the custody rows themselves —
-separate credentials from anything user-facing, no ORM-level mass-assignment
-onto it, and the same review bar for any code path that inserts into it.
-
 ### F32. `time` 0.3.47 would fix RUSTSEC-2026-0009 but costs the 1.85 MSRV
 
 **Where:** `deny.toml`, the `RUSTSEC-2026-0009` entry.
@@ -278,6 +244,37 @@ rows are untouched.
 
 Consumption impact: `Minter::new` gains a `vault` argument; `PgKeyStore::new`
 drops its `vault` argument.
+
+### F30. Operation-log integrity — HMAC (security review B2, Engineer ruled)
+
+**Where:** `src/store.rs` (`op_mac`, `mac_message`), `src/vault.rs`
+(`oplog_mac`), `src/minter.rs` (`maced` / `verify_mac`), migration
+`20260809000004`.
+
+`update_handle` reads the DID's latest logged operation and carries its
+`rotationKeys`, `verificationMethods` and `services` forward into an operation it
+then **signs**. Nothing authenticated that row, so whoever could write
+`plc_operations` chose what the custody key signs — the signing oracle B2 named.
+Of the candidate mitigations (HMAC column / verify the stored `sig` / re-derive
+from custody), the **Engineer ruled HMAC**.
+
+Each row carries an `op_mac`: HMAC-SHA256 over a length-prefixed
+`(did, cid, prev, operation)`, keyed by a subkey HKDF-derived from the vault root
+key (label `zurid.oplog.mac.v1`) — a *dedicated* subkey, so the AEAD root key
+stays single-purpose. The minter writes it on every append and **verifies it
+before trusting a prior row** (in `carry_forward` and in `tombstone`, which reads
+the prior for its `prev`). A row altered by a write-access attacker fails the tag
+and is refused rather than signed. The operation is canonicalized (re-serialized
+sorted-key JSON) so the tag survives the `jsonb` round-trip.
+
+This is what H8's `check_prior_rotation_keys` is *not*: H8 is an availability
+guard (a malformed-but-genuine row must not wedge the identity) that now runs
+after the MAC has already established authenticity.
+
+Fresh crate, so no backfill: `op_mac` is nullable and a NULL (a row from before
+the column) reads back as an empty tag that fails verification — fail closed.
+**Zurfur's adoption ticket owns backfilling its existing `plc_operations`
+rows**; a fresh install never has any.
 
 ### F15. `Authenticator` is a struct, not a trait
 

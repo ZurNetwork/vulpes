@@ -256,6 +256,17 @@ up would undo the envelope model. Both types' `Debug` prints `<redacted>`. A
 routine update decrypts exactly one private key, the signer; the rest of custody
 stays sealed.
 
+**The operation log is authenticated.** An update carries a prior operation's
+rotation keys, verification methods and services forward into an operation the
+custody key then *signs* — so an attacker who can *write* the `plc_operations`
+table could otherwise choose what gets signed. Every row carries an HMAC-SHA256
+tag over its `(did, cid, prev, operation)`, keyed by a subkey HKDF-derived from
+the root key (so the AEAD key stays single-purpose), and the minter verifies it
+before trusting a prior row. The tag key is not in the database, so a write-access
+attacker cannot forge it: a tampered row fails the check and is refused, not
+signed. Custody itself is never trusted from a store either — it is sealed
+(`SealedKeys`) and only the minter opens it.
+
 **The chain cannot fork.** Two concurrent updates would otherwise read the same
 tip, build *different* operations (different CIDs, so uniqueness on `cid` does
 not catch them) and both land — after which your log permanently disagrees with
