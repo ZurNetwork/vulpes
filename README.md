@@ -28,7 +28,8 @@ Not published to crates.io; consume it as a tag-pinned git dependency.
 use std::sync::Arc;
 use zurid::{Handle, MintPolicy, Minter, NoopPlcDirectory};
 
-let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only())?;
+// `vault` is the SecretVault: the minter seals custody and MACs the log with it.
+let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only(), vault)?;
 
 let did = minter.mint(&Handle::try_new("alice.example.com")?).await?;
 minter.update_handle(&did, &Handle::try_new("alice.example.org")?).await?;
@@ -82,8 +83,11 @@ signed, so the two are separate methods with separate tests.
 
 ### `minter` — the write path
 
-`Minter::new(key_store, op_log, directory, policy)`. Ordering is the durability
-story, and the two directions are not an accident:
+`Minter::new(key_store, op_log, directory, policy, vault)`. The vault is what
+makes the minter the one place that seals custody before it reaches a `KeyStore`
+and MACs each logged operation — so a store never holds a plaintext key or an
+unauthenticated row. Ordering is the durability story, and the two directions
+are not an accident:
 
 - **mint** — custody keys → log the genesis → submit. Keys land before anything
   is published, so a failed submission never orphans an identity.
@@ -109,7 +113,7 @@ identities you do not mean to keep.
 ```rust
 zurid::postgres::migrate(&pool).await?;
 
-let keys = Arc::new(zurid::postgres::PgKeyStore::new(pool.clone(), vault));
+let keys = Arc::new(zurid::postgres::PgKeyStore::new(pool.clone())); // holds no vault: sealing lives in the minter
 let log  = Arc::new(zurid::postgres::PgPlcOperationLog::new(pool.clone()));
 let oauth_state = zurid::postgres::PgOAuthStateStore::new(pool);
 ```

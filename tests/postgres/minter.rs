@@ -8,7 +8,10 @@
 use std::sync::Arc;
 
 use zurid::postgres::{PgKeyStore, PgPlcOperationLog};
-use zurid::{Handle, KeyStore, MintPolicy, Minter, NoopPlcDirectory, PlcOperationLog, SecretVault};
+use zurid::{
+    CustodyEnvelope, CustodyKeys, Did, Handle, KeyStore, MintPolicy, Minter, NoopPlcDirectory,
+    PlcOperationLog, SealedKeys, SecretVault,
+};
 
 use crate::pg::fresh_pool;
 
@@ -16,16 +19,24 @@ fn vault() -> SecretVault {
     SecretVault::from_bytes(&[3u8; 32]).expect("a 32-byte test root key")
 }
 
+/// Open the sealed custody a store returned — the store no longer opens (S7), so
+/// a test that wants the plaintext keys does it with the vault, as the minter does.
+fn open(did: &Did, sealed: &SealedKeys) -> CustodyKeys {
+    let envelope = CustodyEnvelope::try_from(sealed.version()).expect("a known envelope");
+    CustodyKeys::open(&vault(), did, sealed.blob(), envelope).expect("custody opens")
+}
+
 /// A minter over real PostgreSQL storage, plus the stores for assertions.
 async fn pg_minter() -> (Minter, Arc<PgKeyStore>, Arc<PgPlcOperationLog>, impl Sized) {
     let (pool, db) = fresh_pool().await;
-    let keys = Arc::new(PgKeyStore::new(pool.clone(), vault()));
+    let keys = Arc::new(PgKeyStore::new(pool.clone()));
     let log = Arc::new(PgPlcOperationLog::new(pool));
     let minter = Minter::new(
         keys.clone(),
         log.clone(),
         Arc::new(NoopPlcDirectory),
         MintPolicy::identity_only(),
+        vault(),
     )
     .expect("the identity-only preset is valid");
     (minter, keys, log, db)
@@ -43,8 +54,9 @@ async fn the_full_lifecycle_round_trips_through_postgres() {
         .expect("mint");
     assert!(did.is_plc());
 
-    // Custody landed, sealed, and opens back to three distinct 32-byte scalars.
-    let custody = keys.get(&did).await.unwrap().expect("custody was written");
+    // Custody landed sealed, and opens back to three distinct 32-byte scalars.
+    let sealed = keys.get(&did).await.unwrap().expect("custody was written");
+    let custody = open(&did, &sealed);
     assert_eq!(custody.operational.expose().len(), 32);
 
     // The genesis operation is the chain's first link.
@@ -110,13 +122,14 @@ async fn concurrent_identities_do_not_collide() {
 #[tokio::test]
 async fn a_stale_update_cannot_fork_the_chain_in_postgres() {
     let (pool, _db) = fresh_pool().await;
-    let keys = Arc::new(PgKeyStore::new(pool.clone(), vault()));
+    let keys = Arc::new(PgKeyStore::new(pool.clone()));
     let log = Arc::new(PgPlcOperationLog::new(pool.clone()));
     let minter = Minter::new(
         keys,
         log.clone(),
         Arc::new(NoopPlcDirectory),
         MintPolicy::identity_only(),
+        vault(),
     )
     .unwrap();
 

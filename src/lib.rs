@@ -40,17 +40,21 @@
 //! # async fn run(
 //! #     keys: std::sync::Arc<dyn zurid::KeyStore>,
 //! #     log: std::sync::Arc<dyn zurid::PlcOperationLog>,
+//! #     vault: zurid::SecretVault,
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
 //! use std::sync::Arc;
 //! use zurid::{Handle, MintPolicy, Minter, NoopPlcDirectory};
 //!
 //! // `keys` and `log` are your storage; with the `postgres` feature they are
 //! // `PgKeyStore` and `PgPlcOperationLog`, both built from an `sqlx::PgPool`.
+//! // `vault` is the `SecretVault` — the minter seals custody and MACs the log
+//! // with it, so a store never holds a plaintext key or an unauthenticated row.
 //! let minter = Minter::new(
 //!     keys,
 //!     log,
 //!     Arc::new(NoopPlcDirectory), // swap for `HttpPlcDirectory::canonical()` to register
 //!     MintPolicy::identity_only(),
+//!     vault,
 //! )?;
 //!
 //! let handle = Handle::try_new("alice.example.com")?;
@@ -108,7 +112,7 @@ pub use directory::{CANONICAL_DIRECTORY, NoopPlcDirectory, PlcDirectory};
 pub use error::{DirectoryError, DirectoryResult, StorageError, StorageResult};
 pub use handle::{HANDLE_MAX_LEN, Handle, HandleError, LABEL_MAX_LEN};
 pub use keys::{
-    CUSTODY_AAD_TAG, CustodyEnvelope, CustodyKeys, KeyRole, SECRET_KEY_LEN, SecretKey,
+    CUSTODY_AAD_TAG, CustodyEnvelope, CustodyKeys, KeyRole, SECRET_KEY_LEN, SealedKeys, SecretKey,
     UnknownCustodyEnvelope,
 };
 pub use policy::{

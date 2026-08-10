@@ -19,7 +19,7 @@
 
 use async_trait::async_trait;
 
-use crate::{CustodyKeys, Did, StorageResult};
+use crate::{Did, SealedKeys, StorageResult};
 
 /// One submitted `did:plc` operation, as recorded in the operation log.
 ///
@@ -50,24 +50,31 @@ pub struct PlcOperationRecord {
 
 /// Custody of the private keys behind minted identities.
 ///
-/// Implementations **must** encrypt at rest — see
-/// [`CustodyKeys::seal`](crate::CustodyKeys::seal), which is the intended way to
-/// do it. A `KeyStore` that writes plaintext scalars hands whoever reads the
-/// database every identity it holds.
+/// # A store never sees a plaintext key
+///
+/// The unit of trade is [`SealedKeys`] — AEAD ciphertext plus its envelope
+/// version — never a plaintext [`CustodyKeys`](crate::CustodyKeys). Sealing and
+/// opening live with whoever holds the [`SecretVault`](crate::SecretVault), the
+/// [`Minter`](crate::Minter); a `KeyStore` persists opaque bytes and hands them
+/// back. So a store that writes plaintext custody is not a store you can *write*
+/// against this trait — the mirror of how the OAuth bridge keeps a token out of
+/// [`OAuthStateStore`]. What a store still owns is the storage contract below.
 #[async_trait]
 pub trait KeyStore: Send + Sync {
-    /// Persist `keys` for `did`.
+    /// Persist the sealed `keys` for `did`.
     ///
     /// One DID is minted once, so implementations should make a second `put`
     /// for the same DID an error (a primary key does this for free) rather than
     /// overwriting custody.
-    async fn put(&self, did: &Did, keys: &CustodyKeys) -> StorageResult<()>;
+    async fn put(&self, did: &Did, keys: &SealedKeys) -> StorageResult<()>;
 
-    /// Load the keys held for `did`, or `Ok(None)` if none are.
+    /// Load the sealed keys held for `did`, or `Ok(None)` if none are.
     ///
-    /// A decryption failure is an `Err`, never a `None`: "the blob will not
-    /// open" and "there is no blob" mean very different things.
-    async fn get(&self, did: &Did) -> StorageResult<Option<CustodyKeys>>;
+    /// This is a byte round-trip: a store returns exactly what it was given,
+    /// unopened. "There is no row" is `Ok(None)`; a database fault is `Err`. The
+    /// blob only fails to *open* later, at the vault, which is where a wrong root
+    /// key or a tampered blob surfaces — never as a `None` here.
+    async fn get(&self, did: &Did) -> StorageResult<Option<SealedKeys>>;
 }
 
 /// The append-only log of operations submitted for each minted identity.

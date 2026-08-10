@@ -257,6 +257,28 @@ also keeps the feature graph simple — `postgres` alone compiles without
 The AAD construction (table-name domain separation, the length-prefixed DID) is
 carried over byte-for-byte.
 
+### F33. `KeyStore` trades in sealed blobs, not plaintext (security review S7)
+
+**Where:** `src/store.rs` (`KeyStore`), `src/keys.rs` (`SealedKeys`),
+`src/postgres/key_store.rs`, `src/minter.rs`.
+
+The extraction left one asymmetry: the OAuth store (F14) never saw a plaintext
+secret, but the `KeyStore` took plaintext `CustodyKeys` and `PgKeyStore` did the
+sealing — so a `KeyStore` implementation *could* write plaintext scalars, the
+exact footgun F14 removed for tokens. Engineer ruled the reshape.
+
+`KeyStore` now trades in `SealedKeys` — an opaque newtype over the AEAD
+ciphertext plus its `CustodyEnvelope` version. The `Minter` (which now holds the
+`SecretVault`) owns seal-before-put and open-after-get; `PgKeyStore` holds no
+vault and never opens a blob, so a plaintext custody store is unrepresentable,
+the same as a plaintext OAuth store. The H4 unknown-version rejection moved with
+the opening — it now fires in the `Minter`, not the store. The on-disk columns
+(`wrapped_keys`, `key_version`) and the sealed bytes are unchanged, so existing
+rows are untouched.
+
+Consumption impact: `Minter::new` gains a `vault` argument; `PgKeyStore::new`
+drops its `vault` argument.
+
 ### F15. `Authenticator` is a struct, not a trait
 
 The source implements its own `domain::ports::Authenticator` port. zurid ships a

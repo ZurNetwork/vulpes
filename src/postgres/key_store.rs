@@ -1,17 +1,19 @@
-//! [`PgKeyStore`] — PostgreSQL custody for minted `did:plc` keys, encrypted at
-//! rest.
+//! [`PgKeyStore`] — PostgreSQL custody for minted `did:plc` keys, stored sealed.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{PgPool, Row as _};
 
 use crate::postgres::storage;
-use crate::{
-    CustodyEnvelope, CustodyKeys, Did, KeyStore, SecretVault, StorageError, StorageResult,
-};
+use crate::{Did, KeyStore, SealedKeys, StorageResult};
 
-/// PostgreSQL [`KeyStore`]: seals custody keys under a [`SecretVault`] and
-/// persists the ciphertext in `account_keys`.
+/// PostgreSQL [`KeyStore`]: persists the sealed custody blob and its envelope
+/// version in `account_keys`.
+///
+/// It holds **no vault** and never opens a blob — sealing and opening live with
+/// the [`Minter`](crate::Minter), which owns the [`SecretVault`](crate::SecretVault).
+/// This store round-trips opaque bytes, so a plaintext custody store is not a
+/// thing it can be (the custody-side mirror of [`PgOAuthStateStore`](crate::postgres::PgOAuthStateStore)).
 ///
 /// The write is a single-row insert performed *during minting*, before any row
 /// of yours can exist — the identity's DID is derived from the very operation
@@ -19,29 +21,26 @@ use crate::{
 /// transaction. That is same-store temporal ordering, not a cross-store concern.
 pub struct PgKeyStore {
     pool: PgPool,
-    vault: SecretVault,
 }
 
 impl PgKeyStore {
-    /// Build the store over a connection `pool` and the `vault` that seals every
-    /// custody record.
-    pub fn new(pool: PgPool, vault: SecretVault) -> Self {
-        Self { pool, vault }
+    /// Build the store over a connection `pool`.
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 
 #[async_trait]
 impl KeyStore for PgKeyStore {
-    /// Seal `keys` under the vault (binding them to `did`) and insert them.
+    /// Insert the sealed `keys` — ciphertext plus envelope version — for `did`.
     ///
     /// One DID mints once, so a duplicate insert is a primary-key violation,
     /// surfaced to the caller rather than overwriting custody.
-    async fn put(&self, did: &Did, keys: &CustodyKeys) -> StorageResult<()> {
-        let sealed = keys.seal(&self.vault, did).map_err(StorageError::new)?;
+    async fn put(&self, did: &Did, keys: &SealedKeys) -> StorageResult<()> {
         sqlx::query(include_str!("../../queries/key_store/put.sql"))
             .bind(did.as_str())
-            .bind(&sealed)
-            .bind(i32::from(CustodyEnvelope::CURRENT))
+            .bind(keys.blob())
+            .bind(keys.version())
             .bind(Utc::now())
             .execute(&self.pool)
             .await
@@ -49,18 +48,14 @@ impl KeyStore for PgKeyStore {
         Ok(())
     }
 
-    /// Load the sealed blob for `did` and open it **under the envelope scheme
-    /// the row records**, or `None` if the DID is unknown.
+    /// Return the sealed blob and its stored version as [`SealedKeys`], or
+    /// `None` if the DID is unknown.
     ///
-    /// The `key_version` column is read, not assumed: a value naming no scheme
-    /// this build knows — a row written by a newer zurid, met during a rolling
-    /// deploy or after a rollback — is an explicit error. Opening it under a
-    /// guessed scheme would at best fail the AEAD tag and at worst hand back
-    /// bytes that were never these keys.
-    ///
-    /// A decryption failure — the wrong root key, a blob lifted from another
-    /// row, tampering — is likewise an error, never a `None`.
-    async fn get(&self, did: &Did) -> StorageResult<Option<CustodyKeys>> {
+    /// A byte round-trip: the version is stored and returned verbatim, and it is
+    /// the opener (the [`Minter`](crate::Minter)) — not this store — that
+    /// resolves it to an envelope scheme and rejects an unknown one. A database
+    /// fault is `Err`; "no such row" is `Ok(None)`.
+    async fn get(&self, did: &Did) -> StorageResult<Option<SealedKeys>> {
         let row = sqlx::query(include_str!("../../queries/key_store/get.sql"))
             .bind(did.as_str())
             .fetch_optional(&self.pool)
@@ -70,12 +65,8 @@ impl KeyStore for PgKeyStore {
         let Some(row) = row else {
             return Ok(None);
         };
-        let sealed: Vec<u8> = row.try_get("wrapped_keys").map_err(storage)?;
+        let blob: Vec<u8> = row.try_get("wrapped_keys").map_err(storage)?;
         let version: i32 = row.try_get("key_version").map_err(storage)?;
-        let envelope = CustodyEnvelope::try_from(version).map_err(StorageError::new)?;
-
-        let keys =
-            CustodyKeys::open(&self.vault, did, &sealed, envelope).map_err(StorageError::new)?;
-        Ok(Some(keys))
+        Ok(Some(SealedKeys::from_parts(version, blob)))
     }
 }

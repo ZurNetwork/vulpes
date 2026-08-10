@@ -280,6 +280,73 @@ impl CustodyKeys {
             signing: scalar(2),
         })
     }
+
+    /// Seal this bundle under `vault` and package it as [`SealedKeys`] — the
+    /// only shape a [`KeyStore`](crate::KeyStore) ever holds.
+    ///
+    /// The version stamped in is [`CustodyEnvelope::CURRENT`], and the blob is
+    /// bound to `did` (see [`seal`](CustodyKeys::seal)). This is the seam that
+    /// makes a plaintext custody store *unrepresentable*: a store never receives
+    /// a `CustodyKeys`, only the opaque result of this.
+    pub fn seal_current(&self, vault: &SecretVault, did: &Did) -> Result<SealedKeys, VaultError> {
+        let blob = self.seal(vault, did)?;
+        Ok(SealedKeys::from_parts(
+            CustodyEnvelope::CURRENT.into(),
+            blob,
+        ))
+    }
+}
+
+/// Custody keys **sealed** — the opaque form a [`KeyStore`](crate::KeyStore)
+/// stores and returns, never the plaintext [`CustodyKeys`].
+///
+/// A store trafficking only in this type is the custody-side mirror of the OAuth
+/// bridge's byte-blob split: no `KeyStore` implementation can see a private
+/// scalar, so a store that writes plaintext custody is not something the API can
+/// express. Sealing and opening live with whoever holds the
+/// [`SecretVault`](crate::SecretVault) — the [`Minter`](crate::Minter).
+///
+/// It carries two things: the AEAD ciphertext, and the [`CustodyEnvelope`]
+/// version it was sealed under (as its raw `i32`, so a storage adapter can round
+/// it through a column without interpreting it). Both are opaque to a store; the
+/// version is only *meaningful* to the code that opens the blob.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SealedKeys {
+    version: i32,
+    blob: Vec<u8>,
+}
+
+impl SealedKeys {
+    /// Assemble sealed keys from a stored `version` and ciphertext `blob`.
+    ///
+    /// The door a storage adapter reconstructs through after a read — it holds
+    /// two opaque columns and hands them back here. No validation: the version
+    /// is interpreted, and an unknown one rejected, only when the blob is opened.
+    pub fn from_parts(version: i32, blob: Vec<u8>) -> Self {
+        Self { version, blob }
+    }
+
+    /// The [`CustodyEnvelope`] version, as stored. Opaque to a store; resolved to
+    /// a scheme (or rejected) by the opener.
+    pub fn version(&self) -> i32 {
+        self.version
+    }
+
+    /// The sealed ciphertext.
+    pub fn blob(&self) -> &[u8] {
+        &self.blob
+    }
+}
+
+/// Redacted: a sealed blob is ciphertext, not a secret, but printing it in a log
+/// line serves no one — show only its shape.
+impl std::fmt::Debug for SealedKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SealedKeys")
+            .field("version", &self.version)
+            .field("blob", &format_args!("<{} bytes>", self.blob.len()))
+            .finish()
+    }
 }
 
 #[cfg(test)]
@@ -300,6 +367,40 @@ mod tests {
 
     fn did() -> Did {
         Did::new("did:plc:alice")
+    }
+
+    // `seal_current` packages a SealedKeys under the CURRENT envelope, and it
+    // round-trips: opening the blob under the version it stamped yields the keys.
+    // This is the shape a `KeyStore` holds — never plaintext.
+    #[test]
+    fn sealed_keys_round_trip_under_the_stamped_version() {
+        let sealed = keys().seal_current(&vault(), &did()).unwrap();
+        assert_eq!(sealed.version(), i32::from(CustodyEnvelope::CURRENT));
+
+        let envelope = CustodyEnvelope::try_from(sealed.version()).unwrap();
+        let opened = CustodyKeys::open(&vault(), &did(), sealed.blob(), envelope).unwrap();
+        assert_eq!(opened, keys());
+    }
+
+    // A SealedKeys reassembled from stored parts equals the original — the byte
+    // round-trip a storage adapter performs.
+    #[test]
+    fn sealed_keys_from_parts_reassembles() {
+        let sealed = keys().seal_current(&vault(), &did()).unwrap();
+        let rebuilt = SealedKeys::from_parts(sealed.version(), sealed.blob().to_vec());
+        assert_eq!(rebuilt, sealed);
+    }
+
+    // The Debug of a SealedKeys shows its shape, not its ciphertext bytes.
+    #[test]
+    fn sealed_keys_debug_shows_no_bytes() {
+        let sealed = keys().seal_current(&vault(), &did()).unwrap();
+        let shown = format!("{sealed:?}");
+        assert!(shown.contains("bytes"), "shows a length, got: {shown}");
+        assert!(
+            !shown.contains("[") || !shown.contains(','),
+            "must not print the raw byte array, got: {shown}"
+        );
     }
 
     // A SecretKey's Debug must never reveal its bytes — a debug log or panic

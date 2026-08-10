@@ -39,9 +39,9 @@ use crate::plc::{
     TombstoneOperation,
 };
 use crate::{
-    CustodyKeys, Did, DirectoryError, Handle, KeyRole, KeyStore, MAX_ROTATION_KEYS,
-    MIN_ROTATION_KEYS, MintPolicy, PlcDirectory, PlcOperationLog, PlcOperationRecord, PolicyError,
-    SecretKey, StorageError,
+    CustodyEnvelope, CustodyKeys, Did, DirectoryError, Handle, KeyRole, KeyStore,
+    MAX_ROTATION_KEYS, MIN_ROTATION_KEYS, MintPolicy, PlcDirectory, PlcOperationLog,
+    PlcOperationRecord, PolicyError, SealedKeys, SecretKey, SecretVault, StorageError, VaultError,
 };
 
 /// Why a mint, update or tombstone failed.
@@ -113,6 +113,24 @@ pub enum MintError {
         /// Which limit was broken.
         detail: String,
     },
+    /// Sealing or opening custody keys under the vault failed.
+    #[error(transparent)]
+    Vault(#[from] VaultError),
+    /// The custody row for the DID could not be turned back into keys — an
+    /// envelope version this build does not know, or a blob that will not open.
+    #[error("custody for {did} could not be opened: {detail}")]
+    MalformedCustody {
+        /// The DID whose custody could not be opened.
+        did: Did,
+        /// What was wrong with it.
+        detail: String,
+    },
+    /// The prior operation's stored MAC does not verify: the row was altered
+    /// after it was written, so the values it carries cannot be trusted.
+    #[error(
+        "the prior operation for {0} failed its integrity check — the operation-log row was tampered with"
+    )]
+    TamperedPriorOperation(Did),
 }
 
 /// Map an `atrium-crypto` failure into [`MintError::Crypto`].
@@ -167,18 +185,23 @@ impl RoleKeypairs {
 ///
 /// Holds the three collaborators it writes through — custody
 /// ([`KeyStore`]), the chain ([`PlcOperationLog`]) and publication
-/// ([`PlcDirectory`]) — plus the [`MintPolicy`] that shapes what it signs. All
-/// three are `Arc<dyn …>`, so a minter is cheap to clone and trivial to test
-/// against fakes.
+/// ([`PlcDirectory`]) — the [`MintPolicy`] that shapes what it signs, and the
+/// [`SecretVault`]. The vault is what makes the Minter the one place that seals
+/// custody before it reaches a [`KeyStore`] and opens it on the way back (so a
+/// store never sees a plaintext key), and — since B2 — the one place that MACs
+/// each logged operation and verifies that MAC before trusting a prior row. The
+/// three collaborators are `Arc<dyn …>`, so a minter is cheap to clone and
+/// trivial to test against fakes.
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use zurid::{Minter, MintPolicy, NoopPlcDirectory, Handle};
+/// # use zurid::{Minter, MintPolicy, NoopPlcDirectory, Handle, SecretVault};
 /// # async fn example(
 /// #     keys: Arc<dyn zurid::KeyStore>,
 /// #     log: Arc<dyn zurid::PlcOperationLog>,
+/// #     vault: SecretVault,
 /// # ) -> Result<(), Box<dyn std::error::Error>> {
-/// let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only())?;
+/// let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only(), vault, vault())?;
 /// let did = minter.mint(&Handle::try_new("alice.example.com")?).await?;
 /// # Ok(())
 /// # }
@@ -188,17 +211,20 @@ pub struct Minter {
     op_log: Arc<dyn PlcOperationLog>,
     directory: Arc<dyn PlcDirectory>,
     policy: MintPolicy,
+    vault: SecretVault,
 }
 
 impl Minter {
     /// Build a minter. The `policy` is [validated](MintPolicy::validate) here,
     /// so a misconfiguration fails at construction rather than at the first
-    /// mint.
+    /// mint. The `vault` seals custody before it reaches the [`KeyStore`] and
+    /// MACs every logged operation.
     pub fn new(
         key_store: Arc<dyn KeyStore>,
         op_log: Arc<dyn PlcOperationLog>,
         directory: Arc<dyn PlcDirectory>,
         policy: MintPolicy,
+        vault: SecretVault,
     ) -> Result<Self, MintError> {
         policy.validate()?;
         Ok(Self {
@@ -206,7 +232,35 @@ impl Minter {
             op_log,
             directory,
             policy,
+            vault,
         })
+    }
+
+    /// Seal `keys` for `did` and hand the store the opaque [`SealedKeys`] — the
+    /// Minter's half of "a store never sees plaintext custody".
+    fn seal_custody(&self, did: &Did, keys: &CustodyKeys) -> Result<SealedKeys, MintError> {
+        Ok(keys.seal_current(&self.vault, did)?)
+    }
+
+    /// Open a [`SealedKeys`] the store returned back into [`CustodyKeys`].
+    ///
+    /// Resolves the stored envelope version to a scheme — an unknown one (a row
+    /// written by a newer zurid) is a hard error, never opened under a guess —
+    /// then opens the blob. A blob that will not open (wrong root key, tamper) is
+    /// likewise an error, never silently absent.
+    fn open_custody(&self, did: &Did, sealed: &SealedKeys) -> Result<CustodyKeys, MintError> {
+        let envelope = CustodyEnvelope::try_from(sealed.version()).map_err(|err| {
+            MintError::MalformedCustody {
+                did: did.clone(),
+                detail: err.to_string(),
+            }
+        })?;
+        Ok(CustodyKeys::open(
+            &self.vault,
+            did,
+            sealed.blob(),
+            envelope,
+        )?)
     }
 
     /// The policy this minter signs by.
@@ -257,8 +311,9 @@ impl Minter {
         let genesis_cid = signed.cid()?;
         let operation_json = signed.to_json()?;
 
-        // (5) Custody first: every private half, in role order.
-        self.key_store.put(&did, &keypairs.to_custody()).await?;
+        // (5) Custody first: sealed here, so the store only ever holds ciphertext.
+        let sealed = self.seal_custody(&did, &keypairs.to_custody())?;
+        self.key_store.put(&did, &sealed).await?;
         // (6) Then the chain, so a later operation knows its `prev`.
         let record = PlcOperationRecord {
             did: did.clone(),
@@ -414,11 +469,12 @@ impl Minter {
     /// operation — they are not needed, and every key that stays sealed is one
     /// that cannot leak from a crash dump.
     async fn signer_keypair(&self, did: &Did) -> Result<Secp256k1Keypair, MintError> {
-        let keys = self
+        let sealed = self
             .key_store
             .get(did)
             .await?
             .ok_or_else(|| MintError::NoCustody(did.clone()))?;
+        let keys = self.open_custody(did, &sealed)?;
         Secp256k1Keypair::import(keys.role(self.policy.signer).expose()).map_err(crypto)
     }
 
@@ -567,6 +623,27 @@ mod tests {
         Handle::try_new("bob.example.com").unwrap()
     }
 
+    /// The fixed root key every minter test seals and MACs under.
+    const TEST_ROOT_KEY: [u8; crate::ROOT_KEY_LEN] = [7u8; crate::ROOT_KEY_LEN];
+
+    /// The test vault — one key, so custody sealed by a minter opens with this,
+    /// and a MAC written by one minter verifies under another built the same way.
+    fn vault() -> SecretVault {
+        SecretVault::from_bytes(&TEST_ROOT_KEY).expect("a 32-byte test root key")
+    }
+
+    /// Open the sealed custody a store holds back into plaintext keys — what
+    /// several tests do to rebuild the exact operation the minter signed.
+    async fn custody(store: &MemoryKeyStore, did: &Did) -> CustodyKeys {
+        let sealed = store
+            .get(did)
+            .await
+            .unwrap()
+            .expect("custody is held for the DID");
+        let envelope = CustodyEnvelope::try_from(sealed.version()).expect("a known envelope");
+        CustodyKeys::open(&vault(), did, sealed.blob(), envelope).expect("custody opens")
+    }
+
     /// A minter over fresh in-memory stores and the no-op directory.
     fn minter() -> (Minter, Arc<MemoryKeyStore>, Arc<MemoryPlcOperationLog>) {
         let keys = Arc::new(MemoryKeyStore::new());
@@ -576,6 +653,7 @@ mod tests {
             log.clone(),
             Arc::new(NoopPlcDirectory),
             MintPolicy::identity_only(),
+            vault(),
         )
         .expect("the identity-only preset is valid");
         (minter, keys, log)
@@ -646,10 +724,10 @@ mod tests {
     struct FailingKeyStore;
     #[async_trait]
     impl KeyStore for FailingKeyStore {
-        async fn put(&self, _did: &Did, _keys: &CustodyKeys) -> crate::StorageResult<()> {
+        async fn put(&self, _did: &Did, _keys: &SealedKeys) -> crate::StorageResult<()> {
             Err(StorageError::new("simulated key-store failure"))
         }
-        async fn get(&self, _did: &Did) -> crate::StorageResult<Option<CustodyKeys>> {
+        async fn get(&self, _did: &Did) -> crate::StorageResult<Option<SealedKeys>> {
             Ok(None)
         }
     }
@@ -668,6 +746,7 @@ mod tests {
             Arc::new(MemoryPlcOperationLog::new()),
             Arc::new(NoopPlcDirectory),
             broken,
+            vault(),
         );
         assert!(matches!(result, Err(MintError::Policy(_))));
     }
@@ -688,7 +767,7 @@ mod tests {
             "a did:plc suffix is 24 base32 chars"
         );
 
-        let custody = keys.get(&did).await.unwrap().expect("keys custodied");
+        let custody = custody(&keys, &did).await;
         for role in KeyRole::ALL {
             assert_eq!(
                 custody.role(role).expose().len(),
@@ -710,8 +789,8 @@ mod tests {
         let second = minter.mint(&handle()).await.unwrap();
 
         assert_ne!(first, second);
-        let first_keys = keys.get(&first).await.unwrap().unwrap();
-        let second_keys = keys.get(&second).await.unwrap().unwrap();
+        let first_keys = custody(&keys, &first).await;
+        let second_keys = custody(&keys, &second).await;
         assert_ne!(
             first_keys.operational, second_keys.operational,
             "per-identity keys, never shared"
@@ -730,11 +809,12 @@ mod tests {
             Arc::new(MemoryPlcOperationLog::new()),
             directory.clone(),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
         let did = minter.mint(&handle()).await.unwrap();
-        let custody = keys.get(&did).await.unwrap().unwrap();
+        let custody = custody(&keys, &did).await;
         let cold = Secp256k1Keypair::import(custody.cold_recovery.expose()).unwrap();
         let operational = Secp256k1Keypair::import(custody.operational.expose()).unwrap();
         let signing = Secp256k1Keypair::import(custody.signing.expose()).unwrap();
@@ -762,7 +842,7 @@ mod tests {
         let handle = handle();
 
         let did = minter.mint(&handle).await.unwrap();
-        let custody = keys.get(&did).await.unwrap().unwrap();
+        let custody = custody(&keys, &did).await;
 
         // Rebuild the exact operation the minter signed, from the stored keys.
         let cold = Secp256k1Keypair::import(custody.cold_recovery.expose()).unwrap();
@@ -794,7 +874,7 @@ mod tests {
         let handle = handle();
 
         let did = minter.mint(&handle).await.unwrap();
-        let custody = keys.get(&did).await.unwrap().unwrap();
+        let custody = custody(&keys, &did).await;
 
         let cold = Secp256k1Keypair::import(custody.cold_recovery.expose()).unwrap();
         let operational = Secp256k1Keypair::import(custody.operational.expose()).unwrap();
@@ -827,6 +907,7 @@ mod tests {
             Arc::new(MemoryPlcOperationLog::new()),
             directory.clone(),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -855,6 +936,7 @@ mod tests {
             Arc::new(MemoryPlcOperationLog::new()),
             directory.clone(),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -882,6 +964,7 @@ mod tests {
             log.clone(),
             directory.clone(),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -902,7 +985,7 @@ mod tests {
             "the log's latest op is now the tombstone"
         );
 
-        let custody = keys.get(&did).await.unwrap().unwrap();
+        let custody = custody(&keys, &did).await;
         let operational = Secp256k1Keypair::import(custody.operational.expose()).unwrap();
         let signing_bytes = TombstoneOperation::new(genesis_cid)
             .signing_bytes()
@@ -973,6 +1056,7 @@ mod tests {
             log.clone(),
             directory.clone(),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -1009,7 +1093,7 @@ mod tests {
 
         // Recompute the expected CID from custody — signing is deterministic, so
         // this is the exact operation the minter signed.
-        let custody = keys.get(&did).await.unwrap().unwrap();
+        let custody = custody(&keys, &did).await;
         let cold = Secp256k1Keypair::import(custody.cold_recovery.expose()).unwrap();
         let operational = Secp256k1Keypair::import(custody.operational.expose()).unwrap();
         let signing = Secp256k1Keypair::import(custody.signing.expose()).unwrap();
@@ -1069,7 +1153,8 @@ mod tests {
             operational: SecretKey::new(operational.export()),
             signing: SecretKey::new(vec![0u8; 32]),
         };
-        keys.put(&did, &custody).await.unwrap();
+        let sealed = custody.seal_current(&vault(), &did).unwrap();
+        keys.put(&did, &sealed).await.unwrap();
 
         let log = Arc::new(MemoryPlcOperationLog::new());
         let genesis_record = PlcOperationRecord {
@@ -1082,8 +1167,14 @@ mod tests {
         log.append(&genesis_record).await.unwrap();
 
         let directory = Arc::new(CapturingDirectory::default());
-        let minter =
-            Minter::new(keys, log, directory.clone(), MintPolicy::identity_only()).unwrap();
+        let minter = Minter::new(
+            keys,
+            log,
+            directory.clone(),
+            MintPolicy::identity_only(),
+            vault(),
+        )
+        .unwrap();
 
         minter
             .update_handle(&did, &new_handle())
@@ -1115,6 +1206,7 @@ mod tests {
             log.clone(),
             Arc::new(NoopPlcDirectory),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
         let did = minter.mint(&handle()).await.unwrap();
@@ -1125,6 +1217,7 @@ mod tests {
             log.clone(),
             Arc::new(FailingDirectory::default()),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
         assert!(
@@ -1143,6 +1236,7 @@ mod tests {
             log.clone(),
             directory.clone(),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
         retrying
@@ -1173,6 +1267,7 @@ mod tests {
             log.clone(),
             directory.clone(),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -1242,6 +1337,7 @@ mod tests {
             log.clone(),
             Arc::new(NoopPlcDirectory),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -1303,6 +1399,7 @@ mod tests {
             log.clone(),
             directory.clone(),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -1311,7 +1408,7 @@ mod tests {
 
         // A DIFFERENT concurrent winner (a change to a THIRD handle) chaining the
         // same genesis `prev`, armed to land first on the next append.
-        let custody = keys.get(&did).await.unwrap().unwrap();
+        let custody = custody(&keys, &did).await;
         let cold = Secp256k1Keypair::import(custody.cold_recovery.expose()).unwrap();
         let operational = Secp256k1Keypair::import(custody.operational.expose()).unwrap();
         let signing = Secp256k1Keypair::import(custody.signing.expose()).unwrap();
@@ -1435,6 +1532,7 @@ mod tests {
             log,
             Arc::new(NoopPlcDirectory),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -1473,6 +1571,7 @@ mod tests {
             log,
             Arc::new(NoopPlcDirectory),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -1506,6 +1605,7 @@ mod tests {
             log,
             Arc::new(NoopPlcDirectory),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap()
     }
@@ -1586,11 +1686,18 @@ mod tests {
             operational: SecretKey::new(operational.export()),
             signing: SecretKey::new(vec![0u8; 32]),
         };
-        keys.put(&did, &custody).await.unwrap();
+        let sealed = custody.seal_current(&vault(), &did).unwrap();
+        keys.put(&did, &sealed).await.unwrap();
 
         let directory = Arc::new(CapturingDirectory::default());
-        let minter =
-            Minter::new(keys, log, directory.clone(), MintPolicy::identity_only()).unwrap();
+        let minter = Minter::new(
+            keys,
+            log,
+            directory.clone(),
+            MintPolicy::identity_only(),
+            vault(),
+        )
+        .unwrap();
 
         minter
             .update_handle(&did, &new_handle())
@@ -1616,6 +1723,7 @@ mod tests {
             log,
             Arc::new(NoopPlcDirectory),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 
@@ -1646,6 +1754,7 @@ mod tests {
             Arc::new(MemoryPlcOperationLog::new()),
             directory.clone(),
             policy,
+            vault(),
         )
         .unwrap();
 
@@ -1702,6 +1811,7 @@ mod tests {
             log,
             Arc::new(NoopPlcDirectory),
             MintPolicy::identity_only(),
+            vault(),
         )
         .unwrap();
 

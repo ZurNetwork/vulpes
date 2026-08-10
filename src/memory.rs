@@ -13,14 +13,14 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use crate::{
-    CustodyKeys, Did, KeyStore, PlcOperationLog, PlcOperationRecord, StorageError, StorageResult,
+    Did, KeyStore, PlcOperationLog, PlcOperationRecord, SealedKeys, StorageError, StorageResult,
 };
 
-/// An in-memory [`KeyStore`]. Rejects a second `put` for the same DID, as a
-/// primary key would.
+/// An in-memory [`KeyStore`]. Holds sealed blobs (never plaintext) and rejects a
+/// second `put` for the same DID, as a primary key would.
 #[derive(Default)]
 pub struct MemoryKeyStore {
-    entries: Mutex<Vec<(Did, CustodyKeys)>>,
+    entries: Mutex<Vec<(Did, SealedKeys)>>,
 }
 
 impl MemoryKeyStore {
@@ -32,7 +32,7 @@ impl MemoryKeyStore {
 
 #[async_trait]
 impl KeyStore for MemoryKeyStore {
-    async fn put(&self, did: &Did, keys: &CustodyKeys) -> StorageResult<()> {
+    async fn put(&self, did: &Did, keys: &SealedKeys) -> StorageResult<()> {
         let mut entries = self.entries.lock().expect("key store lock");
         if entries.iter().any(|(stored, _)| stored == did) {
             return Err(StorageError::new(format!("custody already held for {did}")));
@@ -41,7 +41,7 @@ impl KeyStore for MemoryKeyStore {
         Ok(())
     }
 
-    async fn get(&self, did: &Did) -> StorageResult<Option<CustodyKeys>> {
+    async fn get(&self, did: &Did) -> StorageResult<Option<SealedKeys>> {
         let entries = self.entries.lock().expect("key store lock");
         Ok(entries
             .iter()
