@@ -45,10 +45,13 @@ correct behaviour, and safe while zurid is unreleased and unadopted. From the
 first tagged release, a change to shipped DDL must be a **new** migration
 instead. Called out here rather than assumed.
 
-### F8. An update refuses a prior operation the policy does not describe
+---
 
-**Where:** `src/minter.rs`, `Minter::carry_forward`; the ignored test
-`an_update_carries_an_arbitrary_prior_shape_forward`.
+## Ruled by the Engineer
+
+### F8. An update refuses a prior operation the policy does not describe — **strict, ruled**
+
+**Where:** `src/minter.rs`, `Minter::carry_forward`.
 
 The source refuses to build a handle update when the DID's latest operation is
 not identity-only, with the comment *"carrying those forward is not
@@ -67,13 +70,14 @@ operation's `rotationKeys`, `verificationMethods` and `services` forward
 - A PDS-bearing policy can now update the identities it mints, which the
   hard-coded guard could not express.
 
-**Still open:** should an update carry an *arbitrary* prior shape forward — one
-the operator's policy does not describe, e.g. a service binding added out of
-band? Permissive is more available (the identity stays operable); conservative is
-safer (a foreign binding cannot silently survive an operation the operator
-believes they control). That is a domain call, so the conservative behaviour
-ships and the permissive one sits behind an `#[ignore]`d test with a TODO. Un-ignore it
-to adopt the alternative.
+**Ruled (Engineer): keep strict.** An update never carries an *arbitrary* prior
+shape forward — one the operator's policy does not describe. A richer DID is a
+richer `MintPolicy`, never a bypass of the shape check: to operate identities
+with a PDS or extra verification methods, configure a policy that declares them,
+and the same-shape check then passes. The permissive alternative — carry whatever
+the row declares, so a binding added out of band silently survives an operation
+the operator believes they control — is not offered. The `#[ignore]`d
+placeholder test that held its place is deleted.
 
 ### F29. `Authenticator::start` takes a `Handle`, and the connector is the caller's
 
@@ -98,16 +102,22 @@ Documented prominently on the module and in the README.
 Consumption impact: `auth.start(&handle)` instead of `auth.start(&str)` — the
 call site almost always already has a `Handle`.
 
-### F13. OAuth clients are loopback-only
+### F13. OAuth clients are loopback-only — **ruled for v0.1.0**
 
 **Where:** `src/oauth/mod.rs`, `OAuthConfig`.
 
 The source builds `AtprotoClientMetadata::new_localhost`, deriving the
 `client_id` from the redirect URI list. That is the localhost-development shape
 of an atproto OAuth client; a public deployment eventually serves a hosted
-`client_metadata.json` instead. Carried over as-is (smallest diff, and the
-source has not needed the other shape yet), documented as a limitation on the
-type. Adding a hosted-metadata variant is an additive change to `OAuthConfig`.
+`client_metadata.json` instead.
+
+**Ruled (Engineer): loopback-only is deliberate for v0.1.0.** No hosted
+public/confidential client is built now. `OAuthConfig::loopback` validates the
+redirect against the two loopback literals (S1), and that is the whole surface
+for this release. A hosted-metadata variant is a purely **additive** change to
+`OAuthConfig` — a new constructor beside `loopback`, no reshape — gated on a
+consumer actually needing it, so it is not speculatively built. Documented as a
+limitation on the type and in the README.
 
 ---
 

@@ -146,8 +146,10 @@ let did = auth.complete(code, state, iss).await?;                      // at you
 ```
 
 `jacquard` does the protocol; zurid makes its state durable *and* encrypted, and
-keeps the protocol library behind one seam. Currently builds a loopback client —
-see [FORKS.md](FORKS.md) F13.
+keeps the protocol library behind one seam. It builds a **loopback** client —
+deliberate for v0.1.0; a hosted public/confidential client is an additive change
+gated on a consumer needing it (see [FORKS.md](FORKS.md) F13). A callback with no
+`iss` is rejected before the token exchange (the atproto profile requires it).
 
 > **⚠ SSRF: install a guarded connector.** `start` takes a validated `Handle`,
 > never a string, so an attacker cannot pass `https://169.254.169.254/…` and
