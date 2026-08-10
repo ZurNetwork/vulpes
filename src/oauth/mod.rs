@@ -139,6 +139,11 @@ pub enum AuthError {
          (with an optional port and path), got `{0}`"
     )]
     NotALoopbackRedirect(String),
+    /// The callback carried no `iss`. The atproto OAuth profile requires the
+    /// authorization-response `iss` parameter (RFC 9207 mix-up defense), so a
+    /// callback without it is rejected before the token exchange.
+    #[error("the OAuth callback is missing the required `iss` parameter")]
+    MissingIssuer,
 }
 
 /// How to configure the OAuth client.
@@ -247,7 +252,8 @@ type Client<S> = Arc<OAuthClient<JacquardResolver<reqwest::Client>, JacquardAuth
 /// let authorize_url = auth.start(&handle).await?;
 ///
 /// // Leg 2: at your redirect endpoint, with the query parameters it carried.
-/// let did = auth.complete("the-code".into(), Some("the-state".into()), None).await?;
+/// // `iss` is required — a callback without it is rejected before the exchange.
+/// let did = auth.complete("the-code".into(), Some("the-state".into()), Some("the-iss".into())).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -329,23 +335,38 @@ impl<S: OAuthStateStore + 'static> Authenticator<S> {
     /// Leg 2 — exchange the callback parameters for tokens and return the
     /// visitor's verified [`Did`].
     ///
-    /// jacquard looks the in-flight request up by `state`, checks the issuer,
-    /// runs the DPoP-bound token exchange against the PDS and persists the
-    /// established session; the DID comes off that session, so it is the PDS's
-    /// claim about who signed in, not the caller's.
+    /// jacquard looks the in-flight request up by `state`, runs the DPoP-bound
+    /// token exchange against the PDS and persists the established session; the
+    /// DID comes off that session, so it is the PDS's claim about who signed in,
+    /// not the caller's.
     ///
-    /// Errors if `state` matches no saved request (expired, unknown, or a
-    /// forged callback), if the `iss` check fails, or if the exchange fails.
+    /// # `iss` is required
+    ///
+    /// A callback carrying no `iss` is **rejected outright**, before the exchange
+    /// — [`AuthError::MissingIssuer`]. The atproto OAuth profile mandates the
+    /// `iss` authorization-response parameter (RFC 9207 mix-up defense), so a
+    /// callback without it is malformed, and jacquard's own check only fires
+    /// *conditionally* on what the server metadata advertised. zurid does not
+    /// leave that to the server's say-so: no `iss`, no exchange. Verifying its
+    /// *value* against the issuer is then jacquard's job.
+    ///
+    /// Errors if `iss` is absent, if `state` matches no saved request (expired,
+    /// unknown, or a forged callback), if the `iss` value fails its check, or if
+    /// the exchange fails.
     pub async fn complete(
         &self,
         code: String,
         state: Option<String>,
         iss: Option<String>,
     ) -> Result<Did, AuthError> {
+        // Hard-require `iss`, ahead of jacquard's conditional check: an atproto
+        // authorization response must carry it, so its absence is not something
+        // the server metadata gets to excuse.
+        let iss = iss.ok_or(AuthError::MissingIssuer)?;
         let params = CallbackParams {
             code: code.into(),
             state: state.map(Into::into),
-            iss: iss.map(Into::into),
+            iss: Some(iss.into()),
         };
         let session = self
             .oauth
@@ -480,5 +501,22 @@ mod tests {
             Authenticator::new(config, MemoryOAuthStateStore::default(), vault()),
             Err(AuthError::InvalidScopes(_))
         ));
+    }
+
+    // S3: a callback with no `iss` is rejected BEFORE the exchange — stricter
+    // than jacquard's conditional check, which only fires on what the server
+    // metadata advertised. The atproto profile mandates `iss` (RFC 9207), so its
+    // absence is malformed regardless. The guard runs before any network call,
+    // so this exercises it without a PDS.
+    #[tokio::test]
+    async fn complete_rejects_a_callback_without_iss() {
+        let auth = Authenticator::new(config(), MemoryOAuthStateStore::default(), vault()).unwrap();
+        let result = auth
+            .complete("the-code".into(), Some("the-state".into()), None)
+            .await;
+        assert!(
+            matches!(result, Err(AuthError::MissingIssuer)),
+            "a callback without `iss` must be refused, got: {result:?}"
+        );
     }
 }
