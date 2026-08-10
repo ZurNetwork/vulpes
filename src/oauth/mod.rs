@@ -45,6 +45,11 @@
 //! cannot hand you `https://169.254.169.254/latest/meta-data/` and have the
 //! server fetch it.
 //!
+//! That holds because **every** door into [`Handle`] validates, including
+//! [`Deserialize`](serde::Deserialize) — a handle usually arrives in a JSON
+//! login body, and a transparent derive there would have waved a URL straight
+//! through the type that is supposed to be the guarantee.
+//!
 //! **What zurid does NOT close.** Once a handle is accepted, jacquard performs
 //! the fetches the protocol requires, and it applies **no host or scheme guard
 //! of its own**:
@@ -417,9 +422,13 @@ mod tests {
 
     // THE SSRF BOUNDARY. jacquard's resolver treats an input beginning
     // `https://` as a service URL and fetches it DIRECTLY — an attacker-chosen
-    // URL the server would then request. `start` takes a `Handle`, and no
-    // `https://…` string survives handle validation, so that branch cannot be
-    // reached through this API. Every shape of it is refused here.
+    // URL the server would then request. `start` takes a `Handle`, so that
+    // branch is unreachable only if EVERY door into `Handle` refuses a URL.
+    //
+    // Both doors are checked here on purpose. `try_new` is the obvious one;
+    // `Deserialize` is the one that matters, because a JSON login body is how a
+    // handle actually reaches a server, and a derived transparent impl would
+    // have waved these straight through into the fetch.
     #[test]
     fn an_https_url_can_never_become_a_handle() {
         for url in [
@@ -428,11 +437,18 @@ mod tests {
             "https://example.com",
             "HTTPS://EXAMPLE.COM",
             "https://alice.example.com",
+            "http://[::1]/",
         ] {
             assert!(
                 Handle::try_new(url).is_err(),
                 "`{url}` must not validate as a handle — it would reach jacquard's \
                  fetch-this-service-URL branch"
+            );
+            let json = serde_json::to_string(url).expect("a json string");
+            assert!(
+                serde_json::from_str::<Handle>(&json).is_err(),
+                "`{url}` must not DESERIALIZE into a handle either — that is the \
+                 door a JSON login body comes through"
             );
         }
     }

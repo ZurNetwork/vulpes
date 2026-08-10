@@ -17,7 +17,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// The longest a whole handle may be, in `char`s (atproto handle syntax).
 pub const HANDLE_MAX_LEN: usize = 253;
@@ -60,9 +60,32 @@ const RESERVED_TLDS: &[&str] = &[
 /// // Special-use TLDs are not handles.
 /// assert!("alice.local".parse::<Handle>().is_err());
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
 pub struct Handle(String);
+
+/// Deserialization is a **parse**, not a wrapper — and here that is a security
+/// boundary, not just tidiness.
+///
+/// A `Handle` is what [`Authenticator::start`](crate::oauth::Authenticator::start)
+/// takes *instead of* a string, precisely so the resolver's
+/// "an input beginning `https://` is a service URL, fetch it directly" branch
+/// cannot be reached. That guarantee is only worth anything if **every** door
+/// into the type validates. A derived `Deserialize` is not a door that
+/// validates: it would hand back a `Handle` holding
+/// `https://169.254.169.254/…` straight from a JSON login body — the single
+/// most likely way a handle actually arrives — and walk it right into the fetch
+/// the type exists to prevent.
+///
+/// So this parses, and the value that comes out is normalized exactly as
+/// [`Handle::try_new`] normalizes: trimmed, lowercased, no trailing dot. It
+/// serializes as the bare string, so the wire shape is unchanged.
+impl<'de> Deserialize<'de> for Handle {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Self::try_new(raw).map_err(serde::de::Error::custom)
+    }
+}
 
 /// Why a string was rejected as a [`Handle`]. One variant per failure class, so
 /// a caller can map each to its own message or problem type.
@@ -435,6 +458,44 @@ mod tests {
     fn renders_the_at_uri_for_also_known_as() {
         let handle = Handle::try_new("alice.example.com").unwrap();
         assert_eq!(handle.at_uri(), "at://alice.example.com");
+    }
+
+    // THE SSRF DOOR. `Authenticator::start` takes a `Handle` instead of a
+    // string so the resolver's fetch-this-service-URL branch is unreachable —
+    // which is only true if EVERY way of getting a `Handle` validates.
+    // Deserialization is the likeliest way one actually arrives (a JSON login
+    // body), so it must parse, not wrap.
+    #[test]
+    fn deserialization_validates() {
+        for hostile in [
+            "\"https://169.254.169.254/latest/meta-data/\"",
+            "\"https://alice.example.com\"",
+            "\"http://127.0.0.1:8080/\"",
+            "\"xn--80ak6aa92e.example.com\"",
+            "\"alice.local\"",
+            "\"alice\"",
+            "\"\"",
+            "\"alice..com\"",
+        ] {
+            assert!(
+                serde_json::from_str::<Handle>(hostile).is_err(),
+                "{hostile} must not deserialize into a Handle"
+            );
+        }
+    }
+
+    // Deserialization normalizes exactly as `try_new` does, and the value still
+    // serializes as the bare string — the wire shape is unchanged in both
+    // directions.
+    #[test]
+    fn deserialization_normalizes_and_round_trips() {
+        let handle: Handle =
+            serde_json::from_str("\"  Alice.Example.COM.  \"").expect("a valid handle");
+        assert_eq!(handle.as_str(), "alice.example.com");
+        assert_eq!(
+            serde_json::to_string(&handle).unwrap(),
+            "\"alice.example.com\""
+        );
     }
 
     #[test]

@@ -368,11 +368,20 @@ The write path is the crate's reason to exist, so it is on by default;
 - `Did` and `Handle` are `Serialize`/`Deserialize` with `#[serde(transparent)]`,
   which the source's were not. Both are values that cross API boundaries;
   transparent means a DID is `"did:plc:…"` on the wire, never a tuple wrapper.
-  `Did`'s `Deserialize` is **hand-written and validating**: a derived one would
-  be `Did::new` with extra steps, so every JSON body and cached record could
-  route around the F2 grammar and a `Did` would prove nothing about its
+  **Both** `Deserialize` impls are hand-written and validating: a derived one
+  would be `Did::new` with extra steps, so every JSON body and cached record
+  could route around the grammar and the newtype would prove nothing about its
   contents. Deserialization is an untrusted boundary, so it parses. The wire
   shape is unchanged in both directions.
+
+  For `Handle` this is load-bearing rather than tidy. `Authenticator::start`
+  takes a `Handle` *instead of* a string specifically so jacquard's
+  fetch-this-service-URL branch is unreachable (F29) — which is only true if
+  every door into the type validates. A derived `Deserialize` would have handed
+  back a `Handle` holding `https://169.254.169.254/…` straight from a JSON login
+  body, the likeliest way a handle actually arrives, and walked it into the very
+  fetch the type exists to prevent. Caught by cold review of the F29 change; the
+  SSRF test now exercises both doors.
 
 ---
 
