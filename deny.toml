@@ -40,15 +40,10 @@ ignore = [
   # Drops out when jacquard moves to hickory 0.25+.
   { id = "RUSTSEC-2026-0119", reason = "no fix in the 0.24 line jacquard pins; the O(n^2) path is message ENCODING, and zurid only encodes its own bounded queries" },
 
-  # --- time 0.3.45: stack exhaustion parsing RFC 2822 ---
-  # DEV-DEPENDENCY ONLY (testcontainers -> bollard). Never in a consumer's
-  # build, and nothing here parses RFC 2822 dates at all.
-  #
-  # A FIX IS AVAILABLE — time 0.3.47 — but it requires Rust 1.88 and this crate
-  # promises `rust-version = "1.85"`. Taking it would raise the version needed
-  # to run the test suite. That is an MSRV decision, so it is left to the
-  # Engineer rather than taken here; see FORKS F32.
-  { id = "RUSTSEC-2026-0009", reason = "dev-dependency only (testcontainers/bollard); the fix in 0.3.47 costs the 1.85 MSRV, which is an Engineer call — see FORKS F32" },
+  # RUSTSEC-2026-0009 (time, RFC 2822 stack exhaustion) was here and is now
+  # FIXED — the lockfile pins time 0.3.47 and the MSRV is 1.88 (Engineer ruled,
+  # FORKS F32). The entry was removed rather than kept: an ignore for something
+  # that no longer fires is stale, and cargo-deny warns on it.
 
   # --- atomic-polyfill: unmaintained ---
   # Pulled in transitively and used on targets zurid does not build for; there

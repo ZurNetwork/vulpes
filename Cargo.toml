@@ -2,7 +2,7 @@
 name = "zurid"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "AT Protocol identity for Rust servers: the did:plc write path (mint, update handle, tombstone), envelope-encrypted key custody, and durable OAuth state."
 repository = "https://github.com/ZurNetwork/zurid"
 license = "MIT OR Apache-2.0"

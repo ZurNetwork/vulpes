@@ -16,22 +16,7 @@ recalled.
 
 ---
 
-## Open — needs an Engineer call
-
-### F32. `time` 0.3.47 would fix RUSTSEC-2026-0009 but costs the 1.85 MSRV
-
-**Where:** `deny.toml`, the `RUSTSEC-2026-0009` entry.
-
-The advisory (stack exhaustion parsing RFC 2822 dates) reaches zurid only as a
-**dev-dependency**, through `testcontainers → bollard → time 0.3.45`. It is
-never in a consumer's build, and nothing here parses RFC 2822 at all.
-
-A fix exists — `time` 0.3.47 — and `cargo update -p time --precise 0.3.47`
-resolves cleanly. It requires **Rust 1.88**, and the manifest promises
-`rust-version = "1.85"`. Taking it would raise the version needed to run the
-test suite while leaving the library's own MSRV untouched, which is a
-compatibility promise to change deliberately rather than as a side effect of an
-audit. Allow-listed with this note instead; the Engineer's call.
+## Standing notes
 
 ### F31. Migration files are edited in place, pre-1.0
 
@@ -48,6 +33,23 @@ instead. Called out here rather than assumed.
 ---
 
 ## Ruled by the Engineer
+
+### F32. RUSTSEC-2026-0009 (`time`) — **fixed, MSRV raised to 1.88**
+
+**Where:** `Cargo.toml` (`rust-version`), `Cargo.lock`, `deny.toml`.
+
+The advisory (stack exhaustion parsing RFC 2822 dates) reached zurid only as a
+**dev-dependency** — `testcontainers → bollard → time 0.3.45` — never in a
+consumer's build, and nothing here parses RFC 2822. The fix, `time` 0.3.47,
+requires Rust 1.88, one minor above the crate's declared `rust-version = "1.85"`.
+
+**Ruled (Engineer): take the real fix.** `Cargo.lock` pins `time` 0.3.47 (with
+its `num-conv` / `time-core` / `time-macros` bumps), and `rust-version` is raised
+to **1.88** — the library's own floor, not just the test toolchain. The advisory
+allow-list entry is removed rather than kept: an ignore for something that no
+longer fires is stale, and cargo-deny warns on it. The other four allow-list
+entries stand (all upstream/unreachable). CI runs on `stable`, already well past
+1.88, so no toolchain pin needed adjusting.
 
 ### F8. An update refuses a prior operation the policy does not describe — **strict, ruled**
 
