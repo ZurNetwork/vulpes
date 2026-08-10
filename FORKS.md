@@ -7,7 +7,9 @@ later consumption diff smallest** — except where that rule pointed at somethin
 actively wrong for a public library, in which case the reasoning is spelled out.
 
 Nothing here changes protocol behaviour. The one place where a behavioural fork
-appeared is **F8**, and it is left open for the Engineer rather than decided.
+appeared is **F8**, which the Engineer has ruled **strict** (see "Ruled by the
+Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13, F32 —
+is now ruled; no decision is left open.
 
 Source: `zurfur/backend/crates/{adapter-atproto,adapter-pg,domain,api}`.
 Spec facts cited below were verified against
