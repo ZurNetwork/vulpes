@@ -479,13 +479,25 @@ impl Minter {
         self.directory.submit(did.as_str(), &operation_json).await?;
         let record = self.maced(PlcOperationRecord {
             did: did.clone(),
-            cid,
+            cid: cid.clone(),
             op_type: OP_TYPE_TOMBSTONE.to_string(),
             prev: Some(prev),
             operation_json: operation_json.to_string(),
             op_mac: Vec::new(),
         });
-        self.op_log.append(&record).await?;
+        if let Err(err) = self.op_log.append(&record).await {
+            // Idempotent on replay, exactly like `update_handle`: a tombstone is
+            // deterministic, so a re-submitted one has the same `cid`. If the log
+            // already holds it — a blind retry after a submit that landed but
+            // whose append the caller never saw succeed — the work is done, so
+            // report success. Any other rejection means the tip advanced to a
+            // different operation: propagate it.
+            let tip = self.op_log.latest_cid(did).await?;
+            if tip.as_deref() == Some(cid.as_str()) {
+                return Ok(());
+            }
+            return Err(err.into());
+        }
         Ok(())
     }
 
@@ -1098,6 +1110,42 @@ mod tests {
             "the refused tombstone must not have advanced the chain"
         );
         assert_eq!(log.records().len(), 2, "genesis + the one tombstone");
+    }
+
+    // IDEMPOTENT REPLAY, mirroring `update_handle`: a tombstone is
+    // deterministic, so a re-submitted one has the same `cid`. If the identical
+    // tombstone already landed — here a concurrent retry that wins the append
+    // race — the duplicate-cid rejection is reported as SUCCESS, so a caller who
+    // is unsure whether the first attempt's append landed can retry blindly: no
+    // error, no second row.
+    #[tokio::test]
+    async fn replaying_an_identical_tombstone_is_idempotent() {
+        let log = Arc::new(RacingLog {
+            inner: MemoryPlcOperationLog::new(),
+            armed: AtomicBool::new(false),
+        });
+        let minter = Minter::new(
+            Arc::new(MemoryKeyStore::new()),
+            log.clone(),
+            Arc::new(NoopPlcDirectory),
+            MintPolicy::identity_only(),
+            vault(),
+        )
+        .unwrap();
+
+        let did = minter.mint(&handle()).await.unwrap();
+
+        log.armed.store(true, Ordering::SeqCst);
+        minter
+            .tombstone(&did)
+            .await
+            .expect("a benign replay (the identical tombstone already logged) is success");
+
+        assert_eq!(
+            log.inner.records().len(),
+            2,
+            "genesis + exactly ONE tombstone row — the replay appended nothing"
+        );
     }
 
     // --- update_handle ------------------------------------------------------

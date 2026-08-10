@@ -95,8 +95,10 @@ are not an accident:
   local chain, so a retry re-reads the same `prev` and re-signs the *same*
   operation.
 
-Signing is RFC 6979 deterministic, which is what makes a replayed update
-detectable (it collides on `UNIQUE(cid)`) and a blind retry safe.
+Signing is RFC 6979 deterministic, which is what makes a replayed update *or
+tombstone* detectable (it collides on `UNIQUE(cid)`) and a blind retry safe:
+both treat "the identical operation already landed" as success, so a caller
+unsure whether an append committed can retry without erroring or double-writing.
 
 ### `directory` — submitting operations
 
