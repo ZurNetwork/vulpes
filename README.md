@@ -172,8 +172,15 @@ resolver carries neither.
 The authority is read from the request URI (HTTP/2 and HTTP/3 send no `Host`
 header — it rides `:authority`) with the `Host` header as the fallback, so the
 same handle resolves over every protocol version. Because the answer depends on
-the authority rather than the path, every response carries `Vary: Host` and
-`Cache-Control: no-store`.
+the authority rather than the path, every response carries `Cache-Control:
+no-store` and `Vary: Host`.
+
+Note that the authority is **client-supplied**, not the authority the connection
+was opened to — an HTTP/1.1 absolute-form request-target carries its own, and per
+RFC 9112 §3.2.2 that one wins. Harmless here (the route is public,
+unauthenticated, and holds no per-handle secret), but it means `Vary: Host` is
+best-effort — `no-store` is what actually protects you, so **don't put a
+Host-keyed cache in front of this route**.
 
 ---
 

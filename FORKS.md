@@ -38,10 +38,19 @@ the row is covered, and the choice shapes the schema — so it is the Engineer's
 not the extraction's.
 
 **Shipped meanwhile (H8):** the spec's `rotationKeys` limits (1–5, no
-duplicates) are re-run on the carried-forward list. That does not detect
-tampering and does not cover the other fields; what it does is stop a bad row
-from **wedging** the identity — a rotation-key list the directory refuses would
-otherwise leave no handle change and no tombstone possible, permanently.
+duplicates) are re-run on the carried-forward list. That is an **availability**
+fix and nothing more — it stops a malformed row from *wedging* the identity (a
+rotation-key list the directory refuses would otherwise leave no handle change
+and no tombstone possible, permanently). It is **not** an authenticity fix, and
+the name `check_prior_rotation_keys` should not be read as one: an attacker who
+substitutes their *own* well-formed rotation keys passes it, and the minter then
+signs a valid operation handing DID control over.
+
+**Until B2 is resolved, treat write access to `plc_operations` as equivalent to
+key custody.** Whoever can write that table can choose what the custody key
+signs, so it warrants the same protection as the custody rows themselves —
+separate credentials from anything user-facing, no ORM-level mass-assignment
+onto it, and the same review bar for any code path that inserts into it.
 
 ### F32. `time` 0.3.47 would fix RUSTSEC-2026-0009 but costs the 1.85 MSRV
 

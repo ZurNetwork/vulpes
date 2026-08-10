@@ -136,6 +136,11 @@ impl OAuthStateStore for PgOAuthStateStore {
     /// An expired row reads as `Ok(None)` — absent, not an error, because from
     /// the callback's point of view a stale `state` is indistinguishable from an
     /// unknown one, and jacquard turns both into the same "start again".
+    ///
+    /// **This "read" is a write.** Despite the name it issues a `DELETE`, so the
+    /// pool behind it must reach the **primary** — a deployment that routes this
+    /// store's reads to a replica will fail here, unlike every other `get_*` on
+    /// this type.
     async fn get_auth_request(&self, state: &str) -> StorageResult<Option<Vec<u8>>> {
         sqlx::query_scalar(include_str!(
             "../../queries/oauth_state/get_auth_request.sql"

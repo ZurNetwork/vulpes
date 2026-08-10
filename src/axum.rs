@@ -184,7 +184,23 @@ pub fn handle_from_host(host: &str, handle_domain: &HandleDomain) -> Option<Hand
 /// once a load balancer negotiates h2 upstream.
 ///
 /// The URI is preferred and the header is the fallback, matching RFC 9113
-/// §8.3.1: where both are present, `:authority` is authoritative.
+/// §8.3.1 (`:authority` is authoritative where both are present) and RFC 9112
+/// §3.2.2 (for an absolute-form request-target, the server uses the target's
+/// authority and ignores `Host`).
+///
+/// # This authority is client-supplied
+///
+/// It is **not** the authority the connection was opened to. An HTTP/1.1 client
+/// may send an absolute-form target — `GET http://anything/… HTTP/1.1` with an
+/// unrelated `Host:` — and that authority is what lands here. Preferring it is
+/// correct per RFC 9112, but it means the value is chosen by the caller, not by
+/// TLS or by the listener.
+///
+/// That is safe *for this route specifically*, because handle→DID resolution is
+/// public, unauthenticated and holds no per-handle secret: an attacker who spoofs
+/// the authority learns only what they could have learned by asking for that
+/// handle directly. **Do not reuse this function where a privilege, a session or
+/// a secret is keyed to the resolved host** — there it is a host-spoofing seam.
 fn request_authority(request: &Request) -> Option<&str> {
     request
         .uri()
@@ -208,8 +224,12 @@ fn request_authority(request: &Request) -> Option<&str> {
 /// Every response carries `Cache-Control: no-store` and `Vary: Host`. The body
 /// is a function of the **authority**, not of the path — one URL, a different
 /// answer per handle — so a cache keyed on the path alone would serve one
-/// user's DID for another's handle. `Vary` states the dependency and `no-store`
-/// keeps an identity binding out of shared caches entirely.
+/// user's DID for another's handle.
+///
+/// `no-store` is the one doing the work, and `Vary: Host` is a best effort:
+/// when the authority arrives on an absolute-form request-target rather than in
+/// `Host`, there is no header for `Vary` to name. **Do not put a Host-keyed
+/// cache in front of this route** — rely on `no-store` instead.
 async fn atproto_did<R: HandleResolver + 'static>(
     State(state): State<WellKnownState<R>>,
     request: Request,
@@ -337,9 +357,16 @@ mod tests {
         );
     }
 
-    // The URI authority wins where both are present (RFC 9113 §8.3.1), so a
-    // spoofed `Host` cannot steer the answer away from the authority the
-    // connection actually addressed.
+    // The URI authority wins where both are present — RFC 9113 §8.3.1 for h2,
+    // RFC 9112 §3.2.2 for an HTTP/1.1 absolute-form target.
+    //
+    // NOT a spoofing defense, and the earlier version of this comment wrongly
+    // said it was: in absolute-form the URI authority is chosen by the CLIENT,
+    // so this precedence lets a caller pick which handle gets resolved. That is
+    // fine here — the route is public, unauthenticated and holds no per-handle
+    // secret, so a spoofer learns only what asking directly would have told
+    // them — and it is exactly why `request_authority` must not be reused where
+    // a privilege is keyed to the host.
     #[tokio::test]
     async fn the_uri_authority_wins_over_a_conflicting_host_header() {
         let request = Request::builder()

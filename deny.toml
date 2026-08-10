@@ -5,8 +5,12 @@
 # this lockfile today, says why it is not exploitable here, and says what would
 # make it go away. A NEW advisory has no entry, so it fails CI loudly.
 #
-# Re-check the list whenever `Cargo.lock` moves: an entry that no longer fires
-# is noise, and cargo-deny will say so (`unused-allowed-advisory`).
+# Re-check the list whenever `Cargo.lock` moves. An entry that no longer fires
+# is stale documentation of a risk that is gone; cargo-deny reports it as
+# `warning[advisory-not-detected]` — a WARNING, so it does not fail this job.
+# Set `unused-ignored-advisory = "deny"` below if you would rather CI stop on
+# it; that trades a loud reminder for a red build when somebody else's upstream
+# fix lands, which is a workflow call, not a security one.
 #
 # Run it the way CI does — the feature-gated dependencies (jacquard, sqlx,
 # reqwest, axum) are not in the default graph at all:
