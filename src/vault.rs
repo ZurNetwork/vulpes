@@ -40,7 +40,24 @@
 
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+
+/// HMAC-SHA256 — the operation-log integrity tag.
+type HmacSha256 = Hmac<Sha256>;
+
+/// The HKDF `info` label for the operation-log MAC subkey.
+///
+/// Domain separation, and the reason it is a *derived* subkey rather than the
+/// AEAD root key itself: one key with one purpose is easier to reason about than
+/// one key doing double duty as both an AEAD key and a MAC key. The `v1` suffix
+/// leaves room to rotate the derivation without touching the root key.
+pub const OPLOG_MAC_LABEL: &[u8] = b"zurid.oplog.mac.v1";
+
+/// The length of an operation-log MAC tag (HMAC-SHA256 output).
+pub const OPLOG_MAC_LEN: usize = 32;
 
 /// The root key length in bytes (XChaCha20-Poly1305 takes a 256-bit key).
 pub const ROOT_KEY_LEN: usize = 32;
@@ -187,6 +204,48 @@ impl SecretVault {
             .map_err(|_| VaultError::Open)?;
         Ok(Zeroizing::new(plaintext))
     }
+
+    /// The 32-byte subkey HKDF-derived from the root key under `label`.
+    ///
+    /// The root key is the input keying material; the label is the `info` that
+    /// domain-separates one derived purpose from another. The subkey comes back
+    /// in a [`Zeroizing`] buffer so it is wiped once the caller is done with it.
+    fn derive_subkey(&self, label: &[u8]) -> Zeroizing<[u8; 32]> {
+        let hkdf = Hkdf::<Sha256>::new(None, &self.0);
+        let mut subkey = Zeroizing::new([0u8; 32]);
+        hkdf.expand(label, &mut subkey[..])
+            .expect("32 bytes is a valid HKDF-SHA256 output length");
+        subkey
+    }
+
+    /// The HMAC-SHA256 of `message` under the operation-log MAC subkey.
+    ///
+    /// The subkey is HKDF-derived from the root key under [`OPLOG_MAC_LABEL`], so
+    /// this tag is unforgeable without the root key — an attacker with database
+    /// *write* access cannot mint a valid one for a row they altered. Used to
+    /// authenticate each logged `did:plc` operation; see
+    /// [`PlcOperationRecord`](crate::PlcOperationRecord).
+    pub fn oplog_mac(&self, message: &[u8]) -> [u8; OPLOG_MAC_LEN] {
+        let subkey = self.derive_subkey(OPLOG_MAC_LABEL);
+        let mut mac = <HmacSha256 as Mac>::new_from_slice(&subkey[..])
+            .expect("HMAC accepts a key of any length");
+        mac.update(message);
+        let tag = mac.finalize().into_bytes();
+        let mut out = [0u8; OPLOG_MAC_LEN];
+        out.copy_from_slice(&tag);
+        out
+    }
+
+    /// Whether `tag` is the operation-log MAC of `message`. **Constant-time** —
+    /// the comparison is HMAC's own `verify_slice`, so a near-miss tag reveals
+    /// nothing through timing. A `tag` of the wrong length is simply `false`.
+    pub fn verify_oplog_mac(&self, message: &[u8], tag: &[u8]) -> bool {
+        let subkey = self.derive_subkey(OPLOG_MAC_LABEL);
+        let mut mac = <HmacSha256 as Mac>::new_from_slice(&subkey[..])
+            .expect("HMAC accepts a key of any length");
+        mac.update(message);
+        mac.verify_slice(tag).is_ok()
+    }
 }
 
 #[cfg(test)]
@@ -273,6 +332,73 @@ mod tests {
             Err(VaultError::RootKeyLength(16))
         ));
         assert!(SecretVault::from_bytes(&[1u8; ROOT_KEY_LEN]).is_ok());
+    }
+
+    const MAC_MESSAGE: &[u8] = b"did:plc:alice\0the operation bytes";
+
+    // The MAC round-trips: a tag verifies against the message it was made for.
+    #[test]
+    fn oplog_mac_round_trips() {
+        let tag = vault().oplog_mac(MAC_MESSAGE);
+        assert_eq!(tag.len(), OPLOG_MAC_LEN);
+        assert!(vault().verify_oplog_mac(MAC_MESSAGE, &tag));
+    }
+
+    // A single flipped message byte, or a flipped tag byte, fails verification —
+    // this is the tamper the operation log relies on catching.
+    #[test]
+    fn oplog_mac_rejects_a_tampered_message_or_tag() {
+        let tag = vault().oplog_mac(MAC_MESSAGE);
+
+        let mut altered = MAC_MESSAGE.to_vec();
+        altered[0] ^= 0x01;
+        assert!(
+            !vault().verify_oplog_mac(&altered, &tag),
+            "a changed message must not verify under the old tag"
+        );
+
+        let mut bad_tag = tag;
+        bad_tag[0] ^= 0x01;
+        assert!(
+            !vault().verify_oplog_mac(MAC_MESSAGE, &bad_tag),
+            "a changed tag must not verify"
+        );
+
+        // A wrong-length tag is simply false, never a panic.
+        assert!(!vault().verify_oplog_mac(MAC_MESSAGE, &tag[..OPLOG_MAC_LEN - 1]));
+        assert!(!vault().verify_oplog_mac(MAC_MESSAGE, &[]));
+    }
+
+    // The MAC key is HKDF-DERIVED from the root key, so a different root key
+    // produces a different tag — write access to the database is not enough to
+    // forge one without the root key.
+    #[test]
+    fn oplog_mac_is_bound_to_the_root_key() {
+        let tag = vault().oplog_mac(MAC_MESSAGE);
+        let other = SecretVault::from_bytes(&[8u8; ROOT_KEY_LEN]).unwrap();
+        assert!(
+            !other.verify_oplog_mac(MAC_MESSAGE, &tag),
+            "a tag made under one root key must not verify under another"
+        );
+    }
+
+    // The MAC subkey is domain-separated from the AEAD: the derived MAC key is
+    // not the raw root key, so the tag is not something the sealing path could
+    // ever collide with. Pinned by asserting the tag differs from an HMAC taken
+    // under the raw root key.
+    #[test]
+    fn oplog_mac_does_not_reuse_the_raw_root_key() {
+        let tag = vault().oplog_mac(MAC_MESSAGE);
+
+        let mut raw = <HmacSha256 as Mac>::new_from_slice(&[7u8; ROOT_KEY_LEN]).unwrap();
+        raw.update(MAC_MESSAGE);
+        let raw_tag = raw.finalize().into_bytes();
+
+        assert_ne!(
+            &tag[..],
+            raw_tag.as_slice(),
+            "the MAC must use the HKDF subkey, not the root key directly"
+        );
     }
 
     // An all-zero key is a perfectly valid XChaCha20-Poly1305 key, which is

@@ -49,6 +49,11 @@ sha2 = "0.10"
 data-encoding = "2"
 # Envelope encryption of secrets at rest (AEAD under a root key).
 chacha20poly1305 = "0.10"
+# HKDF-SHA256 derives a dedicated MAC subkey from the vault root key, and
+# HMAC-SHA256 is the operation-log integrity tag — so the root key stays
+# single-purpose (AEAD) and the MAC uses its own domain-separated key.
+hkdf = "0.12"
+hmac = "0.12"
 # Wipe secret material from memory on drop.
 zeroize = { version = "1", features = ["derive"] }
 # Constant-time equality over private key bytes — see `SecretKey`'s `PartialEq`.

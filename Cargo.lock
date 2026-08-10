@@ -5388,6 +5388,8 @@ dependencies = [
  "chrono",
  "data-encoding",
  "fluent-uri",
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
  "http",
  "jacquard",
  "jacquard-common",

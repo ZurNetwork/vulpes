@@ -115,7 +115,7 @@ pub use policy::{
     MAX_ROTATION_KEYS, MAX_VERIFICATION_METHODS, MIN_ROTATION_KEYS, MintPolicy, PolicyError,
 };
 pub use store::{HandleResolver, KeyStore, OAuthStateStore, PlcOperationLog, PlcOperationRecord};
-pub use vault::{ROOT_KEY_LEN, SecretVault, VaultError};
+pub use vault::{OPLOG_MAC_LABEL, OPLOG_MAC_LEN, ROOT_KEY_LEN, SecretVault, VaultError};
 
 #[cfg(feature = "directory")]
 pub use directory::HttpPlcDirectory;
