@@ -1,21 +1,21 @@
-# zurid
+# vulpes
 
 **AT Protocol identity for Rust servers — the `did:plc` write path.**
 
 Reading an atproto identity is well served in Rust. *Operating* one is not.
 Minting a `did:plc`, custodying its keys, re-pointing its handle and tombstoning
 it are a byte-exact signing problem with a durability problem wrapped around it,
-and every server that has needed it so far has written its own. zurid is that
+and every server that has needed it so far has written its own. vulpes is that
 code, extracted from a production service and made reusable.
 
-It is deliberately narrow. zurid does identity — mint, update, tombstone, custody,
+It is deliberately narrow. vulpes does identity — mint, update, tombstone, custody,
 handle syntax, OAuth session storage — and nothing else. It holds no product
 policy: no reserved-name lists, no rate limits, no quarantine windows. Those are
 yours.
 
 ```toml
 [dependencies]
-zurid = { git = "https://github.com/ZurNetwork/zurid", tag = "v0.1.0" }
+vulpes = { git = "https://github.com/ZurNetwork/vulpes", tag = "v0.1.0" }
 ```
 
 Not published to crates.io; consume it as a tag-pinned git dependency.
@@ -26,7 +26,7 @@ Not published to crates.io; consume it as a tag-pinned git dependency.
 
 ```rust
 use std::sync::Arc;
-use zurid::{Handle, MintPolicy, Minter, NoopPlcDirectory};
+use vulpes::{Handle, MintPolicy, Minter, NoopPlcDirectory};
 
 // `vault` is the SecretVault: the minter seals custody and MACs the log with it.
 let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only(), vault)?;
@@ -66,7 +66,7 @@ protocol core with no crypto and no I/O.
 ### core — the operation format
 
 ```rust
-use zurid::plc::{PlcDocument, PlcOperation, derive_did};
+use vulpes::plc::{PlcDocument, PlcOperation, derive_did};
 
 let document = PlcDocument::identity_only(rotation_keys, signing_key, "alice.example.com");
 let operation = PlcOperation::genesis(document);
@@ -103,7 +103,7 @@ unsure whether an append committed can retry without erroring or double-writing.
 ### `directory` — submitting operations
 
 ```rust
-let directory = zurid::HttpPlcDirectory::canonical();   // https://plc.directory
+let directory = vulpes::HttpPlcDirectory::canonical();   // https://plc.directory
 ```
 
 Or `NoopPlcDirectory` while you are building — it accepts every operation and
@@ -113,29 +113,29 @@ identities you do not mean to keep.
 ### `postgres` — storage, included
 
 ```rust
-zurid::postgres::migrate(&pool).await?;
+vulpes::postgres::migrate(&pool).await?;
 
-let keys = Arc::new(zurid::postgres::PgKeyStore::new(pool.clone())); // holds no vault: sealing lives in the minter
-let log  = Arc::new(zurid::postgres::PgPlcOperationLog::new(pool.clone()));
-let oauth_state = zurid::postgres::PgOAuthStateStore::new(pool);
+let keys = Arc::new(vulpes::postgres::PgKeyStore::new(pool.clone())); // holds no vault: sealing lives in the minter
+let log  = Arc::new(vulpes::postgres::PgPlcOperationLog::new(pool.clone()));
+let oauth_state = vulpes::postgres::PgOAuthStateStore::new(pool);
 ```
 
 The migrations ship two ways: embedded (call `migrate`) or as files under
 `migrations/`, to copy into your own directory if you would rather own the
 versioning. Pick one.
 
-The DDL is plain `CREATE TABLE`, not `CREATE TABLE IF NOT EXISTS`: zurid's names
+The DDL is plain `CREATE TABLE`, not `CREATE TABLE IF NOT EXISTS`: vulpes's names
 are unprefixed and could collide with a table you already own, and `IF NOT
 EXISTS` would record that collision as a *successful* migration that created
-nothing — after which zurid reads and writes a schema it does not control. Each
+nothing — after which vulpes reads and writes a schema it does not control. Each
 migration runs in a transaction, so a collision fails the call, records nothing,
 and leaves your table untouched.
 
 ### `oauth` — sign-in over atproto
 
 ```rust
-let auth = zurid::oauth::Authenticator::new(
-    zurid::oauth::OAuthConfig::loopback(redirect_uri)?,   // http://127.0.0.1 or http://[::1]
+let auth = vulpes::oauth::Authenticator::new(
+    vulpes::oauth::OAuthConfig::loopback(redirect_uri)?,   // http://127.0.0.1 or http://[::1]
     oauth_state,
     vault,
 )?;
@@ -145,7 +145,7 @@ let url = auth.start(&handle).await?;                                  // redire
 let did = auth.complete(code, state, iss).await?;                      // at your callback
 ```
 
-`jacquard` does the protocol; zurid makes its state durable *and* encrypted, and
+`jacquard` does the protocol; vulpes makes its state durable *and* encrypted, and
 keeps the protocol library behind one seam. It builds a **loopback** client —
 deliberate for v0.1.0; a hosted public/confidential client is an additive change
 gated on a consumer needing it (see [FORKS.md](FORKS.md) F13). A callback with no
@@ -154,11 +154,11 @@ gated on a consumer needing it (see [FORKS.md](FORKS.md) F13). A callback with n
 > **⚠ SSRF: install a guarded connector.** `start` takes a validated `Handle`,
 > never a string, so an attacker cannot pass `https://169.254.169.254/…` and
 > reach the resolver's "this input is a service URL, fetch it" branch. That is
-> the only part zurid closes. Once a handle is accepted, `jacquard` fetches
+> the only part vulpes closes. Once a handle is accepted, `jacquard` fetches
 > `https://<handle>/.well-known/atproto-did`, then whatever `serviceEndpoint`
 > the DID document names — **with no host or scheme guard of its own**, on names
 > the visitor controls and which may resolve to a loopback or link-local address
-> (including on a re-resolve, i.e. DNS rebinding). zurid's default client sets
+> (including on a re-resolve, i.e. DNS rebinding). vulpes's default client sets
 > connect and request timeouts but filters no addresses. Supply your own via
 > `Authenticator::with_client(config, store, vault, client)` — a `reqwest::Client`
 > whose connector refuses private, loopback, link-local and unique-local
@@ -169,7 +169,7 @@ gated on a consumer needing it (see [FORKS.md](FORKS.md) F13). A callback with n
 
 ```rust
 Router::new()
-    .merge(zurid::axum::atproto_did_router(resolver, HandleDomain::try_new("example.com")?))
+    .merge(vulpes::axum::atproto_did_router(resolver, HandleDomain::try_new("example.com")?))
 ```
 
 Serves `GET /.well-known/atproto-did`, answering only for subdomains of the
@@ -239,7 +239,7 @@ boundary. For real identities, keep it in a KMS or HSM. The seam is one type
 wide, so that swap is not a schema change.
 
 **Associated data binds a blob to its row, and each family is tagged.** Custody
-is sealed under `zurid.custody\0` + its DID; OAuth state under a table-name tag
+is sealed under `vulpes.custody\0` + its DID; OAuth state under a table-name tag
 + its primary key, length-prefixed so the same bytes cannot be re-split into a
 different key. An attacker with database *write* access cannot lift one
 identity's keys onto another DID, one user's session onto another row, or a blob

@@ -195,10 +195,10 @@ impl RoleKeypairs {
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use zurid::{Minter, MintPolicy, NoopPlcDirectory, Handle, SecretVault};
+/// # use vulpes::{Minter, MintPolicy, NoopPlcDirectory, Handle, SecretVault};
 /// # async fn example(
-/// #     keys: Arc<dyn zurid::KeyStore>,
-/// #     log: Arc<dyn zurid::PlcOperationLog>,
+/// #     keys: Arc<dyn vulpes::KeyStore>,
+/// #     log: Arc<dyn vulpes::PlcOperationLog>,
 /// #     vault: SecretVault,
 /// # ) -> Result<(), Box<dyn std::error::Error>> {
 /// let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only(), vault)?;
@@ -245,7 +245,7 @@ impl Minter {
     /// Open a [`SealedKeys`] the store returned back into [`CustodyKeys`].
     ///
     /// Resolves the stored envelope version to a scheme — an unknown one (a row
-    /// written by a newer zurid) is a hard error, never opened under a guess —
+    /// written by a newer vulpes) is a hard error, never opened under a guess —
     /// then opens the blob. A blob that will not open (wrong root key, tamper) is
     /// likewise an error, never silently absent.
     fn open_custody(&self, did: &Did, sealed: &SealedKeys) -> Result<CustodyKeys, MintError> {
@@ -549,7 +549,7 @@ impl Minter {
         // otherwise choose what gets signed. The MAC — keyed by a subkey of the
         // root key, which is not in the database — makes a tampered row fail
         // here instead. (`check_prior_rotation_keys` still bounds a *malformed*
-        // row that nonetheless carries a valid tag, e.g. a row zurid wrote before
+        // row that nonetheless carries a valid tag, e.g. a row vulpes wrote before
         // a policy tightened.)
         self.verify_mac(prior)?;
 
@@ -625,7 +625,7 @@ impl Minter {
     ///
     /// This is an **availability** guard, not an authenticity one — it runs
     /// *after* [`verify_mac`](Minter::verify_mac) has already established the row
-    /// is genuine. Its job is the row zurid itself wrote whose `rotationKeys`
+    /// is genuine. Its job is the row vulpes itself wrote whose `rotationKeys`
     /// stopped being valid (a spec or policy tightening), not an attacker's row,
     /// which the MAC already rejected.
     fn check_prior_rotation_keys(
@@ -690,7 +690,7 @@ mod tests {
     }
 
     /// Stamp a hand-built record with a VALID operation-log MAC under the test
-    /// vault — so it stands in for a row zurid legitimately wrote, which is what
+    /// vault — so it stands in for a row vulpes legitimately wrote, which is what
     /// `carry_forward`/`tombstone` verify before trusting. A staged prior without
     /// this would fail the integrity check for the wrong reason.
     fn maced(mut record: PlcOperationRecord) -> PlcOperationRecord {
@@ -1691,7 +1691,7 @@ mod tests {
     /// Log a hand-built prior operation for `did`, so a guard can be exercised
     /// against a shape the minter would never produce.
     ///
-    /// The row is MAC'd with a valid tag, standing in for a row zurid genuinely
+    /// The row is MAC'd with a valid tag, standing in for a row vulpes genuinely
     /// wrote — so the downstream guard under test (policy, rotation, malformed)
     /// is what fails, not the integrity check.
     async fn log_prior(log: &MemoryPlcOperationLog, did: &Did, operation: serde_json::Value) {

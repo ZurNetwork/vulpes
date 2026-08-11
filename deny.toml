@@ -34,11 +34,11 @@ ignore = [
 
   # --- hickory-proto 0.24.x: O(n^2) name compression on message ENCODING ---
   # No fix in the 0.24 line, and jacquard-identity pins `hickory-resolver ^0.24`,
-  # so this cannot be lifted by a lockfile bump. zurid is a DNS *client*: it
+  # so this cannot be lifted by a lockfile bump. vulpes is a DNS *client*: it
   # encodes the queries it composes itself (`_atproto.<handle>`, bounded by the
   # 253-char handle limit), and never encodes attacker-supplied messages.
   # Drops out when jacquard moves to hickory 0.25+.
-  { id = "RUSTSEC-2026-0119", reason = "no fix in the 0.24 line jacquard pins; the O(n^2) path is message ENCODING, and zurid only encodes its own bounded queries" },
+  { id = "RUSTSEC-2026-0119", reason = "no fix in the 0.24 line jacquard pins; the O(n^2) path is message ENCODING, and vulpes only encodes its own bounded queries" },
 
   # RUSTSEC-2026-0009 (time, RFC 2822 stack exhaustion) was here and is now
   # FIXED — the lockfile pins time 0.3.47 and the MSRV is 1.88 (Engineer ruled,
@@ -46,10 +46,10 @@ ignore = [
   # that no longer fires is stale, and cargo-deny warns on it.
 
   # --- atomic-polyfill: unmaintained ---
-  # Pulled in transitively and used on targets zurid does not build for; there
+  # Pulled in transitively and used on targets vulpes does not build for; there
   # is no advisory of a defect, only that the crate is no longer maintained.
   # Drops out when the crate holding it migrates to `portable-atomic`.
-  { id = "RUSTSEC-2023-0089", reason = "unmaintained, not vulnerable; transitive, and the polyfill is for targets zurid does not build for" },
+  { id = "RUSTSEC-2023-0089", reason = "unmaintained, not vulnerable; transitive, and the polyfill is for targets vulpes does not build for" },
 
   # NOTE: the 2026-08-09 review also listed GHSA-7gcf-g7xr-8hxj (serde_with).
   # It does NOT fire against this lockfile — cargo-deny reads the RustSec

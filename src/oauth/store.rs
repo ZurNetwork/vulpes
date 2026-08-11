@@ -103,7 +103,7 @@ impl<S: OAuthStateStore> JacquardAuthStore<S> {
     }
 }
 
-/// Map any zurid error into jacquard's store error.
+/// Map any vulpes error into jacquard's store error.
 ///
 /// Surfacing a failure as an error rather than a `None` is what makes an
 /// unreadable blob fail closed: jacquard treats `None` as "no such session",

@@ -4,11 +4,11 @@
 //! sqlx's `macros` feature — and enabling that feature here would turn it on for
 //! every crate in a consumer's build through feature unification, quietly
 //! re-arming the compile-time query macros in projects that deliberately retired
-//! them. A build script costs nothing and keeps zurid's sqlx surface to
+//! them. A build script costs nothing and keeps vulpes's sqlx surface to
 //! `derive`.
 //!
 //! It writes `embedded_migrations.rs` into `OUT_DIR`: a sorted static array of
-//! `(version, description, sql)` that [`zurid::postgres::migrator`] turns into
+//! `(version, description, sql)` that [`vulpes::postgres::migrator`] turns into
 //! the same `sqlx::migrate::Migrator` the macro would have expanded to. The
 //! checksums match sqlx's own directory resolver (`Migration::new` hashes the
 //! same SQL text), so a `_sqlx_migrations` ledger written by the sqlx CLI stays

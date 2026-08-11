@@ -1,7 +1,7 @@
-//! The storage seam — the three traits zurid persists through, and the record
+//! The storage seam — the three traits vulpes persists through, and the record
 //! shape the operation log carries.
 //!
-//! zurid owns no database. It names the *roles* it needs and lets you supply
+//! vulpes owns no database. It names the *roles* it needs and lets you supply
 //! them; ready [PostgreSQL implementations](crate::postgres) of all three ship
 //! behind the `postgres` feature, and an in-memory fake is a dozen lines when
 //! you need one for tests.

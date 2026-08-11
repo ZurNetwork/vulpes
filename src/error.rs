@@ -1,7 +1,7 @@
 //! The two **open** error types — the ones an implementation outside this crate
 //! produces.
 //!
-//! Every other error in zurid is a closed `enum` naming its own failure modes
+//! Every other error in vulpes is a closed `enum` naming its own failure modes
 //! ([`HandleError`](crate::HandleError), [`VaultError`](crate::VaultError),
 //! [`PlcError`](crate::PlcError), …). Storage and directory errors cannot be
 //! closed: the whole point of [`KeyStore`](crate::KeyStore),
@@ -22,7 +22,7 @@ type BoxError = Box<dyn StdError + Send + Sync>;
 /// [`PlcOperationLog`](crate::PlcOperationLog),
 /// [`OAuthStateStore`](crate::OAuthStateStore)).
 ///
-/// Deliberately opaque: zurid never branches on *why* a store failed, only on
+/// Deliberately opaque: vulpes never branches on *why* a store failed, only on
 /// whether it did. The one behavioural contract callers rely on is that a store
 /// error is **not** "absent" — a missing row is `Ok(None)`, a broken database is
 /// `Err`. Conflating them would let a read failure read as "no session"
@@ -30,7 +30,7 @@ type BoxError = Box<dyn StdError + Send + Sync>;
 /// fail closed.
 ///
 /// ```
-/// # use zurid::StorageError;
+/// # use vulpes::StorageError;
 /// let err = StorageError::new(std::io::Error::other("disk on fire"));
 /// assert!(err.to_string().contains("disk on fire"));
 /// ```

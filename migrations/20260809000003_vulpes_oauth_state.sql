@@ -1,4 +1,4 @@
--- zurid: durable storage for the atproto OAuth handshake's two tiers of state.
+-- vulpes: durable storage for the atproto OAuth handshake's two tiers of state.
 --
 -- These rows hold live upstream credentials on a user's behalf: an established
 -- session carries the DPoP private signing key plus the long-lived refresh token
@@ -6,9 +6,9 @@
 -- A read of them in the clear (a leaked backup, a read replica, an injection
 -- read gadget) is a RENEWABLE PDS-session takeover, so every `data` blob is
 -- sealed with an AEAD under the same root key that seals key custody (see
--- zurid::SecretVault). The database holds ciphertext, never plaintext.
+-- vulpes::SecretVault). The database holds ciphertext, never plaintext.
 --
--- The blobs are opaque to SQL by design: zurid's OAuth layer serializes and
+-- The blobs are opaque to SQL by design: vulpes's OAuth layer serializes and
 -- seals them, so this schema stores bytes and never sees a token.
 CREATE SCHEMA atproto_oauth;
 

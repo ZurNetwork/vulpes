@@ -4,7 +4,7 @@
 //! Minting an identity generates a small set of **secp256k1** keypairs and keeps
 //! the private halves, so the identity can be operated later: signing the
 //! genesis operation now and, afterwards, handle updates, rotations and the
-//! tombstone. These are the most sensitive bytes zurid touches, so they are
+//! tombstone. These are the most sensitive bytes vulpes touches, so they are
 //! held **envelope-encrypted at rest** behind the [`KeyStore`](crate::KeyStore)
 //! port and [`Zeroize`]d on drop in memory.
 //!
@@ -29,7 +29,7 @@ pub const SECRET_KEY_LEN: usize = 32;
 /// log line; and its [`PartialEq`] is **constant-time** (see the impl).
 ///
 /// ```
-/// # use zurid::SecretKey;
+/// # use vulpes::SecretKey;
 /// let key = SecretKey::new(vec![0xAB; 32]);
 /// assert_eq!(format!("{key:?}"), "SecretKey(<redacted>)");
 /// ```
@@ -130,7 +130,7 @@ pub enum CustodyEnvelope {
     /// Associated data is [`CUSTODY_AAD_TAG`] followed by the DID bytes.
     ///
     /// The tag is domain separation. One [`SecretVault`] seals every family of
-    /// secret zurid holds, and V1's associated data was a bare DID — the same
+    /// secret vulpes holds, and V1's associated data was a bare DID — the same
     /// bytes another family could plausibly use for its own row key. Two
     /// families sharing an associated-data value means a blob from one opens as
     /// the other, and "which family is this blob?" is then answered by whichever
@@ -143,16 +143,16 @@ pub enum CustodyEnvelope {
 /// The domain-separation tag [`CustodyEnvelope::V2`] prefixes its associated
 /// data with. NUL-terminated, so the tag can never run into the DID that
 /// follows it.
-pub const CUSTODY_AAD_TAG: &[u8] = b"zurid.custody\0";
+pub const CUSTODY_AAD_TAG: &[u8] = b"vulpes.custody\0";
 
 /// A `key_version` naming no envelope scheme this build knows.
 ///
-/// Almost always a row written by a **newer** zurid than the one reading it —
+/// Almost always a row written by a **newer** vulpes than the one reading it —
 /// a rolling deploy, or a rollback. Refused loudly rather than opened under a
 /// guessed scheme, because the wrong guess is either a tag failure (best case)
 /// or plaintext read as key material (worst).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("custody key_version {0} is not an envelope scheme this build of zurid knows")]
+#[error("custody key_version {0} is not an envelope scheme this build of vulpes knows")]
 pub struct UnknownCustodyEnvelope(pub i32);
 
 impl CustodyEnvelope {
@@ -447,7 +447,7 @@ mod tests {
 
     // The `key_version` column is a round trip, and an unknown value is an
     // explicit error rather than a fall-through to the current scheme. A row
-    // written by a newer zurid — met during a rolling deploy or after a
+    // written by a newer vulpes — met during a rolling deploy or after a
     // rollback — must be refused, never opened under a guessed scheme.
     #[test]
     fn a_custody_envelope_round_trips_and_rejects_the_unknown() {

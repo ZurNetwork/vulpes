@@ -28,7 +28,7 @@ The three migrations were **modified after they were first written** (the
 `IF NOT EXISTS` removal, the `auth_request.created_at` index). sqlx checksums
 migration files, so any database that already applied an older copy will fail
 `migrate` with a version mismatch rather than silently diverging — which is the
-correct behaviour, and safe while zurid is unreleased and unadopted. From the
+correct behaviour, and safe while vulpes is unreleased and unadopted. From the
 first tagged release, a change to shipped DDL must be a **new** migration
 instead. Called out here rather than assumed.
 
@@ -40,7 +40,7 @@ instead. Called out here rather than assumed.
 
 **Where:** `Cargo.toml` (`rust-version`), `Cargo.lock`, `deny.toml`.
 
-The advisory (stack exhaustion parsing RFC 2822 dates) reached zurid only as a
+The advisory (stack exhaustion parsing RFC 2822 dates) reached vulpes only as a
 **dev-dependency** — `testcontainers → bollard → time 0.3.45` — never in a
 consumer's build, and nothing here parses RFC 2822. The fix, `time` 0.3.47,
 requires Rust 1.88, one minor above the crate's declared `rust-version = "1.85"`.
@@ -130,7 +130,7 @@ limitation on the type and in the README.
 ### F1. Error taxonomy: closed enums, plus two opaque wrappers
 
 The source uses `anyhow::Result` throughout. A library returning `anyhow` gives
-callers nothing to match on, so zurid uses `thiserror` enums per concern —
+callers nothing to match on, so vulpes uses `thiserror` enums per concern —
 `HandleError`, `DidError`, `VaultError`, `PlcError`, `PolicyError`, `MintError`,
 `oauth::AuthError` — each naming its own failure modes.
 
@@ -140,7 +140,7 @@ Two errors *cannot* be closed, because the implementation is the caller's:
 as `source()`. `anyhow::Error` converts into that box, so an implementation
 written in the source's style is a `.map_err(StorageError::new)` away.
 
-Consumption impact: every zurid error implements `std::error::Error`, so `?` into
+Consumption impact: every vulpes error implements `std::error::Error`, so `?` into
 an `anyhow` context works unchanged.
 
 ### F2. `Did` drops `Deref`, gains the std conversions
@@ -166,7 +166,7 @@ byte-identical. `KeyRole` is new: `MintPolicy` needs to name a key without
 positional indexing.
 
 Consumption impact: one line —
-`pub use zurid::CustodyKeys as AccountKeys;` — if the old name is wanted.
+`pub use vulpes::CustodyKeys as AccountKeys;` — if the old name is wanted.
 
 ### F4. One vault type, two callers
 
@@ -222,7 +222,7 @@ needs.
 
 The source's `AtprotoAuthStore` implemented jacquard's `ClientAuthStore`
 *directly* over PostgreSQL, doing serialization, sealing and SQL in one type.
-zurid splits it:
+vulpes splits it:
 
 - `OAuthStateStore` (core, no jacquard) — opaque byte blobs, six methods.
 - `oauth::JacquardAuthStore<S>` — implements `ClientAuthStore` over any
@@ -274,7 +274,7 @@ from custody), the **Engineer ruled HMAC**.
 
 Each row carries an `op_mac`: HMAC-SHA256 over a length-prefixed
 `(did, cid, prev, operation)`, keyed by a subkey HKDF-derived from the vault root
-key (label `zurid.oplog.mac.v1`) — a *dedicated* subkey, so the AEAD root key
+key (label `vulpes.oplog.mac.v1`) — a *dedicated* subkey, so the AEAD root key
 stays single-purpose. The minter writes it on every append and **verifies it
 before trusting a prior row** (in `carry_forward` and in `tombstone`, which reads
 the prior for its `prev`). A row altered by a write-access attacker fails the tag
@@ -292,7 +292,7 @@ rows**; a fresh install never has any.
 
 ### F15. `Authenticator` is a struct, not a trait
 
-The source implements its own `domain::ports::Authenticator` port. zurid ships a
+The source implements its own `domain::ports::Authenticator` port. vulpes ships a
 concrete `oauth::Authenticator` with `start`/`complete` and no trait — nothing
 consumes it polymorphically here. A consumer implements its own port by
 delegating, which is a three-line impl.
@@ -307,14 +307,14 @@ fake it injected (which several tests need).
 
 `MemoryKeyStore` / `MemoryPlcOperationLog` / `MemoryOAuthStateStore` exist under
 `#[cfg(test)]`. Shipping them publicly (behind, say, a `testing` feature) would
-help consumers whose own in-memory adapters must now implement zurid's traits —
+help consumers whose own in-memory adapters must now implement vulpes's traits —
 but that is a new feature, outside the approved map, so it is **offered, not
 taken**.
 
 ### F24. Directory selection by config was left behind
 
 `DirectoryConfig` / `plc_directory_from_config` are composition-root concerns.
-zurid ships `NoopPlcDirectory` and `HttpPlcDirectory::{new, canonical,
+vulpes ships `NoopPlcDirectory` and `HttpPlcDirectory::{new, canonical,
 with_client}`; choosing between them from a config file is the application's job.
 
 ### F17 / F18. Deliberately not carried
@@ -338,7 +338,7 @@ with_client}`; choosing between them from a config file is the application's job
 
 `account_keys`, `plc_operations`, `atproto_oauth.client_session`,
 `atproto_oauth.auth_request`, and every column, keep the source's names. A
-`zurid_` prefix was considered and **rejected**: the originating service already
+`vulpes_` prefix was considered and **rejected**: the originating service already
 has these tables and rows in them, and the shipped SQL must line up with what is
 there or adoption means a data migration.
 
@@ -348,7 +348,7 @@ machinery.
 
 The DDL is therefore plain `CREATE TABLE` / `CREATE SCHEMA`, not
 `… IF NOT EXISTS`. With `IF NOT EXISTS` a collision would be recorded as a
-successful migration that created nothing — after which zurid reads and writes a
+successful migration that created nothing — after which vulpes reads and writes a
 table it does not control and no later `migrate` ever creates the real one.
 Each migration runs in a transaction, so the collision instead fails the call,
 records nothing, and leaves the consumer's table untouched. Loud and recoverable
@@ -357,7 +357,7 @@ beats silent and permanent.
 ### F10. Three migrations, renumbered, with the fork index folded in
 
 The source has four relevant migrations across two crates, one of which is a
-follow-up adding the no-chain-fork index. zurid ships three
+follow-up adding the no-chain-fork index. vulpes ships three
 (`20260809000001`–`3`), the fork index folded into the `plc_operations`
 migration it belongs to — a fresh install has no reason to replay the history of
 a fix.
@@ -371,7 +371,7 @@ collide on the migration primary key.
 turn it on for **every crate in a consumer's build** through feature
 unification — and the originating service deliberately retired `macros` so that
 reintroducing a compile-time query macro is a compile error by construction.
-zurid must not quietly re-arm that. `build.rs` generates the same
+vulpes must not quietly re-arm that. `build.rs` generates the same
 `(version, description, sql)` table the macro would, and `postgres::migrator()`
 builds an identical `Migrator` with matching checksums, so a ledger written by
 the sqlx CLI over the same files stays valid.
@@ -379,7 +379,7 @@ the sqlx CLI over the same files stays valid.
 ### F12. SQL lives in files; the codegen does not come along
 
 The source generates typed query functions with `sqlx-rust-codegen`, a
-tag-pinned build tool. Carrying that would make zurid depend on the originating
+tag-pinned build tool. Carrying that would make vulpes depend on the originating
 project's toolchain. The convention it enforces is kept — every statement lives
 in `queries/**.sql` and is `include_str!`-ed, so the SQL that runs is reviewable
 as SQL — but the wrappers are hand-written.
@@ -402,8 +402,8 @@ The write path is the crate's reason to exist, so it is on by default;
 - `key_version` is a `CustodyEnvelope` rather than an inlined literal, and is
   **read back**: `PgKeyStore::get` decodes the column and refuses a value it does
   not know instead of opening the blob under a guessed scheme. `V1` is the
-  source's format (bare-DID associated data); `V2` — what zurid writes — prefixes
-  the associated data with `zurid.custody\0`, domain-separating custody from
+  source's format (bare-DID associated data); `V2` — what vulpes writes — prefixes
+  the associated data with `vulpes.custody\0`, domain-separating custody from
   every other family sealed under the same root key. **V1 rows still open**, so
   the originating service's existing `account_keys` are not stranded; they are
   simply never written again.

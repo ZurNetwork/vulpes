@@ -22,7 +22,7 @@ use testcontainers_modules::{
 };
 
 /// Name of the migrated template database inside the shared container.
-const TEMPLATE: &str = "zurid_template";
+const TEMPLATE: &str = "vulpes_template";
 
 /// The PostgreSQL image tag the shared container boots.
 ///
@@ -77,7 +77,7 @@ pub async fn fresh_pool() -> (PgPool, TestDb) {
     (pool, db)
 }
 
-/// An **empty** private database plus a pool on it — zurid's migrations have
+/// An **empty** private database plus a pool on it — vulpes's migrations have
 /// **not** been run.
 ///
 /// The migration set itself is what a test using this is examining: that it
@@ -173,9 +173,9 @@ async fn shared() -> Arc<SharedPg> {
         .connect(&format!("{base}/{TEMPLATE}"))
         .await
         .expect("the template pool connects");
-    zurid::postgres::migrate(&template_pool)
+    vulpes::postgres::migrate(&template_pool)
         .await
-        .expect("zurid's migrations run");
+        .expect("vulpes's migrations run");
     template_pool.close().await;
 
     let live = Arc::new(SharedPg {

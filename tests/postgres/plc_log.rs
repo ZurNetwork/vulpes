@@ -2,8 +2,8 @@
 //! appends chain in submission order, the reads return the DID's tip, and — the
 //! part that matters — both integrity constraints hold at the storage layer.
 
-use zurid::postgres::PgPlcOperationLog;
-use zurid::{Did, PlcOperationLog, PlcOperationRecord};
+use vulpes::postgres::PgPlcOperationLog;
+use vulpes::{Did, PlcOperationLog, PlcOperationRecord};
 
 use crate::pg::fresh_pool;
 

@@ -1,10 +1,10 @@
-//! **zurid** — AT Protocol identity for Rust servers.
+//! **vulpes** — AT Protocol identity for Rust servers.
 //!
 //! Reading an atproto identity is well served in Rust. *Operating* one is not:
 //! minting a `did:plc`, custodying its keys, re-pointing its handle and
 //! tombstoning it are a byte-exact signing problem with a durability problem
 //! wrapped around it, and until now every server that needed it wrote its own.
-//! zurid is that code, extracted and made reusable.
+//! vulpes is that code, extracted and made reusable.
 //!
 //! # What is here
 //!
@@ -38,12 +38,12 @@
 //! ```no_run
 //! # #[cfg(feature = "minter")]
 //! # async fn run(
-//! #     keys: std::sync::Arc<dyn zurid::KeyStore>,
-//! #     log: std::sync::Arc<dyn zurid::PlcOperationLog>,
-//! #     vault: zurid::SecretVault,
+//! #     keys: std::sync::Arc<dyn vulpes::KeyStore>,
+//! #     log: std::sync::Arc<dyn vulpes::PlcOperationLog>,
+//! #     vault: vulpes::SecretVault,
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
 //! use std::sync::Arc;
-//! use zurid::{Handle, MintPolicy, Minter, NoopPlcDirectory};
+//! use vulpes::{Handle, MintPolicy, Minter, NoopPlcDirectory};
 //!
 //! // `keys` and `log` are your storage; with the `postgres` feature they are
 //! // `PgKeyStore` and `PgPlcOperationLog`, both built from an `sqlx::PgPool`.
@@ -70,7 +70,7 @@
 //!
 //! # Security posture
 //!
-//! Read [`SecretVault`]'s module documentation before deploying: zurid encrypts
+//! Read [`SecretVault`]'s module documentation before deploying: vulpes encrypts
 //! every secret it stores, but the root key's custody is yours to get right.
 //! Key material is [`Zeroize`](zeroize::Zeroize)d on drop and redacted in
 //! `Debug`; the operation log's integrity constraints are what stop a chain from

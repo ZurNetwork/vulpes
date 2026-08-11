@@ -1,6 +1,6 @@
 //! [`SecretVault`] — envelope encryption of at-rest secrets under a **root key**.
 //!
-//! zurid holds two families of secret on your users' behalf, and both are sealed
+//! vulpes holds two families of secret on your users' behalf, and both are sealed
 //! by this one type before they touch a database:
 //!
 //! - **custody keys** — the secp256k1 private halves behind a minted `did:plc`
@@ -30,7 +30,7 @@
 //! crash dump or a later allocation to pick up. That is hygiene, not a
 //! boundary: while the process runs, the key is in its memory by definition.
 //!
-//! zurid takes 32 bytes and never asks where they came from. Sourcing them from
+//! vulpes takes 32 bytes and never asks where they came from. Sourcing them from
 //! config or an environment variable is acceptable only for development: a
 //! process-readable root key is not a hardware boundary. For anything holding
 //! real identities, keep the root key in a cloud KMS or HSM. The
@@ -62,7 +62,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// AEAD root key itself: one key with one purpose is easier to reason about than
 /// one key doing double duty as both an AEAD key and a MAC key. The `v1` suffix
 /// leaves room to rotate the derivation without touching the root key.
-pub const OPLOG_MAC_LABEL: &[u8] = b"zurid.oplog.mac.v1";
+pub const OPLOG_MAC_LABEL: &[u8] = b"vulpes.oplog.mac.v1";
 
 /// The length of an operation-log MAC tag (HMAC-SHA256 output).
 pub const OPLOG_MAC_LEN: usize = 32;
@@ -120,7 +120,7 @@ pub enum VaultError {
 /// pick up would undo the whole envelope model.
 ///
 /// ```
-/// # use zurid::SecretVault;
+/// # use vulpes::SecretVault;
 /// let vault = SecretVault::from_bytes(&[7u8; 32]).unwrap();
 /// let blob = vault.seal(b"row-key", b"a secret").unwrap();
 /// assert_eq!(vault.open(b"row-key", &blob).unwrap().as_slice(), b"a secret");

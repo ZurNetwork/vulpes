@@ -62,7 +62,7 @@ pub enum PolicyError {
 ///
 /// ```
 /// use std::collections::BTreeMap;
-/// use zurid::{KeyRole, MintPolicy};
+/// use vulpes::{KeyRole, MintPolicy};
 ///
 /// let policy = MintPolicy::identity_only();
 /// assert_eq!(policy.rotation_keys, vec![KeyRole::ColdRecovery, KeyRole::Operational]);

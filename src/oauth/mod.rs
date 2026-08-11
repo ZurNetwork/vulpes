@@ -37,7 +37,7 @@
 //! designed away — resolving a handle means talking to that handle's domain.
 //! What can be controlled is how much of the request an attacker steers.
 //!
-//! **What zurid closes.** [`Authenticator::start`] takes a validated
+//! **What vulpes closes.** [`Authenticator::start`] takes a validated
 //! [`Handle`], not a string. A handle's charset is `[a-z0-9-]` plus dots, so it
 //! can never carry a scheme or a path — which makes jacquard's
 //! "an `https://…` input is a PDS/entryway URL, fetch it directly" branch
@@ -50,7 +50,7 @@
 //! login body, and a transparent derive there would have waved a URL straight
 //! through the type that is supposed to be the guarantee.
 //!
-//! **What zurid does NOT close.** Once a handle is accepted, jacquard performs
+//! **What vulpes does NOT close.** Once a handle is accepted, jacquard performs
 //! the fetches the protocol requires, and it applies **no host or scheme guard
 //! of its own**:
 //!
@@ -67,7 +67,7 @@
 //! **So a security-conscious deployment must supply its own connector** via
 //! [`Authenticator::with_client`]: a `reqwest::Client` whose resolver or
 //! connector refuses private, loopback, link-local and unique-local addresses
-//! (and re-checks on redirect). zurid's default client sets connect and overall
+//! (and re-checks on redirect). vulpes's default client sets connect and overall
 //! timeouts, which bound the damage; it does **not** filter addresses, because
 //! which ranges are private is a deployment fact this crate cannot know.
 
@@ -150,7 +150,7 @@ pub enum AuthError {
 ///
 /// # Loopback clients only, for now
 ///
-/// zurid currently builds a **loopback** client: jacquard derives the
+/// vulpes currently builds a **loopback** client: jacquard derives the
 /// `client_id` from the redirect URI list, which is the localhost-development
 /// shape of an atproto OAuth client. A production deployment eventually wants a
 /// hosted `client_metadata.json` instead; wiring that is a small addition to
@@ -191,7 +191,7 @@ impl OAuthConfig {
     ///
     /// ```
     /// # use fluent_uri::Uri;
-    /// # use zurid::oauth::OAuthConfig;
+    /// # use vulpes::oauth::OAuthConfig;
     /// let ok = Uri::parse("http://127.0.0.1:8080/callback".to_owned()).unwrap();
     /// assert!(OAuthConfig::loopback(ok).is_ok());
     ///
@@ -239,8 +239,8 @@ type Client<S> = Arc<OAuthClient<JacquardResolver<reqwest::Client>, JacquardAuth
 ///
 /// ```no_run
 /// # use fluent_uri::Uri;
-/// # use zurid::{Handle, SecretVault, OAuthStateStore};
-/// # use zurid::oauth::{Authenticator, OAuthConfig};
+/// # use vulpes::{Handle, SecretVault, OAuthStateStore};
+/// # use vulpes::oauth::{Authenticator, OAuthConfig};
 /// # async fn run<S: OAuthStateStore + 'static>(store: S, vault: SecretVault)
 /// # -> Result<(), Box<dyn std::error::Error>> {
 /// let redirect = Uri::parse("http://127.0.0.1:8080/callback")?.to_owned();
@@ -346,7 +346,7 @@ impl<S: OAuthStateStore + 'static> Authenticator<S> {
     /// — [`AuthError::MissingIssuer`]. The atproto OAuth profile mandates the
     /// `iss` authorization-response parameter (RFC 9207 mix-up defense), so a
     /// callback without it is malformed, and jacquard's own check only fires
-    /// *conditionally* on what the server metadata advertised. zurid does not
+    /// *conditionally* on what the server metadata advertised. vulpes does not
     /// leave that to the server's say-so: no `iss`, no exchange. Verifying its
     /// *value* against the issuer is then jacquard's job.
     ///

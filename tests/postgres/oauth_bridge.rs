@@ -19,9 +19,9 @@ use jacquard_oauth::{
 };
 use smol_str::SmolStr;
 use sqlx::PgPool;
-use zurid::SecretVault;
-use zurid::oauth::JacquardAuthStore;
-use zurid::postgres::PgOAuthStateStore;
+use vulpes::SecretVault;
+use vulpes::oauth::JacquardAuthStore;
+use vulpes::postgres::PgOAuthStateStore;
 
 use crate::pg::fresh_pool;
 

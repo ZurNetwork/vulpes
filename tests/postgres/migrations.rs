@@ -10,7 +10,7 @@ use crate::pg::fresh_unmigrated_pool;
 async fn the_migration_set_applies_to_an_empty_database() {
     let (pool, _db) = fresh_unmigrated_pool().await;
 
-    zurid::postgres::migrate(&pool)
+    vulpes::postgres::migrate(&pool)
         .await
         .expect("the migrations apply to an empty database");
 
@@ -34,15 +34,15 @@ async fn the_migration_set_applies_to_an_empty_database() {
     }
 
     // Re-running is a no-op: already-applied versions are skipped, not replayed.
-    zurid::postgres::migrate(&pool)
+    vulpes::postgres::migrate(&pool)
         .await
         .expect("re-running the migrations is a no-op");
 }
 
-// A NAME COLLISION MUST FAIL, NOT BE SWALLOWED. zurid's table names are
+// A NAME COLLISION MUST FAIL, NOT BE SWALLOWED. vulpes's table names are
 // unprefixed (FORKS F9), so a consumer may already own an `account_keys`. With
 // `CREATE TABLE IF NOT EXISTS` the migration would succeed against THEIR table
-// and be recorded as applied — after which zurid reads and writes a schema it
+// and be recorded as applied — after which vulpes reads and writes a schema it
 // does not control, the ledger claims the DDL ran, and no later `migrate` will
 // ever create the real table. The loud failure at migrate time is the whole
 // point: it is recoverable, and the silent success is not.
@@ -55,7 +55,7 @@ async fn a_colliding_table_fails_the_migration_loudly() {
         .await
         .expect("the consumer's own table");
 
-    let failure = zurid::postgres::migrate(&pool)
+    let failure = vulpes::postgres::migrate(&pool)
         .await
         .expect_err("a name collision must fail the migration");
     assert!(
@@ -95,7 +95,7 @@ async fn a_colliding_schema_fails_the_migration_loudly() {
         .await
         .expect("the consumer's own schema");
 
-    let failure = zurid::postgres::migrate(&pool)
+    let failure = vulpes::postgres::migrate(&pool)
         .await
         .expect_err("a schema collision must fail the migration");
     assert!(

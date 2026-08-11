@@ -1,4 +1,4 @@
-//! zurid's PostgreSQL-backed integration suite.
+//! vulpes's PostgreSQL-backed integration suite.
 //!
 //! One test binary so the whole suite shares a single container (see
 //! [`pg`]); each test still gets its own pristine database, cloned from a

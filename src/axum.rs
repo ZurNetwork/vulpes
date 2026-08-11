@@ -52,7 +52,7 @@ impl HandleDomain {
     /// Validate and normalize a handle domain.
     ///
     /// ```
-    /// # use zurid::axum::HandleDomain;
+    /// # use vulpes::axum::HandleDomain;
     /// assert_eq!(HandleDomain::try_new("Example.COM").unwrap().as_str(), "example.com");
     /// assert!(HandleDomain::try_new("localhost").is_err());
     /// ```
@@ -105,8 +105,8 @@ impl<R> Clone for WellKnownState<R> {
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use axum::Router;
-/// # use zurid::axum::{HandleDomain, atproto_did_router};
-/// # fn build<R: zurid::HandleResolver + 'static>(accounts: Arc<R>) -> Router {
+/// # use vulpes::axum::{HandleDomain, atproto_did_router};
+/// # fn build<R: vulpes::HandleResolver + 'static>(accounts: Arc<R>) -> Router {
 /// let domain = HandleDomain::try_new("example.com").unwrap();
 /// Router::new()
 ///     // ... your routes, layers and state ...
@@ -138,7 +138,7 @@ pub fn atproto_did_router<R: HandleResolver + 'static>(
 /// with its own routing may want the same parse.
 ///
 /// ```
-/// # use zurid::axum::{HandleDomain, handle_from_host};
+/// # use vulpes::axum::{HandleDomain, handle_from_host};
 /// let domain = HandleDomain::try_new("example.com").unwrap();
 ///
 /// assert_eq!(

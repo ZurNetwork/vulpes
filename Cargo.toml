@@ -1,10 +1,10 @@
 [package]
-name = "zurid"
+name = "vulpes"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "AT Protocol identity for Rust servers: the did:plc write path (mint, update handle, tombstone), envelope-encrypted key custody, and durable OAuth state."
-repository = "https://github.com/ZurNetwork/zurid"
+repository = "https://github.com/ZurNetwork/vulpes"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["atproto", "did", "plc", "oauth", "bluesky"]
@@ -30,7 +30,7 @@ oauth = [
   "dep:smol_str",
   "dep:reqwest",
 ]
-# sqlx implementations of every zurid storage trait, plus the migration SQL.
+# sqlx implementations of every vulpes storage trait, plus the migration SQL.
 postgres = ["dep:sqlx", "dep:chrono"]
 # The `/.well-known/atproto-did` resolution handler as a mountable router.
 axum = ["dep:axum", "dep:http"]

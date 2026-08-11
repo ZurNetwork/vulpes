@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use zurid::postgres::{PgKeyStore, PgPlcOperationLog};
-use zurid::{
+use vulpes::postgres::{PgKeyStore, PgPlcOperationLog};
+use vulpes::{
     CustodyEnvelope, CustodyKeys, Did, Handle, KeyStore, MintPolicy, Minter, NoopPlcDirectory,
     PlcOperationLog, SealedKeys, SecretVault,
 };
@@ -146,7 +146,7 @@ async fn a_stale_update_cannot_fork_the_chain_in_postgres() {
 
     // A hand-built second operation chaining the now-stale genesis — exactly what
     // a concurrent writer that read the old tip would produce.
-    let forked = zurid::PlcOperationRecord {
+    let forked = vulpes::PlcOperationRecord {
         did: did.clone(),
         cid: "bafyreiforkattempt".to_string(),
         op_type: "plc_operation".to_string(),
@@ -215,7 +215,7 @@ async fn a_row_tampered_in_postgres_is_rejected_on_the_next_update() {
         .await
         .expect_err("a tampered row must be refused, not signed");
     assert!(
-        matches!(error, zurid::MintError::TamperedPriorOperation(_)),
+        matches!(error, vulpes::MintError::TamperedPriorOperation(_)),
         "the altered row fails its MAC check, got: {error}"
     );
 }

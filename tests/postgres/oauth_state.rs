@@ -7,8 +7,8 @@
 
 use std::time::Duration;
 
-use zurid::OAuthStateStore;
-use zurid::postgres::{DEFAULT_AUTH_REQUEST_TTL, PgOAuthStateStore};
+use vulpes::OAuthStateStore;
+use vulpes::postgres::{DEFAULT_AUTH_REQUEST_TTL, PgOAuthStateStore};
 
 use crate::pg::fresh_pool;
 

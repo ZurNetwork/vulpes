@@ -1,11 +1,11 @@
--- zurid: custody store for the private keys behind a minted did:plc.
+-- vulpes: custody store for the private keys behind a minted did:plc.
 --
 -- When an identity is minted, per-identity secp256k1 keypairs are generated (a
 -- cold-recovery key, an operational key, and a signing key backing the atproto
 -- verification method) and the private halves must be kept so the DID can be
 -- operated later. These are the most sensitive rows the library writes, so they
 -- are NEVER stored in the clear: every bundle is envelope-encrypted under a root
--- key held OUTSIDE the database (see zurid::SecretVault). A database compromise
+-- key held OUTSIDE the database (see vulpes::SecretVault). A database compromise
 -- alone therefore yields no usable key material.
 --
 -- did           The identity's did:plc — the natural, unique key. There is

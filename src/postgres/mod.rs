@@ -1,4 +1,4 @@
-//! PostgreSQL implementations of every zurid storage trait, plus the schema they
+//! PostgreSQL implementations of every vulpes storage trait, plus the schema they
 //! need.
 //!
 //! Three ready stores — [`PgKeyStore`], [`PgPlcOperationLog`] and
@@ -10,7 +10,7 @@
 //!
 //! The DDL lives in `migrations/` at the crate root and is shipped two ways:
 //!
-//! - **embedded** — call [`migrate`] on your pool and zurid's tables appear,
+//! - **embedded** — call [`migrate`] on your pool and vulpes's tables appear,
 //!   tracked in the standard `_sqlx_migrations` table;
 //! - **as files** — copy `migrations/*.sql` into your own migration directory if
 //!   you would rather own the versioning (renumber them to fit your sequence).
@@ -19,7 +19,7 @@
 //!
 //! ```no_run
 //! # async fn run(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
-//! zurid::postgres::migrate(&pool).await?;
+//! vulpes::postgres::migrate(&pool).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -27,17 +27,17 @@
 //! # A name collision fails loudly
 //!
 //! The DDL is plain `CREATE TABLE` / `CREATE SCHEMA`, **not**
-//! `… IF NOT EXISTS`. zurid's names are unprefixed and could collide with a
+//! `… IF NOT EXISTS`. vulpes's names are unprefixed and could collide with a
 //! table you already own (see `FORKS.md` F9), and `IF NOT EXISTS` would turn
 //! that collision into a *success*: the migration would be recorded as applied
-//! having created nothing, zurid would then read and write a schema it does not
+//! having created nothing, vulpes would then read and write a schema it does not
 //! control, and no later `migrate` would ever create the real table. Each
 //! migration runs in a transaction, so a collision instead fails the call,
 //! records nothing, and leaves your table untouched — recoverable by renaming
 //! one side, which the silent version is not.
 //!
 //! The migrations are embedded by a build script rather than by `sqlx::migrate!`
-//! — see `build.rs` for why (in short: so zurid never turns on sqlx's `macros`
+//! — see `build.rs` for why (in short: so vulpes never turns on sqlx's `macros`
 //! feature in your build).
 //!
 //! # Where the SQL is
@@ -64,7 +64,7 @@ pub use plc_log::PgPlcOperationLog;
 // `static EMBEDDED_MIGRATIONS: &[(i64, &str, &str)] = &[(version, description, sql), …];`
 include!(concat!(env!("OUT_DIR"), "/embedded_migrations.rs"));
 
-/// Run zurid's migrations — key custody, the operation log, and the OAuth state
+/// Run vulpes's migrations — key custody, the operation log, and the OAuth state
 /// tables.
 ///
 /// Already-applied migrations are skipped, so this is safe to call on every
@@ -74,9 +74,9 @@ pub async fn migrate(pool: &sqlx::PgPool) -> Result<(), MigrateError> {
     migrator().run(pool).await
 }
 
-/// zurid's embedded migration set, as a `sqlx` [`Migrator`].
+/// vulpes's embedded migration set, as a `sqlx` [`Migrator`].
 ///
-/// Reach for this over [`migrate`] when you want to merge zurid's migrations
+/// Reach for this over [`migrate`] when you want to merge vulpes's migrations
 /// into a larger set, inspect their versions, or stop between them in a test.
 /// The checksums match what sqlx's own directory resolver computes, so a ledger
 /// written by the sqlx CLI over the same files validates unchanged.

@@ -7,8 +7,8 @@
 //! sealing and opening — and their fail-closed behaviour — live with the vault
 //! and are proven in `keys.rs` and in the minter's end-to-end lifecycle test.
 
-use zurid::postgres::PgKeyStore;
-use zurid::{
+use vulpes::postgres::PgKeyStore;
+use vulpes::{
     CustodyEnvelope, CustodyKeys, Did, KeyRole, KeyStore, SealedKeys, SecretKey, SecretVault,
 };
 
@@ -154,7 +154,7 @@ async fn a_legacy_v1_row_still_opens() {
     let (pool, _db) = fresh_pool().await;
     let did = Did::new("did:plc:legacy");
 
-    // Written exactly as pre-tag zurid would have: bare-DID associated data,
+    // Written exactly as pre-tag vulpes would have: bare-DID associated data,
     // stamped version 1.
     let mut plaintext = Vec::new();
     for role in [

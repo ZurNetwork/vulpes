@@ -1,4 +1,4 @@
--- zurid: the append-only log of PLC operations submitted for each minted
+-- vulpes: the append-only log of PLC operations submitted for each minted
 -- did:plc.
 --
 -- A did:plc is a chain of operations: every non-genesis operation references the
@@ -52,7 +52,7 @@ CREATE INDEX plc_operations_did_seq ON plc_operations (did, seq DESC);
 -- Every subsequent handle change would be wedged.
 --
 -- A partial UNIQUE index over (did, prev) makes a non-genesis fork
--- UNREPRESENTABLE: the losing concurrent writer's INSERT fails, zurid's
+-- UNREPRESENTABLE: the losing concurrent writer's INSERT fails, vulpes's
 -- benign-replay guard (which returns Ok only when the log's tip already IS its
 -- own operation) sees a DIFFERENT tip, propagates the error, and the caller's
 -- retry re-reads the new tip and chains onto it — serializing concurrent writers

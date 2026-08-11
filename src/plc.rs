@@ -102,7 +102,7 @@ impl PlcDocument {
     /// services.
     ///
     /// ```
-    /// # use zurid::plc::PlcDocument;
+    /// # use vulpes::plc::PlcDocument;
     /// let document = PlcDocument::identity_only(
     ///     vec!["did:key:cold".into(), "did:key:hot".into()],
     ///     "did:key:sign".into(),

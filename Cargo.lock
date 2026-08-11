@@ -4870,6 +4870,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vulpes"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "atrium-crypto",
+ "axum",
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "chrono",
+ "data-encoding",
+ "fluent-uri",
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
+ "http",
+ "jacquard",
+ "jacquard-common",
+ "jacquard-oauth",
+ "k256",
+ "rand 0.8.7",
+ "reqwest",
+ "serde",
+ "serde_ipld_dagcbor",
+ "serde_json",
+ "sha2 0.10.9",
+ "smol_str",
+ "sqlx",
+ "subtle",
+ "testcontainers",
+ "testcontainers-modules",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5375,40 +5412,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[package]]
-name = "zurid"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "atrium-crypto",
- "axum",
- "base64 0.22.1",
- "chacha20poly1305",
- "chrono",
- "data-encoding",
- "fluent-uri",
- "hkdf 0.12.4",
- "hmac 0.12.1",
- "http",
- "jacquard",
- "jacquard-common",
- "jacquard-oauth",
- "k256",
- "rand 0.8.7",
- "reqwest",
- "serde",
- "serde_ipld_dagcbor",
- "serde_json",
- "sha2 0.10.9",
- "smol_str",
- "sqlx",
- "subtle",
- "testcontainers",
- "testcontainers-modules",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "uuid",
- "zeroize",
-]

@@ -1,7 +1,7 @@
 //! [`Did`] — the decentralized identifier newtype.
 //!
 //! A DID (`did:plc:…`, `did:web:…`) is the stable, self-sovereign identifier of
-//! an actor on the AT Protocol network. zurid both *recognizes* DIDs it is
+//! an actor on the AT Protocol network. vulpes both *recognizes* DIDs it is
 //! handed (from a PDS at sign-in, from your own store) and *originates* them
 //! (the [`Minter`](crate::Minter) derives a `did:plc` from the hash of a genesis
 //! operation).
@@ -32,7 +32,7 @@ const PLC_METHOD: &str = "plc";
 ///   the string.
 ///
 /// ```
-/// use zurid::Did;
+/// use vulpes::Did;
 ///
 /// let parsed: Did = "did:plc:ewvi7nxzyoun6zhxrhs64oiz".parse().unwrap();
 /// assert_eq!(parsed.method(), Some("plc"));
@@ -120,7 +120,7 @@ impl Did {
         (!method.is_empty() && !id.is_empty()).then_some(method)
     }
 
-    /// Whether this is a `did:plc` — the method zurid mints.
+    /// Whether this is a `did:plc` — the method vulpes mints.
     pub fn is_plc(&self) -> bool {
         self.method() == Some(PLC_METHOD)
     }

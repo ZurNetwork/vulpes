@@ -48,7 +48,7 @@ const RESERVED_TLDS: &[&str] = &[
 /// [`Handle::as_str`] — always lowercase, trimmed, and without a trailing dot.
 ///
 /// ```
-/// use zurid::Handle;
+/// use vulpes::Handle;
 ///
 /// // Normalized: trimmed, lowercased, trailing FQDN dot stripped.
 /// let handle: Handle = "  Alice.Example.COM.  ".parse().unwrap();
@@ -91,7 +91,7 @@ impl<'de> Deserialize<'de> for Handle {
 /// a caller can map each to its own message or problem type.
 ///
 /// ```
-/// use zurid::{Handle, HandleError};
+/// use vulpes::{Handle, HandleError};
 ///
 /// assert_eq!("".parse::<Handle>(), Err(HandleError::Empty));
 /// assert_eq!("alice".parse::<Handle>(), Err(HandleError::TooFewSegments));
@@ -160,7 +160,7 @@ impl Handle {
     /// owned `String` without a second allocation.
     ///
     /// ```
-    /// use zurid::{Handle, HandleError};
+    /// use vulpes::{Handle, HandleError};
     ///
     /// assert_eq!(Handle::try_new("alice.example.com").unwrap().as_str(), "alice.example.com");
     /// // Case-insensitive: the input is lowercased before the punycode check.
@@ -240,7 +240,7 @@ impl Handle {
     /// `alsoKnownAs`.
     ///
     /// ```
-    /// # use zurid::Handle;
+    /// # use vulpes::Handle;
     /// let handle = Handle::try_new("alice.example.com").unwrap();
     /// assert_eq!(handle.at_uri(), "at://alice.example.com");
     /// ```
@@ -425,7 +425,7 @@ mod tests {
 
     // ---- No product policy -------------------------------------------------
 
-    // The deliberate line: zurid enforces the protocol, never a namespace
+    // The deliberate line: vulpes enforces the protocol, never a namespace
     // policy. Words an application might reserve (`admin`, `api`, its own
     // brand) are perfectly valid handles here.
     #[test]
