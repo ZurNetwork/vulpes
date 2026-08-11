@@ -108,6 +108,10 @@ presentation is a deferred future mode. See **T1** — this choice puts vulpes _
 the disclosure path, which reintroduces the correlation risk the unlinkability
 invariant exists to prevent. Not a reason to reverse; a duty it imposes.
 
+`REOPENED 2026-08-11`: **holder-held direction.** See "The pivot" section at the
+end of this doc — decentralization became first-class, and holder-binding answers
+the "offline is hackable" objection that produced this ruling.
+
 ### NQ2 — attestation trust: who may assert "+18"?
 
 vulpes holds claims other entities make. Who is allowed to be an issuer, and how
@@ -553,3 +557,74 @@ discloses a computed "verdict." Gitcoin computes a score — it is a *judge*; vu
 is NOT. vulpes discloses **"[issuer X's signed claim]" + provenance** and the RP
 judges X. This is the OIDC Distributed/Aggregated-Claims shape (native to OID4VP)
 and the concrete form of Q6 (opaque, provenance-carrying) + NQ2 (never judges).
+
+---
+
+## The pivot (2026-08-11) — decentralization first-class, NQ1 reopened
+
+Decided in conversation the night of 2026-08-10/11; recorded here 2026-08-11.
+
+**Decentralization is now a first-class value, and it reopened NQ1.**
+
+1. **No lock-in, by design.** Zurfur (and anyone) must be able to swap vulpes
+   out. vulpes deliberately gives up being a chokepoint; swappability is the
+   point.
+2. **NQ1 REOPENED → holder-held.** Move from online-IdP-mediator to holder-held
+   credentials presented peer-to-peer (offline VC / OID4VP). vulpes *issues* and
+   *publishes revocation status* (Token Status List) but is **not in the
+   disclosure loop**: a verifier checks the issuer signature + status list
+   without calling vulpes. The old "offline is hackable" objection is largely
+   answered by **holder-binding**, already ruled in. This dissolves T1
+   structurally — vulpes exits the disclosure path instead of having to be
+   disciplined inside it.
+3. **vulpes = three layers** (the reframed role):
+   - **The library (the real product)** — did:plc anchor + custody + the
+     Holder/aggregation model + the claims discipline + wrapped VC/OID4VP.
+   - **The open protocol/format** — VC 2.0 / SD-JWT-VC / OID4VP / status lists,
+     plus vulpes's own contribution, the **Consensual Claims System**
+     (`docs/ccs.md`).
+   - **An optional, exitable reference instance** — hosted wallet + issuer +
+     status host for people who won't self-host. Use it or leave it.
+4. **Language: "broker" → "toolkit / layer / framework."** "Broker" implies a
+   mediator in the middle — exactly what was removed.
+5. **The atproto public/private boundary** (same line as Zurfur's Class A/B
+   Boundary Contract, DD 29622283):
+   - **Public → atproto-native**: did:plc, atproto OAuth, handle resolution,
+     public claims as records/labels in the Holder's PDS repo.
+   - **Private → open W3C/OpenID VC standards, holder-held**: private claims,
+     the aggregation graph, consented disclosure. atproto has no private/VC/SD
+     mechanism, so the IETF/W3C stack is both the standards-compliant choice
+     and the only one.
+   - **Bridge**: a private VC the Holder consents to publish becomes a public
+     atproto record/label.
+   - **Hard floor**: the private, unlinkable, consented core can never be
+     atproto-native — and that core is why vulpes exists. Framing: *vulpes is
+     the standards-based private complement to atproto's public world, with a
+     consented bridge into it.*
+
+### The format decision — OPEN, pressure reduced (2026-08-11)
+
+Holder-held forces the unlinkability trade (**decentralized + unlinkable +
+simple: pick two**):
+
+- **Path A — BBS now.** Cryptographic multi-show unlinkability; BBS is young in
+  Rust (`ssi-bbs` 0.2 / zkryptium, W3C draft). Pulls the deferred tier forward.
+- **Path B — SD-JWT-VC interim, BBS later.** Ship now; weaker unlinkability
+  (issuer signature is a correlator, mitigated by batch single-use); BBS added
+  when it matures without reshaping the Holder↔RP contract.
+
+Still undecided — and the 2026-08-11 characters/CCS work *reduced the
+pressure*: public relationships need no VC at all (CCS is atproto-native record
+pairs), so the VC stack now serves only private claims and the
+anonymous-owner flow (`docs/characters-atproto.md`, flow 13).
+
+### New on 2026-08-11 — CCS and characters
+
+The pivot's first fruits, specified in their own docs:
+
+- **`docs/ccs.md`** — the **Consensual Claims System**: mutual (bidirectional
+  record-pair) claims between DIDs, the complement to atproto labels'
+  unilateral broadcast. Includes the senior-key custody rule and the kill test.
+- **`docs/characters-atproto.md`** — Zurfur characters as ATProto subjects:
+  did:plc per character, default public, ownership via CCS, transfers by key
+  rotation, galleries as consensual claims. Post-alpha roadmap.
