@@ -2,8 +2,9 @@
 
 AT Protocol identity for Rust servers, and the reference implementation of the
 **ACP (Attested Claims Protocol)**. The `v0.1.0` substrate (did:plc write path,
-key custody, OAuth state) is shipped; current work is the ACP public lane
-(Jira epic VUL-9).
+key custody, OAuth state) is shipped; current work is the ACP public lane —
+the plan is `docs/ROADMAP.md` (tickets retired 2026-08-12; elaborate roadmap
+lines in conversation, not Jira).
 
 ## Working contract
 
@@ -19,7 +20,8 @@ code. Prefer worksheets, skeletons, and reviews over unprompted finished code.
 - `docs/identity-model.md` — the design interview record.
 - `FORKS.md` — judgment calls the rulings don't cover get recorded here.
 - Confluence **VU** space — design source of truth (Ruling Record 49184769,
-  ACP pointer page 49905665). Jira project **VUL**.
+  ACP pointer page 49905665). Jira project **VUL** is parked history — the
+  live plan is `docs/ROADMAP.md`.
 - `docs/CONTINUE-HERE.md` — session handoff state; single-writer (one session
   maintains it).
 

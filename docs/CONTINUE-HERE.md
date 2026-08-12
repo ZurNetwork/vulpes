@@ -115,14 +115,13 @@ Guardrails the ruling carries:
   truth for the standard is the repo's `docs/`). Ruling Record + Introduction
   updated 2026-08-11 night (ACP named, public-first, attestation custody,
   expiry/renewal doctrine).
-- **Jira**: epic VUL-1 (Holder/aggregation — stands unchanged, Index-side),
-  VUL-2..VUL-7, **VUL-8** (CCS spec), **ZMVP-197** (Characters on ATProto,
-  post-alpha). **NEW epic VUL-9 — "ACP v0.1: the public lane"** with
-  VUL-10..17 in dependency order (lexicons → Rust types/DAG-CBOR → sign/verify
-  → PDS I/O → verify_attestation + kill_test → email attestor → expiry/renewal
-  → CCS pairs), written for Zuri-as-coder (each has "Done when" + "You'll
-  learn"). VUL-2's ssi/OID4VP wrap is private-lane roadmap now — left
-  untouched, re-scope when the lane ships.
+- **Tickets RETIRED for Vulpes (ruled 2026-08-12)**: too much ceremony for a
+  solo conversational project. The plan lives in **`docs/ROADMAP.md`**
+  (ordered checklist; elaborate each line in conversation when picked up).
+  Confluence stays (rulings pay rent); PRs are the work record. Jira project
+  VUL stays parked as history — epic VUL-1 (Holder/aggregation, Index-side),
+  VUL-2..8, epic VUL-9 with VUL-10 (Done, PR #5) and VUL-11..17 (superseded
+  by the roadmap). ZMVP-197 (Characters on ATProto) is Zurfur's, unaffected.
 - **Memory**: `project_vulpes_library.md`.
 
 ## Parked (non-Vulpes — don't lose)
