@@ -122,11 +122,36 @@ record net.zur.acp.attestation {
 }
 ```
 
-**Signing.** The signature is computed over the record object *without* the
-`sig` field, serialized as canonical DAG-CBOR, using a signing key published
-in the attestor's DID document (`verificationMethod`). Allowed algorithms
-follow the atproto cryptography profile (ES256 / ES256K, low-S). The
-signature is stored as raw bytes (base64url when rendered in JSON).
+**Signing.** The signature is computed over a **pre-image**, serialized as
+canonical DAG-CBOR, using a signing key published in the attestor's DID
+document (`verificationMethod`). The pre-image is the record object *without*
+the `sig` field, **plus an injected `$sig` binding object that is never
+stored**:
+
+```
+$sig: {
+  $type:      string  // the binding marker (aligned with the ecosystem
+                      // construction; cross-check against the
+                      // atproto-attestation CLIs when building)
+  repository: did     // the DID of the repo this record lives in
+}
+```
+
+At signing time the attestor injects the **subject's repo DID** as
+`repository`. At verification time the verifier injects **the DID of the repo
+it actually retrieved the record from — never a value read from the record
+itself**. A record transplanted into any other repo therefore cannot produce
+a matching pre-image at all: the transplant defense is unrepresentable, not
+a skippable validation step. The stored record carries only the plain `sig`
+bytes; the `$sig` object exists only in the pre-image.
+
+With `repository` carrying the transplant defense, the explicit `subject`
+field's rationale is **export self-containment**: an attestation exported
+from its repo (CAR backup, migration) still names who it is about.
+
+Allowed algorithms follow the atproto cryptography profile (ES256 / ES256K,
+low-S). The signature is stored as raw bytes (base64url when rendered in
+JSON).
 
 **Delivery.** How the signed object travels from attestor to subject is not
 specified (an XRPC endpoint, OAuth-mediated write, or out-of-band transfer
@@ -241,7 +266,11 @@ To verify an attestation, a verifier:
    `claim.cid`. If the claim is missing or rewritten → **not in force**.
 2. Checks `subject` matches the repo owner's DID.
 3. Resolves `attestor` to its DID document; obtains the verification key(s).
-4. Verifies `sig` over the canonical DAG-CBOR of the record minus `sig`.
+4. Verifies `sig` over the pre-image: the canonical DAG-CBOR of the record
+   minus `sig`, plus the injected `$sig` binding object whose `repository`
+   is **the DID of the repo the verifier retrieved the record from** (see
+   §Signing) — never a value read from the record. A transplanted record
+   fails here structurally.
    Key rotation note: verification uses the *current* DID document; an
    attestor that rotates keys re-signs or re-issues attestations it wants to
    keep alive (as with did:plc, no historical-key verification is defined).
@@ -339,9 +368,15 @@ private layer exists to prevent.
   until rotation. Mitigations: PLC rotation (which invalidates the old key
   for step-4 verification), short expiries, status lists. Attestors should
   keep signing keys distinct from rotation keys.
-- **Replay/transplant.** Attestations bind subject, claim CID, and expiry,
-  so they cannot be transplanted to another subject or claim version. The
-  explicit `subject` field prevents cross-repo replay.
+- **Replay/transplant.** Attestations bind claim CID, expiry, and — through
+  the `$sig` repository binding (§Signing) — the very repo they live in, so
+  they cannot be transplanted to another subject, claim version, or repo:
+  a transplanted record cannot produce a matching pre-image at all. The
+  explicit `subject` field is retained for export self-containment, and the
+  `subject`-matches-repo-owner check (§Verification step 2) remains as
+  defense in depth. Implementations must carry a **transplant negative
+  test**: copy a valid attestation into a second repo and verification must
+  fail.
 - **Stale-status attacks.** A verifier relying on an old mirrored status
   artifact may miss a recent revocation. Verifiers with high stakes must
   bound acceptable status age; the artifact's issuance timestamp exists for
@@ -372,6 +407,10 @@ private layer exists to prevent.
 
 - **v0.1 (2026-08-11)** — first draft: public lane; self-claims,
   attestations, mutual claims (CCS), status lists, kill-test conformance.
+- **2026-08-12** — `$sig` repository binding adopted (prior-art session
+  ruling): the signing pre-image injects a never-stored `{$type, repository}`
+  object; transplant defense becomes unrepresentable; `subject` re-rationalized
+  as export self-containment; transplant negative test mandatory.
 
 ## References
 
