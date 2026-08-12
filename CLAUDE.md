@@ -20,8 +20,10 @@ code. Prefer worksheets, skeletons, and reviews over unprompted finished code.
 - `docs/identity-model.md` — the design interview record.
 - `FORKS.md` — judgment calls the rulings don't cover get recorded here.
 - Confluence **VU** space — design source of truth (Ruling Record 49184769,
-  ACP pointer page 49905665). Jira project **VUL** is parked history — the
-  live plan is `docs/ROADMAP.md`.
+  ACP pointer page 49905665). The live plan is `docs/ROADMAP.md`; Jira is
+  used per **"Guide to Jira Tickets"** (Confluence 50692097) — the BINDING
+  reference for writing any epic/feature/subtask/task/bug. Run its
+  compliance check on every ticket you produce.
 - `docs/CONTINUE-HERE.md` — session handoff state; single-writer (one session
   maintains it).
 
