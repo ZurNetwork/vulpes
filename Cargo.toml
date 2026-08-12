@@ -34,6 +34,10 @@ oauth = [
 postgres = ["dep:sqlx", "dep:chrono"]
 # The `/.well-known/atproto-did` resolution handler as a mountable router.
 axum = ["dep:axum", "dep:http"]
+# The wrapped SpruceID credential stack (VC 2.0 / JOSE / SD-JWT) — the private
+# lane's foundation. Excludable by construction; BBS and every non-atproto
+# curve stay OUT of the build (unused crypto is attack surface).
+vc = ["dep:ssi"]
 
 [dependencies]
 # --- core (no feature gate) ---
@@ -95,6 +99,17 @@ chrono = { version = "0.4", optional = true }
 # --- axum ---
 axum = { version = "0.8.8", optional = true }
 http = { version = "1", optional = true }
+
+# --- vc ---
+# The wrapped VC stack. default-features OFF, then only the W3C claims
+# machinery and the two atproto curves — no BBS, no rsa/ed25519/eip712/
+# ripemd: what isn't in the build can't be an attack surface, and the
+# private lane that needs more re-opens this list deliberately.
+ssi = { version = "0.16", default-features = false, features = [
+  "w3c",
+  "secp256r1",
+  "secp256k1",
+], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.49.0", features = ["full"] }
