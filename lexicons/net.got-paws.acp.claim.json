@@ -1,0 +1,30 @@
+{
+  "lexicon": 1,
+  "id": "net.got-paws.acp.claim",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A self-asserted statement by the repo owner. Proves nothing alone; attestations countersign it. See docs/acp.md §Self-claims.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["kind", "payload", "createdAt"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Claim kind from the published catalog. Advisory (knownValues): unknown kinds must validate and be ignored, never rejected.",
+            "knownValues": ["email", "external-account", "character"]
+          },
+          "payload": {
+            "type": "unknown",
+            "description": "Kind-defined content, e.g. { \"address\": \"a@b.c\" } for kind \"email\". Opaque to the protocol."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}
