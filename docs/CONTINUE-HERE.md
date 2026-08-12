@@ -48,6 +48,26 @@ Guardrails the ruling carries:
   VCDM-2.0-shaped envelope and the pipes format-agnostic, so the private
   lane bolts on later without reshaping the Holder↔RP contract.
 
+## The prior-art session (2026-08-11 late, via Claude Web — recorded in the Ruling Record)
+
+- **RULED: `$sig` repository binding** — attestation pre-image injects a
+  never-stored `{$type, repository}` object; `repository` = DID of the repo
+  the record was *retrieved from*, never read from the record. Transplant
+  defense becomes unrepresentable; `subject` re-rationalized as export
+  self-containment; transplant negative test mandatory. **Spec edit applied
+  2026-08-12** (`docs/acp.md` §Signing/§Verification/§Privacy).
+- **PARKED**: vouch-mode taxonomy (passive/active/permanent) and the
+  soft/hard freshness dial (hard = soft + verifier-chosen max status age) —
+  directions on The Claims Model page, unruled.
+- **OPEN**: CCS clean rejection (the unanswered half is public + squattable;
+  two-phase content-commitment pattern is the candidate fix — on the CCS
+  page). Gerakines-spec interop posture set, contact parked (his remote
+  pattern fails the kill test; read attested.network + full spec first).
+- **Consume, don't rebuild**: `atproto-record`, `-client`, `-identity`,
+  `-jetstream` crates (MIT) cover record I/O / DAG-CBOR / TID / resolution —
+  relevant to VUL-11 and VUL-13; the attestation CLIs double as byte-stability
+  cross-checks for VUL-11's fixtures.
+
 ## Open / owed
 
 - **PR for `docs/ccs-and-characters`** (commit `ff5cfad`, pushed) — not opened yet.
