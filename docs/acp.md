@@ -227,6 +227,13 @@ floor: if an attestor and every mirror of its status vanish, stale
 attestations age out instead of living forever unfalsifiable. Verifiers
 must reject expired attestations regardless of status.
 
+This section defines v0.1's one and only vouch mode: **passive** — freshness
+is pre-committed at issuance as an expiry window, and nothing is asked of
+anyone at verification time. Further modes (*active*: freshness established
+by asking at use; *permanent*: freshness moot because the fact is immutable)
+are deliberately additive and out of scope for v0.1 (ruled 2026-08-12; see
+Possible future changes).
+
 Lifetimes are **short by default, per claim kind** — validity is a pulse,
 not a stored fact:
 
@@ -397,6 +404,13 @@ private layer exists to prevent.
   ruling) for claims whose existence must stay unlinkable. ACP claims are
   deliberately VCDM-shaped envelopes so this lane attaches without
   reshaping the claim model.
+- **Further vouch modes** (additive to v0.1's passive mode): *active* —
+  freshness established by asking the attestor at use, which is an attestor
+  endpoint artifact, never a PDS answer, and stays within trust boundaries
+  (cross-boundary actives are a correlation oracle); *permanent* — immutable
+  facts, living in the subject's repo with status mandatory instead of
+  expiry (the honest carve-out from the pulse doctrine: no switching exists
+  to exercise there). Taxonomy details parked on The Claims Model page.
 - **Predicate attestations**: issuer-baked booleans ("+18: true") as a claim
   kind, and possibly blinded-token (Privacy Pass) issuance for yes/no gates.
 - Final lexicon authority (replacing the provisional `net.zur.acp.*`).
@@ -411,6 +425,9 @@ private layer exists to prevent.
   ruling): the signing pre-image injects a never-stored `{$type, repository}`
   object; transplant defense becomes unrepresentable; `subject` re-rationalized
   as export self-containment; transplant negative test mandatory.
+- **2026-08-12** — v0.1 scoped to the **passive** vouch mode only; active and
+  permanent modes ruled additive, deferred (§Expiry and renewal, §Possible
+  future changes).
 
 ## References
 
