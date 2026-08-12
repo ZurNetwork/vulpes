@@ -92,7 +92,9 @@ Guardrails the ruling carries:
   algorithm, conformance classes, trust model, privacy/security, changelog).
   Vulpes is its reference implementation. Core rule: "Vulpes dying is an
   inconvenience, not a breaking factor" (the kill test). Lexicon namespace
-  `net.zur.acp.*` is provisional (TBD). Overlaps VUL-8 (CCS spec) — the
+  RULED 2026-08-12: `net.got-paws.acp.*` (`got-paws.net`, Zuri's domain,
+  deliberately attestor-rank). DNS `_lexicon` publication owed later.
+  Overlaps VUL-8 (CCS spec) — the
   relationship record shape lives here, full semantics in `docs/ccs.md`.
 - **The manifesto**: `docs/manifesto.md` — Zuri's grievance essay (Telegram
   ban story, conectes, the inconvenience/breaking-factor pledge). DONE.

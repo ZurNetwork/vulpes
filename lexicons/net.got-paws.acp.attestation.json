@@ -1,0 +1,72 @@
+{
+  "lexicon": 1,
+  "id": "net.got-paws.acp.attestation",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "An attestor's signed vouch for a claim in this repo. The signature pre-image injects a never-stored {$type, repository} binding — the stored record carries only sig. See docs/acp.md §Attestations.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["claim", "attestor", "subject", "issuedAt", "expiresAt", "sig"],
+        "properties": {
+          "claim": {
+            "type": "ref",
+            "ref": "com.atproto.repo.strongRef",
+            "description": "The exact claim version attested, pinned by content hash. If the claim is rewritten, this no longer resolves and the vouch is not in force."
+          },
+          "attestor": {
+            "type": "string",
+            "format": "did",
+            "description": "The vouching DID. Its signing key is published in its DID document."
+          },
+          "subject": {
+            "type": "string",
+            "format": "did",
+            "description": "The subject's DID. Retained for export self-containment; the transplant defense is the $sig repository binding."
+          },
+          "issuedAt": {
+            "type": "string",
+            "format": "datetime"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Mandatory. Validity is a pulse: short by default, renewed by re-running diligence."
+          },
+          "status": {
+            "type": "ref",
+            "ref": "#statusRef",
+            "description": "Optional revocation pointer. Absent means irrevocable until expiry."
+          },
+          "method": {
+            "type": "string",
+            "description": "The attestor's stated diligence, e.g. \"email-challenge\". Informational; verifiers weigh it as policy.",
+            "knownValues": ["email-challenge", "oauth"]
+          },
+          "sig": {
+            "type": "bytes",
+            "description": "Attestor signature over the canonical DAG-CBOR pre-image (record minus sig, plus the injected $sig binding). ES256/ES256K, low-S."
+          }
+        }
+      }
+    },
+    "statusRef": {
+      "type": "object",
+      "description": "Pointer into the attestor's mirrorable status artifact (Token Status List semantics).",
+      "required": ["list", "index"],
+      "properties": {
+        "list": {
+          "type": "string",
+          "format": "uri",
+          "description": "Address of the signed status artifact. Any mirror is acceptable; the newest verifiable copy wins."
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "This attestation's bit position in the status list."
+        }
+      }
+    }
+  }
+}

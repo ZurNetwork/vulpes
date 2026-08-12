@@ -1,0 +1,40 @@
+{
+  "lexicon": 1,
+  "id": "net.got-paws.acp.relationship",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "One half of a Consensual Claims System pair. In force only while both halves exist and cross-reference; either side severs unilaterally by deleting its half. See docs/acp.md §Mutual claims and docs/ccs.md.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["relationship", "counterpart", "createdAt"],
+        "properties": {
+          "relationship": {
+            "type": "string",
+            "description": "Relationship kind from the published catalog. Advisory (knownValues): unknown kinds must validate and be ignored. Kinds form defined pairs (owns/ownedBy, memberOf/hasMember).",
+            "knownValues": ["owns", "ownedBy", "memberOf", "hasMember", "consentsTo"]
+          },
+          "counterpart": {
+            "type": "string",
+            "format": "did",
+            "description": "The other party. Their repo must hold the answering half for the relationship to be in force."
+          },
+          "counterpartRecord": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional expected uri of the other half, once known."
+          },
+          "scope": {
+            "type": "unknown",
+            "description": "Relationship-defined content THIS side is authoritative for (authority partitioning: verifiers ignore scope fields a side is not authoritative for)."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

@@ -75,18 +75,21 @@ scope for v0.1 (see [Possible future changes](#possible-future-changes)).
 
 ## Record types (Lexicons)
 
-Lexicon NSIDs below use the provisional authority `net.zur.acp.*`
-(**TBD** — final namespace to be settled before v1). Field syntax is
+Lexicon NSIDs use the authority `net.got-paws.acp.*` (ruled 2026-08-12;
+authority domain `got-paws.net`, held by the standard's author — chosen
+deliberately at the same rank as any other attestor's domain, because the
+standard grants no authority a privileged position). Schema publication
+resolves via a `_lexicon` TXT record on `acp.got-paws.net`. Field syntax is
 Lexicon-style; all datetimes are ISO 8601 strings; all DIDs are full DID
 strings.
 
-### Self-claim — `net.zur.acp.claim`
+### Self-claim — `net.got-paws.acp.claim`
 
 A record in the subject's repo. The subject is the repo owner; it is not
 repeated in the record.
 
 ```
-record net.zur.acp.claim {
+record net.got-paws.acp.claim {
   kind:      string   // claim kind from the published catalog, e.g. "email",
                       // "external-account", "character" (see Claim kinds)
   payload:   object   // kind-defined content, e.g. { "address": "a@b.c" }
@@ -101,14 +104,14 @@ record net.zur.acp.claim {
   resolution — verifiers must treat an attestation whose claim is gone as
   no longer in force.
 
-### Attestation — `net.zur.acp.attestation`
+### Attestation — `net.got-paws.acp.attestation`
 
 Also a record **in the subject's repo** — the attestation is the subject's
 property. The record carries an attestor-signed inner object; the repo commit
 signature (the subject's) governs custody, the inner signature governs truth.
 
 ```
-record net.zur.acp.attestation {
+record net.got-paws.acp.attestation {
   claim:     strongRef  // { uri: at-uri of the claim, cid: content hash }
   attestor:  did        // the attestor's DID
   subject:   did        // the subject's DID (explicit, so the object is
@@ -164,14 +167,14 @@ content (CID). If the subject rewrites the claim, existing attestations no
 longer resolve and are no longer in force. Attest the new version or live
 without.
 
-### Mutual claim — `net.zur.acp.relationship`
+### Mutual claim — `net.got-paws.acp.relationship`
 
 One half of a Consensual Claims System pair. Each party writes one record in
 its own repo; the relationship exists **iff both halves exist and reference
 each other**.
 
 ```
-record net.zur.acp.relationship {
+record net.got-paws.acp.relationship {
   relationship: string     // from the published catalog, e.g. "owns",
                            // "ownedBy", "memberOf", "hasMember",
                            // "consentsTo" (see Relationship kinds)
@@ -268,7 +271,7 @@ architecturally.
 
 To verify an attestation, a verifier:
 
-1. Fetches the `net.zur.acp.attestation` record from the subject's repo and
+1. Fetches the `net.got-paws.acp.attestation` record from the subject's repo and
    the referenced claim record; checks the claim's CID matches
    `claim.cid`. If the claim is missing or rewritten → **not in force**.
 2. Checks `subject` matches the repo owner's DID.
@@ -413,7 +416,8 @@ private layer exists to prevent.
   to exercise there). Taxonomy details parked on The Claims Model page.
 - **Predicate attestations**: issuer-baked booleans ("+18: true") as a claim
   kind, and possibly blinded-token (Privacy Pass) issuance for yes/no gates.
-- Final lexicon authority (replacing the provisional `net.zur.acp.*`).
+- DNS publication of the lexicon schemas (`_lexicon` TXT on
+  `acp.got-paws.net` → the hosting repo's DID).
 - Historical-key verification, if the ecosystem develops a standard for it.
 - A governance / standards-body process, as the AT Protocol itself intends.
 
@@ -428,6 +432,8 @@ private layer exists to prevent.
 - **2026-08-12** — v0.1 scoped to the **passive** vouch mode only; active and
   permanent modes ruled additive, deferred (§Expiry and renewal, §Possible
   future changes).
+- **2026-08-12** — lexicon namespace settled: `net.got-paws.acp.*`
+  (authority domain `got-paws.net`). No longer provisional.
 
 ## References
 
