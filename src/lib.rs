@@ -106,6 +106,8 @@ pub mod axum;
 pub mod oauth;
 #[cfg(feature = "postgres")]
 pub mod postgres;
+#[cfg(feature = "vc")]
+pub mod vc;
 
 pub use did::{Did, DidError};
 pub use directory::{CANONICAL_DIRECTORY, NoopPlcDirectory, PlcDirectory};

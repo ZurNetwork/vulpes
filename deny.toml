@@ -51,6 +51,27 @@ ignore = [
   # Drops out when the crate holding it migrates to `portable-atomic`.
   { id = "RUSTSEC-2023-0089", reason = "unmaintained, not vulnerable; transitive, and the polyfill is for targets vulpes does not build for" },
 
+  # --- the ssi 0.16 luggage: seven unmaintained crates, zero vulnerabilities ---
+  # All pulled transitively by the wrapped VC stack (feature `vc`, OFF by
+  # default — nothing in vulpes calls any of this yet; the private lane will).
+  # Accepted 2026-08-12 (Engineer ruled, VUL-2 / FORKS F34) with open eyes:
+  # these are "author walked away" notices, not defects. EXIT for the whole
+  # block: re-check when ssi ≥ 0.17 lands, and again when the private lane
+  # ships — if the luggage is still here then, weigh replacing the wrap.
+  #
+  # serde_cbor — CBOR encoding inside ssi-data-integrity-suites.
+  { id = "RUSTSEC-2021-0127", reason = "unmaintained, not vulnerable; ssi 0.16 luggage behind the off-by-default vc feature" },
+  # proc-macro-error — build-time macro helper, compile-time only.
+  { id = "RUSTSEC-2024-0370", reason = "unmaintained, not vulnerable; compile-time proc-macro helper in ssi's tree" },
+  # derivative — build-time derive helper, compile-time only.
+  { id = "RUSTSEC-2024-0388", reason = "unmaintained, not vulnerable; compile-time derive helper in ssi's tree" },
+  # The `im` immutable-collections family, via ssi's JSON-LD stack
+  # (linked-data → im → bitmaps/sized-chunks/smallstr).
+  { id = "RUSTSEC-2026-0215", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
+  { id = "RUSTSEC-2026-0247", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
+  { id = "RUSTSEC-2026-0248", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
+  { id = "RUSTSEC-2026-0251", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
+
   # NOTE: the 2026-08-09 review also listed GHSA-7gcf-g7xr-8hxj (serde_with).
   # It does NOT fire against this lockfile — cargo-deny reads the RustSec
   # database, which carries no matching advisory. Deliberately NOT ignored: an

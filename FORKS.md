@@ -218,6 +218,30 @@ needs.
 
 ## Module layout
 
+### F34. The VC wrap is `vc`, not part of `broker`, and prunes harder than the ruling listed
+
+The wrapped SpruceID foundation (VUL-2's "wrapped third-party foundation"
+checkbox) landed as feature `vc` → `pub mod vc`, a curated re-export surface
+over the `ssi` 0.16 umbrella. Three judgment calls:
+
+- **Name**: `vc`, not `broker`-anything — the broker→toolkit language ruling
+  killed the word; the module sits beside (not inside) the in-progress
+  `broker` module, which remains the Engineer's file to shape.
+- **Pruning**: the machinery ruling listed the sub-crates
+  (`ssi-vc`/`-jose-cose`/`-sd-jwt`/`-jws`/`-jwt`); the umbrella with
+  `default-features = false, features = ["w3c", "secp256r1", "secp256k1"]`
+  covers exactly those through `ssi::claims` while dropping the default
+  extras the ruling never asked for (`rsa`, `ed25519`, `eip712`,
+  `ripemd-160`). Verified in-graph: no `bbs`/`zkryptium`/`bls12` anywhere.
+  Widening is a deliberate edit to `src/vc.rs` + the feature list, never a
+  side effect.
+- **Deliberately absent**: the `openid4vp`/`oid4vci-rs` git pins — that's
+  VUL-2's *other* checkbox (version-locking the protocol libraries), not this
+  one, and pinning unbuildable git deps has costs the Engineer may weigh
+  differently.
+
+`ssi` 0.16's MSRV is 1.87 — under our 1.88 floor, so no ruling was needed.
+
 ### F14. The OAuth split: storage stores bytes, the bridge does the sealing
 
 The source's `AtprotoAuthStore` implemented jacquard's `ClientAuthStore`
