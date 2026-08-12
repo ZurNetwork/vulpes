@@ -56,9 +56,10 @@ Guardrails the ruling carries:
   defense becomes unrepresentable; `subject` re-rationalized as export
   self-containment; transplant negative test mandatory. **Spec edit applied
   2026-08-12** (`docs/acp.md` §Signing/§Verification/§Privacy).
-- **PARKED**: vouch-mode taxonomy (passive/active/permanent) and the
-  soft/hard freshness dial (hard = soft + verifier-chosen max status age) —
-  directions on The Claims Model page, unruled.
+- **RULED 2026-08-12: v0.1 is passive-mode only.** Active and permanent are
+  additive modes, deferred — the taxonomy's details stay parked on The
+  Claims Model page. The soft/hard freshness dial (hard = soft +
+  verifier-chosen max status age) also remains parked, unruled.
 - **OPEN**: CCS clean rejection (the unanswered half is public + squattable;
   two-phase content-commitment pattern is the candidate fix — on the CCS
   page). Gerakines-spec interop posture set, contact parked (his remote
