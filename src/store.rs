@@ -64,11 +64,15 @@ impl PlcOperationRecord {
     /// length-prefixed encoding of `(did, cid, prev, operation)`.
     ///
     /// The operation is canonicalized by re-parsing its stored JSON and
-    /// re-serializing it (serde_json, sorted keys), so the encoding is **stable
-    /// across the `jsonb` round-trip** a Postgres backend performs — the tag
-    /// computed at write time verifies against the same message recovered at
-    /// read time. Each field is length-prefixed, so no field boundary is
-    /// ambiguous (the same trick the OAuth AAD uses).
+    /// re-serializing it **with explicitly sorted keys**, so the encoding is
+    /// stable across the `jsonb` round-trip a Postgres backend performs — the
+    /// tag computed at write time verifies against the same message recovered
+    /// at read time. The sort is done by hand, not left to serde_json: with
+    /// default features serde_json happens to sort map keys, but any crate in
+    /// the build graph can flip on `preserve_order` for the whole binary
+    /// (Cargo features unify globally — the `vc` pins did exactly that), and
+    /// this MAC must not care. Each field is length-prefixed, so no field
+    /// boundary is ambiguous (the same trick the OAuth AAD uses).
     ///
     /// `op_type` is deliberately not covered here: it is redundant with the
     /// operation's own `type`, which *is* covered, and the values a reader
@@ -76,7 +80,7 @@ impl PlcOperationRecord {
     /// operation.
     pub fn mac_message(&self) -> Result<Vec<u8>, serde_json::Error> {
         let operation: serde_json::Value = serde_json::from_str(&self.operation_json)?;
-        let operation_bytes = serde_json::to_vec(&operation)?;
+        let operation_bytes = serde_json::to_vec(&canonicalize(operation))?;
 
         let mut message = Vec::new();
         push_field(&mut message, self.did.as_str().as_bytes());
@@ -98,6 +102,28 @@ impl PlcOperationRecord {
 fn push_field(buf: &mut Vec<u8>, field: &[u8]) {
     buf.extend_from_slice(&(field.len() as u64).to_le_bytes());
     buf.extend_from_slice(field);
+}
+
+/// Recursively sort every object's keys, so serialization yields the same
+/// bytes no matter what order the source text carried — the canonical form
+/// [`PlcOperationRecord::mac_message`] authenticates. Byte-identical to what
+/// default-feature serde_json (BTreeMap-backed maps) always produced, so tags
+/// minted before this was explicit still verify.
+fn canonicalize(value: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut sorted = serde_json::Map::new();
+            for (key, inner) in entries {
+                sorted.insert(key, canonicalize(inner));
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(canonicalize).collect()),
+        other => other,
+    }
 }
 
 /// Custody of the private keys behind minted identities.
@@ -244,4 +270,46 @@ pub trait OAuthStateStore: Send + Sync {
 pub trait HandleResolver: Send + Sync {
     /// The DID `handle` currently resolves to, or `None` if nothing holds it.
     async fn did_for_handle(&self, handle: &crate::Handle) -> StorageResult<Option<Did>>;
+}
+
+#[cfg(test)]
+mod mac_message_tests {
+    use super::*;
+
+    fn record(operation_json: &str) -> PlcOperationRecord {
+        PlcOperationRecord {
+            did: Did::parse("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa").expect("a valid did"),
+            cid: "bafyexample".into(),
+            op_type: "plc_operation".into(),
+            prev: None,
+            operation_json: operation_json.into(),
+            op_mac: Vec::new(),
+        }
+    }
+
+    /// The `jsonb` round-trip (and a `preserve_order`-unified serde_json) may
+    /// hand back the same document with any key order; the MAC message must
+    /// not move. This is the regression test for the B2 tag surviving the
+    /// `vc` pins' global feature unification.
+    #[test]
+    fn key_order_does_not_change_the_mac_message() {
+        let a = record(r#"{"type":"plc_operation","sig":"s","services":{"b":1,"a":2}}"#);
+        let b = record(r#"{"services":{"a":2,"b":1},"sig":"s","type":"plc_operation"}"#);
+        assert_eq!(
+            a.mac_message().expect("valid json"),
+            b.mac_message().expect("valid json"),
+        );
+    }
+
+    /// Different content must still yield different messages — sorting must
+    /// canonicalize, never collapse.
+    #[test]
+    fn different_operations_yield_different_messages() {
+        let a = record(r#"{"type":"plc_operation","sig":"s1"}"#);
+        let b = record(r#"{"type":"plc_operation","sig":"s2"}"#);
+        assert_ne!(
+            a.mac_message().expect("valid json"),
+            b.mac_message().expect("valid json"),
+        );
+    }
 }
