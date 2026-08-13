@@ -36,8 +36,10 @@ postgres = ["dep:sqlx", "dep:chrono"]
 axum = ["dep:axum", "dep:http"]
 # The wrapped SpruceID credential stack (VC 2.0 / JOSE / SD-JWT) — the private
 # lane's foundation. Excludable by construction; BBS and every non-atproto
-# curve stay OUT of the build (unused crypto is attack surface).
-vc = ["dep:ssi"]
+# curve stay OUT of the build (unused crypto is attack surface). The two
+# protocol libraries ride along pinned-but-uncalled so CI proves the chosen
+# set stays buildable together (VUL-2's version-locking checkbox).
+vc = ["dep:ssi", "dep:openid4vp", "dep:oid4vci"]
 
 [dependencies]
 # --- core (no feature gate) ---
@@ -110,6 +112,12 @@ ssi = { version = "0.16", default-features = false, features = [
   "secp256r1",
   "secp256k1",
 ], optional = true }
+# The private lane's protocol pair (presentation + issuance), version-locked
+# today at exact revisions so that lane later builds on versions chosen
+# together, not whatever's newest. Nothing calls them yet — being in the
+# `vc` build is deliberate: it keeps the pins honest (they must compile).
+openid4vp = { git = "https://github.com/spruceid/openid4vp", rev = "e5f29b85f14ca0b3c6eb6852e4d2d158f601fd63", optional = true }
+oid4vci = { git = "https://github.com/spruceid/oid4vci-rs", rev = "7cfd5a012229de08aac363b27a41e226b494f9cc", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.49.0", features = ["full"] }
