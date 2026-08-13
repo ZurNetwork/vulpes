@@ -218,6 +218,32 @@ needs.
 
 ## Module layout
 
+### F35. The op-log MAC sorts JSON keys itself (a feature-unification lesson)
+
+`PlcOperationRecord::mac_message` always *documented* "serde_json, sorted
+keys" — but the sorting was serde_json's default-feature behavior
+(BTreeMap-backed maps), not our code. Adding the `vc` pins (VUL-2) pulled
+crates that enable serde_json's `preserve_order` — and Cargo features unify
+**globally**, so the whole binary's serde_json switched to insertion-order
+maps. The MAC message then followed whatever key order Postgres `jsonb`
+returned, and B2's tag stopped verifying against rows it had just written
+(two Postgres minter tests red).
+
+Ruling taken while finishing VUL-2: canonicalize explicitly — `canonicalize`
+recursively sorts every object's keys before serialization. Byte-identical
+to what default-feature serde_json always produced, so existing tags still
+verify; immune to any future dependency flipping serde_json features. A
+regression test pins key-order independence
+(`key_order_does_not_change_the_mac_message`).
+
+The general lesson, recorded for every future MAC/signature: **never let a
+canonical form be an implicit property of a dependency's feature set** — any
+crate anywhere in the graph can change it for everyone. (The PLC operation
+*signatures* were never exposed: they go over DAG-CBOR, which is canonical
+by construction.) Also inherited from the same unification, unused but
+noted: `arbitrary_precision` and `float_roundtrip` — no numbers appear in
+PLC operation JSON, so no current surface.
+
 ### F34. The VC wrap is `vc`, not part of `broker`, and prunes harder than the ruling listed
 
 The wrapped SpruceID foundation (VUL-2's "wrapped third-party foundation"
