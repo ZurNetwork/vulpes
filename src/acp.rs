@@ -13,6 +13,12 @@
 //! - [`record`] — the record structs, [`canonical_bytes`] and [`RecordCid`].
 //! - [`sign`](mod@sign) — the pre-image with its injected `$sig` binding,
 //!   [`sign`](fn@sign) and [`verify_sig`].
+//! - [`ports`] — the I/O seams a verifier needs ([`RepoReader`],
+//!   [`DidResolver`], [`StatusSource`]); implemented elsewhere, faked in tests.
+//! - [`status`] — the signed, mirrorable status-list artifact.
+//! - [`policy`] — [`TrustPolicy`], the verifier's own judgment (step 7).
+//! - [`verify`] — [`Verifier::verify_attestation`] (the spec's seven steps)
+//!   and [`Verifier::verify_relationship`].
 //! - [`error`] — one closed error enum per concern.
 //!
 //! # The binding, in one paragraph
@@ -28,10 +34,22 @@
 //! `docs/acp.md` §Signing for the normative text.
 
 pub mod error;
+pub mod policy;
+pub mod ports;
 pub mod record;
 pub mod sign;
+pub mod status;
+pub mod verify;
 
-pub use error::{CodecError, SigError, SignError};
+#[cfg(test)]
+pub(crate) mod memory;
+
+pub use error::{CodecError, SigError, SignError, VerifyError};
+pub use policy::{BasicPolicy, Decision, PolicyContext, TrustPolicy};
+pub use ports::{
+    DidResolver, FetchedRecord, KeyMaterial, RepoError, RepoReader, ResolveError, StatusFetchError,
+    StatusSource,
+};
 pub use record::{
     AtUri, Attestation, Claim, ClaimKind, Datetime, RecordCid, RelKind, Relationship, Sig,
     StatusRef, StrongRef, UnsignedAttestation, canonical_bytes,
@@ -40,3 +58,7 @@ pub use sign::{
     Repository, SIG_BINDING_TYPE, SigAlg, Signer, VerifyingKey, preimage, preimage_cid, sign,
     verify_sig,
 };
+pub use status::{
+    StatusList, UnsignedStatusList, newest_verifiable, sign_status_list, verify_status_list,
+};
+pub use verify::{Reason, Verdict, Verifier};

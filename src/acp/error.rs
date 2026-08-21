@@ -66,3 +66,21 @@ pub enum SigError {
     #[error("malformed signature: {0}")]
     Malformed(String),
 }
+
+/// The verifier's **infrastructure** failed — a port returned `Err`.
+///
+/// Deliberately distinct from a [`Verdict::NotInForce`](super::verify::Verdict):
+/// "the PDS timed out" is not "the vouch is bad". The caller decides whether
+/// to retry or to deny; the verifier never converts one into the other.
+#[derive(Debug, thiserror::Error)]
+pub enum VerifyError {
+    /// The repository reader failed.
+    #[error(transparent)]
+    Repo(#[from] super::ports::RepoError),
+    /// DID resolution failed.
+    #[error(transparent)]
+    Resolve(#[from] super::ports::ResolveError),
+    /// Fetching a status artifact failed.
+    #[error(transparent)]
+    Status(#[from] super::ports::StatusFetchError),
+}

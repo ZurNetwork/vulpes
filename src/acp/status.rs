@@ -1,0 +1,308 @@
+//! The status-list artifact — `net.got-paws.acp.statusList`.
+//!
+//! Revocation in ACP is a **signed, static, mirrorable file**, never a live
+//! endpoint only the attestor can answer. The semantics are the IETF Token
+//! Status List's: one bit per issued attestation, selected by
+//! `status.index`; set means revoked. The envelope is ACP-native (FORKS
+//! F39): canonical DAG-CBOR, signed CID-first with the same primitive as
+//! attestations, so there is exactly one signature path to review and no new
+//! dependency in the pure lane. The JWT/CWT envelope is a private-lane
+//! concern.
+//!
+//! There is **no `$sig` repository binding** here: a status list is not a
+//! repo record, so there is no repository to bind to. Its domain separation
+//! from an attestation pre-image is the `$type` inside the signed bytes.
+//!
+//! "Newest verifiable copy wins": a verifier gathers every copy it can reach
+//! and keeps the one with the latest `issuedAt` **whose signature verifies**.
+//! A forged copy with a future timestamp fails its signature and is ignored;
+//! a stale mirror simply loses to a fresher one. See [`newest_verifiable`].
+
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::Did;
+
+use super::error::{SigError, SignError};
+use super::record::{
+    Datetime, RecordCid, STATUS_LIST_TYPE, Sig, canonical_bytes, from_canonical_bytes,
+};
+use super::sign::{Signer, VerifyingKey, verify_cid};
+
+/// The `$type` marker of a status list.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct StatusListType;
+
+impl Serialize for StatusListType {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(STATUS_LIST_TYPE)
+    }
+}
+
+impl<'de> Deserialize<'de> for StatusListType {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        if raw == STATUS_LIST_TYPE {
+            Ok(Self)
+        } else {
+            Err(serde::de::Error::custom(format!(
+                "expected $type {STATUS_LIST_TYPE:?}, found {raw:?}"
+            )))
+        }
+    }
+}
+
+/// A packed bitstring, LSB-first within each byte (bit `i` is byte `i / 8`,
+/// mask `1 << (i % 8)`). A CBOR byte string on the wire.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct BitString(#[serde(with = "serde_bytes")] pub Vec<u8>);
+
+impl BitString {
+    /// A bitstring with room for `bits` entries, all clear.
+    pub fn with_capacity_bits(bits: u64) -> Self {
+        Self(vec![0; bits.div_ceil(8) as usize])
+    }
+
+    /// Number of addressable bits.
+    pub fn len(&self) -> u64 {
+        self.0.len() as u64 * 8
+    }
+
+    /// No addressable bits at all.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// `Some(bit)` or `None` if `index` is beyond the string.
+    pub fn get(&self, index: u64) -> Option<bool> {
+        let byte = self.0.get(usize::try_from(index / 8).ok()?)?;
+        Some(byte & (1 << (index % 8)) != 0)
+    }
+
+    /// Set bit `index`; `false` if it is beyond the string.
+    pub fn set(&mut self, index: u64) -> bool {
+        match usize::try_from(index / 8)
+            .ok()
+            .and_then(|i| self.0.get_mut(i))
+        {
+            Some(byte) => {
+                *byte |= 1 << (index % 8);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+impl fmt::Debug for BitString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "BitString({} bits)", self.len())
+    }
+}
+
+/// Everything in a status list but its signature.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsignedStatusList {
+    /// Always [`STATUS_LIST_TYPE`].
+    #[serde(rename = "$type")]
+    pub type_: StatusListType,
+    /// The attestor whose attestations this list covers; its DID document
+    /// holds the key that signs it.
+    pub attestor: Did,
+    /// When this version was published. Newest verifiable wins.
+    pub issued_at: Datetime,
+    /// One bit per attestation; set = revoked.
+    pub bits: BitString,
+}
+
+impl UnsignedStatusList {
+    /// An all-clear list with room for `capacity_bits` attestations.
+    pub fn new(attestor: Did, issued_at: Datetime, capacity_bits: u64) -> Self {
+        Self {
+            type_: StatusListType,
+            attestor,
+            issued_at,
+            bits: BitString::with_capacity_bits(capacity_bits),
+        }
+    }
+
+    /// The CID the attestor signs.
+    pub fn cid(&self) -> Result<RecordCid, super::error::CodecError> {
+        Ok(RecordCid::of(&canonical_bytes(self)?))
+    }
+}
+
+/// A signed status list — the artifact that gets mirrored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusList {
+    /// The signed content.
+    #[serde(flatten)]
+    pub body: UnsignedStatusList,
+    /// Signature over [`UnsignedStatusList::cid`].
+    pub sig: Sig,
+}
+
+impl StatusList {
+    /// Whether attestation `index` is revoked; `None` if the list does not
+    /// cover that index (the verifier treats that as not checkable, never as
+    /// "not revoked").
+    pub fn is_set(&self, index: u64) -> Option<bool> {
+        self.body.bits.get(index)
+    }
+
+    /// The artifact bytes to publish and mirror.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, super::error::CodecError> {
+        canonical_bytes(self)
+    }
+
+    /// Parse an artifact. Does **not** verify — see [`verify_status_list`].
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, super::error::CodecError> {
+        from_canonical_bytes(bytes)
+    }
+}
+
+/// Sign a status list with a key published in the attestor's DID document.
+pub fn sign_status_list(
+    body: UnsignedStatusList,
+    key: &impl Signer,
+) -> Result<StatusList, SignError> {
+    let cid = body.cid()?;
+    let sig = key.sign_bytes(cid.as_bytes()).map_err(SignError::Crypto)?;
+    Ok(StatusList {
+        body,
+        sig: Sig(sig),
+    })
+}
+
+/// Verify a status list's signature against the attestor's current keys.
+pub fn verify_status_list(list: &StatusList, keys: &[VerifyingKey]) -> Result<(), SigError> {
+    let cid = list.body.cid()?;
+    verify_cid(&cid, &list.sig.0, keys)
+}
+
+/// From every copy a [`StatusSource`](super::ports::StatusSource) returned,
+/// the one with the latest `issuedAt` **that verifies** against `keys` and
+/// names `attestor`. Undecodable, forged, or foreign copies are skipped.
+pub fn newest_verifiable(
+    candidates: &[Vec<u8>],
+    attestor: &Did,
+    keys: &[VerifyingKey],
+) -> Option<StatusList> {
+    candidates
+        .iter()
+        .filter_map(|bytes| StatusList::from_bytes(bytes).ok())
+        .filter(|list| &list.body.attestor == attestor)
+        .filter(|list| verify_status_list(list, keys).is_ok())
+        .max_by_key(|list| list.body.issued_at.to_unix())
+}
+
+#[cfg(test)]
+mod tests {
+    use atrium_crypto::keypair::{Did as _, Secp256k1Keypair};
+
+    use super::*;
+    use crate::acp::record::fixtures::{attestor, mallory};
+
+    fn key(seed: u8) -> Secp256k1Keypair {
+        Secp256k1Keypair::import(&[seed; 32]).unwrap()
+    }
+    fn vk(k: &Secp256k1Keypair) -> VerifyingKey {
+        VerifyingKey::from_did_key(&k.did()).unwrap()
+    }
+    fn list_at(ts: &str, set: &[u64]) -> UnsignedStatusList {
+        let mut l = UnsignedStatusList::new(attestor(), Datetime::parse(ts).unwrap(), 8192);
+        for i in set {
+            assert!(l.bits.set(*i));
+        }
+        l
+    }
+
+    #[test]
+    fn bitstring_addressing_is_lsb_first() {
+        let mut b = BitString::with_capacity_bits(12);
+        assert_eq!(b.0.len(), 2);
+        assert!(b.set(0) && b.set(9));
+        assert_eq!(b.0, vec![0b0000_0001, 0b0000_0010]);
+        assert_eq!(b.get(0), Some(true));
+        assert_eq!(b.get(1), Some(false));
+        assert_eq!(b.get(9), Some(true));
+        assert_eq!(b.get(16), None);
+        assert!(!b.set(16));
+        assert_eq!(BitString::default().get(0), None);
+    }
+
+    #[test]
+    fn sign_verify_round_trip_through_bytes() {
+        let k = key(21);
+        let signed = sign_status_list(list_at("2026-08-20T10:12:00Z", &[4127]), &k).unwrap();
+        let bytes = signed.to_bytes().unwrap();
+        let back = StatusList::from_bytes(&bytes).unwrap();
+        assert_eq!(back, signed);
+        verify_status_list(&back, &[vk(&k)]).unwrap();
+        assert_eq!(back.is_set(4127), Some(true));
+        assert_eq!(back.is_set(4126), Some(false));
+        assert_eq!(back.is_set(1 << 20), None);
+        // bits is a CBOR byte string: "bits" then 0x59 0x04 0x00 (1024 bytes).
+        let pos = bytes.windows(4).position(|w| w == b"bits").unwrap();
+        assert_eq!(&bytes[pos + 4..pos + 7], &[0x59, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn flipping_a_bit_after_signing_fails() {
+        let k = key(22);
+        let mut signed = sign_status_list(list_at("2026-08-20T10:12:00Z", &[]), &k).unwrap();
+        verify_status_list(&signed, &[vk(&k)]).unwrap();
+        signed.body.bits.set(4127);
+        assert_eq!(
+            verify_status_list(&signed, &[vk(&k)]).unwrap_err(),
+            SigError::NoKeyVerified
+        );
+    }
+
+    #[test]
+    fn wrong_key_and_wrong_type_fail() {
+        let (k, other) = (key(23), key(24));
+        let signed = sign_status_list(list_at("2026-08-20T10:12:00Z", &[]), &k).unwrap();
+        assert!(verify_status_list(&signed, &[vk(&other)]).is_err());
+        // An attestation pre-image signed by the same key is not a status list.
+        let mut bytes = signed.to_bytes().unwrap();
+        let pos = bytes.windows(10).position(|w| w == b"statusList").unwrap();
+        bytes[pos] = b'S';
+        assert!(StatusList::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn newest_verifiable_wins_and_forgeries_lose() {
+        let (k, forger) = (key(25), key(26));
+        let keys = [vk(&k)];
+        let old = sign_status_list(list_at("2026-08-19T00:00:00Z", &[]), &k).unwrap();
+        let new = sign_status_list(list_at("2026-08-20T00:00:00Z", &[4127]), &k).unwrap();
+        // Newer still, but signed by someone else; and a future-dated copy
+        // whose bytes were tampered after signing.
+        let forged = sign_status_list(list_at("2026-08-21T00:00:00Z", &[]), &forger).unwrap();
+        let mut tampered = sign_status_list(list_at("2026-08-22T00:00:00Z", &[]), &k).unwrap();
+        tampered.body.bits.set(1);
+        // And a copy for another attestor, validly signed by `k`.
+        let mut foreign_body = list_at("2026-08-23T00:00:00Z", &[]);
+        foreign_body.attestor = mallory();
+        let foreign = sign_status_list(foreign_body, &k).unwrap();
+
+        let copies: Vec<Vec<u8>> = [&forged, &old, &tampered, &new, &foreign]
+            .iter()
+            .map(|l| l.to_bytes().unwrap())
+            .chain(std::iter::once(b"garbage".to_vec()))
+            .collect();
+        let winner = newest_verifiable(&copies, &attestor(), &keys).unwrap();
+        assert_eq!(winner, new);
+        assert_eq!(winner.is_set(4127), Some(true));
+        assert!(newest_verifiable(&[], &attestor(), &keys).is_none());
+        // Keys decide: under the forger's key, the forger's copy is the one that verifies.
+        assert_eq!(
+            newest_verifiable(&copies, &attestor(), &[vk(&forger)]).unwrap(),
+            forged
+        );
+    }
+}

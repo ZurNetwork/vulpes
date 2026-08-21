@@ -218,18 +218,29 @@ pub fn verify_sig(
     repo: Repository<'_>,
     keys: &[VerifyingKey],
 ) -> Result<(), SigError> {
-    if att.sig.0.len() != 64 {
+    let cid = preimage_cid(&att.body, repo)?;
+    verify_cid(&cid, &att.sig.0, keys)
+}
+
+/// Verify a 64-byte compact signature over the raw bytes of `cid` against
+/// any of `keys` — the primitive under both the attestation signature and
+/// the status-list signature.
+pub(crate) fn verify_cid(
+    cid: &RecordCid,
+    sig: &[u8],
+    keys: &[VerifyingKey],
+) -> Result<(), SigError> {
+    if sig.len() != 64 {
         return Err(SigError::Malformed(format!(
             "expected 64 bytes of compact r‖s, found {}",
-            att.sig.0.len()
+            sig.len()
         )));
     }
-    let cid = preimage_cid(&att.body, repo)?;
     // Low-S only: `allow_malleable = false` rejects high-S and DER forms.
     let verifier = Verifier::new(false);
     let verified = keys.iter().any(|key| {
         verifier
-            .verify(key.alg.atrium(), &key.sec1, cid.as_bytes(), &att.sig.0)
+            .verify(key.alg.atrium(), &key.sec1, cid.as_bytes(), sig)
             .is_ok()
     });
     if verified {

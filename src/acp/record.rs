@@ -31,6 +31,8 @@ pub const CLAIM_TYPE: &str = "net.got-paws.acp.claim";
 pub const ATTESTATION_TYPE: &str = "net.got-paws.acp.attestation";
 /// NSID of the mutual-claim (relationship) record.
 pub const RELATIONSHIP_TYPE: &str = "net.got-paws.acp.relationship";
+/// NSID of the status-list artifact (see [`super::status`]).
+pub const STATUS_LIST_TYPE: &str = "net.got-paws.acp.statusList";
 
 // ─── canonical bytes ────────────────────────────────────────────────────────
 
@@ -198,6 +200,44 @@ impl Datetime {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Seconds since the Unix epoch, offset applied, fraction truncated.
+    ///
+    /// Hand-rolled (days-from-civil) so the pure lane compares expiry without
+    /// a date library; the syntax was already checked by [`Datetime::parse`],
+    /// so the slices below cannot fail. Out-of-range calendar values
+    /// (month 13) are not rejected by `parse` and simply produce a
+    /// monotone-but-meaningless number — the orchestration layer compares,
+    /// it never renders.
+    pub fn to_unix(&self) -> i64 {
+        let b = self.0.as_bytes();
+        let num = |r: std::ops::Range<usize>| -> i64 {
+            std::str::from_utf8(&b[r])
+                .unwrap_or("0")
+                .parse()
+                .unwrap_or(0)
+        };
+        let (y, m, d) = (num(0..4), num(5..7), num(8..10));
+        let (hh, mm, ss) = (num(11..13), num(14..16), num(17..19));
+        // Howard Hinnant's days_from_civil.
+        let y = if m <= 2 { y - 1 } else { y };
+        let era = if y >= 0 { y } else { y - 399 } / 400;
+        let yoe = y - era * 400;
+        let mp = (m + 9) % 12;
+        let doy = (153 * mp + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        let days = era * 146_097 + doe - 719_468;
+        let mut secs = days * 86_400 + hh * 3_600 + mm * 60 + ss;
+        // Offset: the tail is `Z` or `±HH:MM`; local = UTC + offset.
+        let tail = &self.0[self.0.len() - 6..];
+        if let Some(sign) = tail.chars().next().filter(|c| *c == '+' || *c == '-') {
+            let oh: i64 = tail[1..3].parse().unwrap_or(0);
+            let om: i64 = tail[4..6].parse().unwrap_or(0);
+            let off = oh * 3_600 + om * 60;
+            secs -= if sign == '+' { off } else { -off };
+        }
+        secs
+    }
 }
 
 impl<'de> Deserialize<'de> for Datetime {
@@ -242,6 +282,32 @@ impl AtUri {
     /// The string form.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// The authority: a DID or a handle.
+    pub fn authority(&self) -> &str {
+        self.0["at://".len()..].split('/').next().unwrap_or("")
+    }
+
+    /// The collection NSID, when the path has one.
+    pub fn collection(&self) -> Option<&str> {
+        self.0["at://".len()..]
+            .split('/')
+            .nth(1)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// The record key, when the path has one.
+    pub fn rkey(&self) -> Option<&str> {
+        self.0["at://".len()..]
+            .split('/')
+            .nth(2)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Build `at://<repo>/<collection>/<rkey>`.
+    pub fn record(repo: &Did, collection: &str, rkey: &str) -> Self {
+        Self(format!("at://{}/{collection}/{rkey}", repo.as_str()))
     }
 }
 
@@ -922,6 +988,35 @@ mod tests {
         ] {
             assert!(Datetime::parse(bad).is_err(), "{bad} accepted");
         }
+    }
+
+    #[test]
+    fn datetime_to_unix() {
+        let u = |s: &str| Datetime::parse(s).unwrap().to_unix();
+        assert_eq!(u("1970-01-01T00:00:00Z"), 0);
+        assert_eq!(u("2000-03-01T00:00:00Z"), 951_868_800); // day after a leap day
+        assert_eq!(u("2024-02-29T12:00:00Z"), 1_709_208_000);
+        assert_eq!(u("2026-08-20T10:00:00Z"), 1_787_220_000);
+        assert_eq!(u("2026-08-20T12:00:00+02:00"), u("2026-08-20T10:00:00Z"));
+        assert_eq!(u("2026-08-20T04:30:00-05:30"), u("2026-08-20T10:00:00Z"));
+        assert_eq!(u("2026-08-20T10:00:00.999Z"), u("2026-08-20T10:00:00Z"));
+        assert!(u("2026-09-19T10:00:00Z") > u("2026-08-20T10:00:00Z"));
+    }
+
+    #[test]
+    fn at_uri_parts() {
+        let u = AtUri::parse("at://did:plc:abc/net.got-paws.acp.claim/3k").unwrap();
+        assert_eq!(u.authority(), "did:plc:abc");
+        assert_eq!(u.collection(), Some("net.got-paws.acp.claim"));
+        assert_eq!(u.rkey(), Some("3k"));
+        let bare = AtUri::parse("at://kit.example").unwrap();
+        assert_eq!(bare.authority(), "kit.example");
+        assert_eq!(bare.collection(), None);
+        assert_eq!(bare.rkey(), None);
+        assert_eq!(
+            AtUri::record(&Did::new("did:plc:abc"), "c", "r").as_str(),
+            "at://did:plc:abc/c/r"
+        );
     }
 
     #[test]
