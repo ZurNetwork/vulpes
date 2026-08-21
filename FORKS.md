@@ -8,7 +8,7 @@ actively wrong for a public library, in which case the reasoning is spelled out.
 
 Nothing here changes protocol behaviour. The one place where a behavioural fork
 appeared is **F8**, which the Engineer has ruled **strict** (see "Ruled by the
-Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13, F32 —
+Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13, F32, F36–F38 —
 is now ruled; no decision is left open.
 
 Source: `zurfur/backend/crates/{adapter-atproto,adapter-pg,domain,api}`.
@@ -35,6 +35,55 @@ instead. Called out here rather than assumed.
 ---
 
 ## Ruled by the Engineer
+
+### F36. The attestation key signs the **CID** of the pre-image, not its bytes
+
+**Where:** `src/acp/sign.rs`, `docs/acp.md` §Signing.
+
+`acp.md` v0.1 said "computed over a pre-image, serialized as canonical
+DAG-CBOR" and left the `$sig.$type` marker to be "aligned with the ecosystem
+construction". The construction turned out to be Gerakines' CID-First
+Attestation spec (badge.blue / the `atproto-attestation` crates), which
+signs the **CIDv1** (dag-cbor, sha2-256, 36 raw bytes) of the pre-image and
+leaves `$type` caller-minted — no fixed value exists anywhere.
+
+**Ruled (Engineer, 2026-08-20): sign the CID bytes; `$type =
+"net.got-paws.acp.sigBinding"`.** One extra hash buys a construction that
+independent tooling reproduces (the vectors were cross-checked with python
+`cbor2` canonical mode rather than the CLI, which needs Rust 1.90 — see F37).
+Our stored shape still differs from that spec (a single `sig` bytes field,
+not a `signatures` array), so this is byte-alignment of the *pre-image*, not
+wire interop.
+
+### F37. The ACP codec is hand-rolled on the IPLD crates; `atproto-record` is reference only
+
+**Where:** `Cargo.toml` (`acp` feature), `src/acp/record.rs`.
+
+The roadmap's open decision. `atproto-record` / `atproto-attestation` 0.14
+do exactly this job but need Rust 1.90 (we are pinned at 1.88, F32), pull a
+second `sha2` (0.11), and are one maintainer with near-zero downloads.
+`serde_ipld_dagcbor` was already a direct, ungated dependency and already
+proven canonical against a published PLC vector. **Ruled: hand-roll.** The
+only new direct dependency is `serde_bytes` (so `sig` is a CBOR byte string,
+not an array of integers). The CID is built by hand as in `plc::cid`, and a
+test pins the two equal. Consequence recorded while building: a strongRef's
+`cid` is a **text string** on the wire (`com.atproto.repo.strongRef` says
+`format: cid` string), never a tag-42 link — "fixing" it changes every byte.
+
+### F38. Opaque `payload` / `scope` are `serde_json::Value`, data-model-checked on construction
+
+**Where:** `src/acp/record.rs` (`check_opaque`).
+
+The lexicons type them `unknown`. Holding them as `Ipld` would add
+`ipld-core` as a direct dependency for no wire difference; holding them as
+`serde_json::Value` risks a float or `null` reaching the signer (forbidden by
+the atproto data model, and `serde_ipld_dagcbor` would happily encode an
+f64). **Ruled: `serde_json::Value`, rejected at `Claim::new` /
+`Relationship::new` if it contains a float, a `null`, or an integer beyond
+±2⁵³.** `serde_json`'s `preserve_order` (on globally since F35) is harmless
+here — the DAG-CBOR encoder re-sorts — and a test pins that. Known limit: a
+`$bytes` value inside a payload will not round-trip through `Value`; no v0.1
+kind carries one.
 
 ### F32. RUSTSEC-2026-0009 (`time`) — **fixed, MSRV raised to 1.88**
 

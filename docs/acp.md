@@ -133,12 +133,17 @@ stored**:
 
 ```
 $sig: {
-  $type:      string  // the binding marker (aligned with the ecosystem
-                      // construction; cross-check against the
-                      // atproto-attestation CLIs when building)
+  $type:      "net.got-paws.acp.sigBinding"   // the binding marker (fixed)
   repository: did     // the DID of the repo this record lives in
 }
 ```
+
+What the key signs is the **CIDv1 of the pre-image** (dag-cbor `0x71`,
+sha2-256 — 36 raw bytes), not the DAG-CBOR bytes directly. This is the
+CID-First Attestation construction (Gerakines, badge.blue), adopted 2026-08-20
+so independent tooling can reproduce the signed bytes; the `$type` value is
+minted under the ACP authority because that construction leaves it to the
+implementer. Reference: `src/acp/sign.rs`.
 
 At signing time the attestor injects the **subject's repo DID** as
 `repository`. At verification time the verifier injects **the DID of the repo
@@ -434,6 +439,10 @@ private layer exists to prevent.
   future changes).
 - **2026-08-12** — lexicon namespace settled: `net.got-paws.acp.*`
   (authority domain `got-paws.net`). No longer provisional.
+- **2026-08-20** — signing pinned to the CID-First construction: the key signs
+  the CIDv1 of the pre-image; `$sig.$type` fixed as
+  `net.got-paws.acp.sigBinding`; strongRef `cid` confirmed a text string on
+  the wire (§Signing; FORKS F36–F38; reference `src/acp/`).
 
 ## References
 

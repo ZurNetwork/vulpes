@@ -12,17 +12,18 @@ infrastructure down and every issued vouch still verifies.
 
 - [x] **The lexicons** — the three record schemas under `net.got-paws.acp.*`
       (PR #5).
-- [ ] **Record types in Rust** — `Claim` / `Attestation` / `Relationship`
-      structs + canonical DAG-CBOR, so signing has stable bytes. Opens with
-      one decision: wrap the ecosystem's `atproto-record` crate or hand-roll
-      over our own deps. Fixtures pin exact bytes, including a *pre-image*
-      fixture (the injected `$sig` binding).
+- [x] **Record types in Rust** — `Claim` / `Attestation` / `Relationship`
+      structs + canonical DAG-CBOR, so signing has stable bytes. Decided:
+      hand-rolled over our own deps (FORKS F37). Fixtures pin exact bytes,
+      including the *pre-image* fixture, cross-checked against an independent
+      encoder (`src/acp/record.rs`).
 - [ ] **Sign & verify** — the crypto heart. Pre-image = record minus `sig`
       plus the injected `{$type, repository}`; repository DID is an explicit
-      parameter (fetch context, never read from the record). Negative tests
-      carry it: tamper, wrong key, expired, algorithm confusion, and the
-      mandatory **transplant test**. Security-nature: adversarial review
-      before merge.
+      parameter (fetch context, never read from the record); the key signs
+      the pre-image's CID (FORKS F36). Built in `src/acp/sign.rs` with the
+      negative tests: tamper, wrong key, algorithm confusion, high-S, and the
+      mandatory **transplant test** (`expired` belongs to
+      `verify_attestation`). **Ticks after the adversarial review.**
 - [ ] **Talk to a PDS** — record create/get/list/delete over XRPC, strongRef
       fetch-and-check, local PDS in Docker as the test bed.
 - [ ] **`verify_attestation` end-to-end** — the spec's 7 steps as one public
