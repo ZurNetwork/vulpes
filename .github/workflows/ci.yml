@@ -69,6 +69,8 @@ jobs:
           - "postgres"
           - "axum"
           - "vc"
+          - "acp"
+          - "acp,minter"
           - "minter,postgres"
           - "oauth,postgres"
           - "axum,postgres"
