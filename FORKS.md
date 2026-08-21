@@ -8,7 +8,7 @@ actively wrong for a public library, in which case the reasoning is spelled out.
 
 Nothing here changes protocol behaviour. The one place where a behavioural fork
 appeared is **F8**, which the Engineer has ruled **strict** (see "Ruled by the
-Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13, F32, F36–F38 —
+Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13, F32, F36–F41 —
 is now ruled; no decision is left open.
 
 Source: `zurfur/backend/crates/{adapter-atproto,adapter-pg,domain,api}`.
@@ -35,6 +35,59 @@ instead. Called out here rather than assumed.
 ---
 
 ## Ruled by the Engineer
+
+### F39. The status-list artifact is ACP-native DAG-CBOR, not a Token Status List JWT
+
+**Where:** `src/acp/status.rs`, `docs/acp.md` §Status lists.
+
+The spec asks for "Token Status List *semantics*". The IETF wire format is a
+JWT/CWT around a DEFLATE-compressed bitstring — JOSE lives only behind `vc`,
+and zlib would be a new dependency in the pure lane, for a second signature
+path to review. **Ruled (Engineer, 2026-08-21): ACP-native envelope.**
+`net.got-paws.acp.statusList { attestor, issuedAt, bits, sig }`, canonical
+DAG-CBOR, signed CID-first with the very same `verify_cid` primitive as
+attestations. TSL semantics kept in full (bit index, signed, timestamped,
+mirrorable, newest-verifiable-wins). No `$sig` binding — not a repo record;
+`$type` inside the signed bytes is the domain separator. The JWT/CWT
+envelope can be added for the private lane where JOSE already exists.
+
+### F40. The verifier's I/O is three vulpes-owned `#[async_trait]` ports, and the attestor is not one of them
+
+**Where:** `src/acp/ports.rs`, `src/acp/verify.rs`.
+
+jacquard 0.12 (already in the graph via `oauth`) has resolution
+(`IdentityResolver`), XRPC (`XrpcClient`) and the record types — but every
+one of its traits returns `impl Future` with generic method parameters, so
+none can be an `Arc<dyn _>`; the whole vulpes storage/directory seam is
+`#[async_trait]` + `Arc<dyn _>`. **Ruled: own the ports** (`RepoReader`,
+`DidResolver`, `StatusSource`), each with an opaque error per F1, each
+honouring "absent is `Ok(None)`/empty; broken is `Err`"; jacquard-backed
+implementations arrive with the PDS-client line and wrap, exactly as
+`HttpPlcDirectory` wraps reqwest. Two consequences worth the ink:
+
+- A `FetchedRecord` carries the **canonical DAG-CBOR bytes** and the
+  repository DID it was read from. Bytes, not JSON — `sig` is a byte string
+  and the CID must be computed over what the repo holds; the JSON→bytes step
+  (`$bytes` handling) is the client's job at the boundary.
+- **There is no attestor port.** The verifier cannot call one even by
+  mistake, which is how `kill_test` passes by construction rather than by
+  discipline. `VerifyError` (a port failed) is distinct from
+  `Verdict::NotInForce` (the vouch is bad); the verifier never converts one
+  into the other.
+
+Key control for ownership-tier pairs is checked as "at least one of the
+owner's keys is among the owned DID's rotation keys". The spec's *senior to
+any custodian* refinement needs the custodian's identity, which no port
+supplies yet; it is the PDS-client line's to add.
+
+### F41. `Datetime::to_unix` is hand-rolled
+
+**Where:** `src/acp/record.rs`.
+
+Expiry (step 5) needs a comparison; the pure lane has no `chrono`. Forty
+lines of days-from-civil plus the RFC 3339 offset, pinned against known
+epochs including a leap day and both offset signs. Fractional seconds
+truncate. It compares; it never renders.
 
 ### F36. The attestation key signs the **CID** of the pre-image, not its bytes
 

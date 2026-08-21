@@ -228,6 +228,31 @@ recognize (forward compatibility), never reject the whole repo.
 - An attestation without a `status` pointer is irrevocable until expiry —
   attestors should size `expiresAt` accordingly.
 
+**Artifact shape (v0.1).** The envelope is ACP-native — canonical DAG-CBOR,
+signed CID-first with the same primitive as attestations (FORKS F39); the
+IETF Token Status List JWT/CWT envelope is deferred to the private lane.
+Semantics are TSL's: bit `status.index` of `bits` (packed LSB-first within
+each byte), set = revoked.
+
+```
+record net.got-paws.acp.statusList {
+  attestor: did       // whose attestations this covers; its DID document
+                      // holds the signing key
+  issuedAt: datetime  // newest verifiable copy wins
+  bits:     bytes     // one bit per issued attestation
+  sig:      bytes     // signature over the CIDv1 of the record minus `sig`
+}
+```
+
+There is no `$sig` repository binding: a status list is not a repo record,
+so there is no repository to bind to; its domain separation from an
+attestation pre-image is the `$type` inside the signed bytes. A verifier
+takes every copy it can reach, discards those that do not decode, do not
+name the expected attestor, or do not verify under the attestor's current
+keys, and keeps the newest by `issuedAt`. An index beyond the bitstring is
+**not checkable** (treated as not in force when freshness is demanded),
+never "not revoked". Reference: `src/acp/status.rs`.
+
 ## Expiry and renewal
 
 Every attestation must carry `expiresAt`. This is the graceful-degradation

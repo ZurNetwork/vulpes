@@ -25,9 +25,16 @@ infrastructure down and every issued vouch still verifies.
       mandatory **transplant test** (`expired` belongs to
       `verify_attestation`). **Ticks after the adversarial review.**
 - [ ] **Talk to a PDS** — record create/get/list/delete over XRPC, strongRef
-      fetch-and-check, local PDS in Docker as the test bed.
-- [ ] **`verify_attestation` end-to-end** — the spec's 7 steps as one public
-      function + mutual-claim verification. Contains the **`kill_test`**.
+      fetch-and-check, local PDS in Docker as the test bed. Now concretely:
+      jacquard-backed `RepoReader` / `DidResolver` / `StatusSource` (and a
+      `RepoWriter`), the `$bytes` JSON↔DAG-CBOR boundary, and the kill test
+      re-run against the container.
+- [x] **`verify_attestation` end-to-end** — the spec's 7 steps as one public
+      function + mutual-claim verification, over three ports (`RepoReader`,
+      `DidResolver`, `StatusSource`; FORKS F40) with the status-list
+      artifact (F39) and `TrustPolicy`. Contains the **`kill_test`** —
+      passing against in-memory fakes; it re-runs against the Docker PDS
+      when "Talk to a PDS" lands.
 - [ ] **The first attestor** — email challenge → sign → deliver; Kit's story
       from the explainer running against the local PDS.
 - [ ] **Expiry & renewal** — per-kind lifetimes, the auto-renew loop
