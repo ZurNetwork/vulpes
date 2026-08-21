@@ -101,6 +101,8 @@ mod memory;
 #[cfg(feature = "minter")]
 mod minter;
 
+#[cfg(feature = "acp")]
+pub mod acp;
 #[cfg(feature = "axum")]
 pub mod axum;
 #[cfg(feature = "oauth")]
