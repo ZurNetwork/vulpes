@@ -239,7 +239,7 @@ mod tests {
     fn vk(k: &Secp256k1Keypair) -> VerifyingKey {
         VerifyingKey::from_did_key(&k.did()).unwrap()
     }
-    const LIST: &str = "https://attest.example/status/1";
+    const LIST: &str = "https://attest.got-paws.net/status/1";
 
     fn list_at(ts: &str, set: &[u64]) -> UnsignedStatusList {
         let mut l = UnsignedStatusList::new(attestor(), LIST, Datetime::parse(ts).unwrap(), 8192);
@@ -395,7 +395,7 @@ mod tests {
         let k = key(27);
         let a = sign_status_list(list_at("2026-08-20T00:00:00Z", &[4127]), &k).unwrap();
         let mut b_body = list_at("2026-08-21T00:00:00Z", &[]);
-        b_body.list = "https://attest.example/status/2".into();
+        b_body.list = "https://attest.got-paws.net/status/2".into();
         let b = sign_status_list(b_body, &k).unwrap();
         let copies = [b.to_bytes().unwrap()];
         assert!(newest_verifiable(&copies, &attestor(), LIST, &[vk(&k)], &now()).is_none());

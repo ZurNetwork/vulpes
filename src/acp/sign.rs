@@ -472,7 +472,7 @@ mod tests {
                 "status.list",
                 Box::new(|a| {
                     a.body.status.as_mut().unwrap().list =
-                        "https://attest.example/status/2".parse().unwrap()
+                        "https://attest.got-paws.net/status/2".parse().unwrap()
                 }),
             ),
             ("status removed", Box::new(|a| a.body.status = None)),

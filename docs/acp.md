@@ -339,11 +339,16 @@ To verify an attestation, a verifier:
 7. If `status` is present and the verifier's policy demands freshness:
    fetches the status artifact (any mirror), verifies its signature against
    the attestor's DID document, checks the bit at `index` is not set.
-   `status.list` is attacker-influenced input: verifiers MUST validate it
-   before fetching (scheme, no loopback or link-local or private-range
-   hosts, no IP literals) and SHOULD route the fetch through an egress
-   guard. The trust decision precedes the fetch precisely so that an
-   untrusted attestor cannot cause a verifier to make a request.
+   `status.list` is an identifier at rest (§Status lists) and
+   attacker-influenced input: verifiers MUST validate it immediately
+   before fetching — `https` with a public DNS host: no IP literal in any
+   spelling (including hex, octal, decimal and trailing-dot forms), no
+   loopback, link-local or private-range host, no special-use name
+   (`localhost`, `.local`, `.internal`, `.onion`, `.arpa`, …) — and SHOULD
+   route the fetch through an egress guard. A list the verifier will not
+   fetch is *not checkable*, never malformed and never "not revoked". The
+   trust decision precedes the fetch precisely so that an untrusted
+   attestor cannot cause a verifier to make a request.
    The newest verifiable copy wins however old it is — a list published
    before the attestation was issued is still the attestor's last word,
    and must stay checkable after the attestor dies (§The kill test).

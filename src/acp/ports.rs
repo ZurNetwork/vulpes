@@ -143,8 +143,10 @@ pub trait DidResolver: Send + Sync {
 /// verifies; a stale or forged mirror can only lose, never win.
 ///
 /// The verifier only calls this *after* its trust policy has accepted the
-/// attestor, and only with a [`StatusUri`] (already `https`, DNS host, no
-/// IP literal). An HTTP implementation should still route through an
+/// attestor and after [`StatusUri::fetchable`] passed (an `https` URL
+/// with a public DNS host — no IP literal in any spelling, no special-use
+/// name — or an `at://` identifier the implementation resolves through the
+/// repo path). An HTTP implementation should still route through an
 /// egress-guarded client the deployment injects — DNS rebinding and
 /// redirects are its concern, not the type's.
 #[async_trait]

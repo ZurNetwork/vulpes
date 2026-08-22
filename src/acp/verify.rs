@@ -66,6 +66,11 @@ pub enum Reason {
     NotYetValid,
     /// The verifier's own policy declined — step 6.
     PolicyRejected(String),
+    /// Freshness was demanded but `status.list` is not something this
+    /// verifier will send a request for (an IP literal, a special-use name;
+    /// [`StatusUri::fetchable`](super::record::StatusUri::fetchable)) —
+    /// step 7. No fetch was made.
+    StatusUnfetchable(String),
     /// Freshness was demanded and no copy of the status list was reachable — step 7.
     StatusUnavailable,
     /// Copies were reachable but none verified under the attestor's keys — step 7.
@@ -229,6 +234,11 @@ impl Verifier<'_> {
         if let Some(status) = &att.body.status
             && self.policy.demands_freshness()
         {
+            // The identifier was only syntax-checked on decode; whether it
+            // may be *fetched* is decided here, right before the request.
+            if let Err(err) = status.list.fetchable() {
+                not_in_force!(Reason::StatusUnfetchable(err.to_string()));
+            }
             let copies = self.status.fetch(&status.list).await?;
             if copies.is_empty() {
                 not_in_force!(Reason::StatusUnavailable);
@@ -399,7 +409,7 @@ mod tests {
     use crate::acp::status::{UnsignedStatusList, sign_status_list};
 
     const NOW: &str = "2026-08-29T10:00:00Z"; // nine days after issuance
-    const STATUS_URL: &str = "https://attest.example/status/1";
+    const STATUS_URL: &str = "https://attest.got-paws.net/status/1";
     const INDEX: u64 = 4127;
 
     fn key(seed: u8) -> Secp256k1Keypair {
@@ -873,7 +883,7 @@ mod tests {
         let other = sign_status_list(
             UnsignedStatusList::new(
                 attestor(),
-                "https://attest.example/status/2",
+                "https://attest.got-paws.net/status/2",
                 dt("2026-08-25T00:00:00Z"),
                 8192,
             ),
@@ -952,6 +962,50 @@ mod tests {
             before,
             "no fetch for a rejected attestor"
         );
+    }
+
+    #[tokio::test]
+    async fn unfetchable_list_is_never_requested() {
+        // A trusted (or compromised) attestor names an address the verifier
+        // must not touch. The attestation decodes fine — the name is only
+        // an identifier at rest — but step 7 refuses before any request.
+        let w = World::new();
+        for inward in [
+            "https://169.254.169.254/latest/meta-data/",
+            "https://0x7f000001/",
+            "https://localhost./",
+            "https://metadata.internal/",
+        ] {
+            let mut body = w.attestation().body;
+            body.status = Some(StatusRef {
+                list: inward.parse().unwrap(),
+                index: INDEX,
+            });
+            let att = sign(body, Repository(&kit()), &w.attestor_key).unwrap();
+            w.repo.replace(&w.att_uri, &att);
+            let before = w.status.fetch_count();
+            assert!(
+                matches!(reason(w.verdict().await), Reason::StatusUnfetchable(_)),
+                "{inward}"
+            );
+            assert_eq!(w.status.fetch_count(), before, "{inward}: fetched");
+        }
+        // An `at://` identifier is handed to the source as-is.
+        let mut body = w.attestation().body;
+        let at_list = "at://did:plc:attestor/net.got-paws.acp.statusList/1";
+        body.status = Some(StatusRef {
+            list: at_list.parse().unwrap(),
+            index: INDEX,
+        });
+        let att = sign(body, Repository(&kit()), &w.attestor_key).unwrap();
+        w.repo.replace(&w.att_uri, &att);
+        let list = sign_status_list(
+            UnsignedStatusList::new(attestor(), at_list, dt("2026-08-20T10:12:00Z"), 8192),
+            &w.attestor_key,
+        )
+        .unwrap();
+        w.status.publish(at_list, list.to_bytes().unwrap());
+        assert!(w.verdict().await.is_in_force());
     }
 
     #[tokio::test]

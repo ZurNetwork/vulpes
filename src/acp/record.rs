@@ -496,25 +496,29 @@ impl StrongRef {
     }
 }
 
-/// The address of a status-list artifact — `status.list` — validated at
-/// the boundary so a verifier can never be pointed at something it must not
-/// fetch.
+/// A status list's identifier — `status.list` — and, when it is an
+/// `https` URL, where to fetch it.
 ///
-/// This is attacker-influenced input: anyone can write an attestation with
-/// any `status.list` into their own repo. The rules (FORKS F29 precedent —
-/// unreachable by construction, not by a check that can be forgotten):
-/// `https` only; a DNS host, never an IP literal (which removes loopback,
-/// link-local and private ranges in one stroke) and never `localhost`; no
-/// userinfo; no whitespace. DNS rebinding is the egress guard's concern —
-/// the HTTP `StatusSource` should accept an injected client for exactly
-/// that. The same string is the list's identifier (see
-/// [`UnsignedStatusList::list`](super::status::UnsignedStatusList::list)).
+/// At rest this is an **identifier** (F39, amended): it must equal the
+/// `list` inside the signed artifact, and mirrors may serve that artifact
+/// from anywhere. Decode checks only syntax — `https://…` or `at://…`, no
+/// whitespace or control characters, no userinfo — so a correctly signed
+/// attestation never fails as malformed over how its list is *named*.
+///
+/// Whether the verifier may *fetch* it is a separate question, asked by
+/// [`StatusUri::fetchable`] immediately before the request and nowhere
+/// else: an `https` host must be a public DNS name, never an IP literal in
+/// any spelling, never loopback or a special-use name. DNS rebinding and
+/// redirects are the egress guard's concern — the HTTP `StatusSource`
+/// should accept an injected client for exactly that.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
 pub struct StatusUri(String);
 
 impl StatusUri {
-    /// Accept `https://<dns-host>[:port]/…` and nothing else.
+    /// Accept `https://<authority>/…` or a well-formed `at://` URI; reject
+    /// whitespace, control characters, and userinfo. Syntax only — see
+    /// [`fetchable`](Self::fetchable) for the pre-fetch rule.
     pub fn parse(raw: &str) -> Result<Self, CodecError> {
         let err = |detail: &str| CodecError::InvalidField {
             field: "status.list",
@@ -523,42 +527,18 @@ impl StatusUri {
         if raw.chars().any(|c| c.is_whitespace() || c.is_control()) {
             return Err(err("contains whitespace or control characters"));
         }
-        let rest = raw
-            .strip_prefix("https://")
-            .ok_or_else(|| err("must start with https://"))?;
-        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        if raw.starts_with("at://") {
+            AtUri::parse(raw)?;
+            return Ok(Self(raw.to_string()));
+        }
+        let Some(authority) = Self::https_authority(raw) else {
+            return Err(err("must start with https:// or at://"));
+        };
         if authority.contains('@') {
             return Err(err("userinfo is not allowed"));
         }
-        if authority.starts_with('[') {
-            return Err(err("IP literals are not allowed"));
-        }
-        let host = authority.rsplit_once(':').map_or(authority, |(h, port)| {
-            if port.chars().all(|c| c.is_ascii_digit()) {
-                h
-            } else {
-                authority
-            }
-        });
-        if host.is_empty() {
+        if authority.is_empty() {
             return Err(err("missing host"));
-        }
-        if host.eq_ignore_ascii_case("localhost")
-            || host.to_ascii_lowercase().ends_with(".localhost")
-        {
-            return Err(err("localhost is not allowed"));
-        }
-        let looks_like_ipv4 = host
-            .split('.')
-            .all(|l| !l.is_empty() && l.chars().all(|c| c.is_ascii_digit()));
-        if looks_like_ipv4 {
-            return Err(err("IP literals are not allowed"));
-        }
-        if !host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
-        {
-            return Err(err("host must be a DNS name"));
         }
         Ok(Self(raw.to_string()))
     }
@@ -566,6 +546,70 @@ impl StatusUri {
     /// The string form.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// The authority of an `https` URI; `None` for any other scheme.
+    fn https_authority(raw: &str) -> Option<&str> {
+        raw.strip_prefix("https://")
+            .map(|rest| rest.split(['/', '?', '#']).next().unwrap_or(""))
+    }
+
+    /// May a verifier send a request for this? Called right before the
+    /// status fetch. `at://` identifiers pass through untouched — the
+    /// `StatusSource` resolves those through the repo path, not HTTP. An
+    /// `https` host must be a public DNS name:
+    ///
+    /// - no IP literal in any spelling the WHATWG parser accepts (`[::1]`,
+    ///   `127.0.0.1`, `127.1`, `0x7f000001`, `2130706433`, `0177.0.0.1`,
+    ///   with or without a trailing dot) — the last label must start with
+    ///   an ASCII letter, which no numeric form does;
+    /// - no special-use name (`localhost`, `*.local`, `*.internal`,
+    ///   `*.onion`, `*.arpa`, `*.test`, `*.example`, `*.invalid`, …):
+    ///   the same table the handle validator uses;
+    /// - DNS label charset only.
+    ///
+    /// Loopback, link-local and private ranges all fall out of the first
+    /// rule: they are only reachable by literal.
+    pub fn fetchable(&self) -> Result<(), CodecError> {
+        let err = |detail: &str| CodecError::InvalidField {
+            field: "status.list",
+            detail: detail.to_string(),
+        };
+        let Some(authority) = Self::https_authority(&self.0) else {
+            return Ok(()); // `at://` — not an HTTP fetch
+        };
+        if authority.starts_with('[') {
+            return Err(err("IP literals are not allowed"));
+        }
+        let host = authority.rsplit_once(':').map_or(authority, |(h, port)| {
+            if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
+                h
+            } else {
+                authority
+            }
+        });
+        if host.contains(':') {
+            return Err(err("IP literals are not allowed"));
+        }
+        let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+        if host.is_empty() {
+            return Err(err("missing host"));
+        }
+        if !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+            || host.split('.').any(str::is_empty)
+        {
+            return Err(err("host must be a DNS name"));
+        }
+        let tld = host.rsplit('.').next().unwrap_or("");
+        if !tld.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            return Err(err("IP literals are not allowed"));
+        }
+        if crate::handle::RESERVED_TLDS.contains(&tld) {
+            return Err(err("special-use names are not fetched"));
+        }
+        Ok(())
     }
 }
 
@@ -1348,30 +1392,30 @@ mod tests {
     }
 
     #[test]
-    fn status_uri_rejects_what_a_verifier_must_not_fetch() {
+    fn status_uri_is_an_identifier_at_rest() {
+        // Decode is syntax only: a list named by an `at://` URI, or by an
+        // https URL the verifier would never fetch, is still a well-formed
+        // attestation (F39: identifier, not location).
         for ok in [
-            "https://attest.example/status/1",
-            "https://attest.example:8443/status/1?x=1#f",
+            "https://attest.got-paws.net/status/1",
+            "https://attest.got-paws.net:8443/status/1?x=1#f",
             "https://a-b.example",
+            "https://127.0.0.1/",
+            "https://localhost/status",
+            "at://did:plc:abc/net.got-paws.acp.statusList/1",
         ] {
             StatusUri::parse(ok).unwrap_or_else(|e| panic!("{ok}: {e}"));
         }
         for bad in [
             "",
             "http://attest.example/status/1",
-            "https://169.254.169.254/latest/meta-data/",
-            "https://127.0.0.1/",
-            "https://10.0.0.5:5432/",
-            "https://[::1]/",
-            "https://[fe80::1]:80/",
-            "https://localhost/status",
-            "https://LOCALHOST:8443/status",
-            "https://pds.localhost/status",
+            "ftp://attest.example/",
             "https://user:pw@attest.example/",
             "https:///status",
-            "https://attest.example/st atus",
-            "https://attest_example/",
-            "ftp://attest.example/",
+            "https://attest.got-paws.net/st atus",
+            "https://attest.got-paws.net/\tstatus",
+            "at://",
+            "at://did:plc:a b/c",
         ] {
             assert!(StatusUri::parse(bad).is_err(), "{bad} accepted");
         }
@@ -1384,6 +1428,71 @@ mod tests {
         evil[pos..pos + 8].copy_from_slice(b"http://1");
         assert!(from_canonical_bytes::<UnsignedAttestation>(&evil).is_err());
         from_canonical_bytes::<UnsignedAttestation>(&bytes).unwrap();
+    }
+
+    #[test]
+    fn status_uri_fetchable_rejects_what_a_verifier_must_not_fetch() {
+        let ok = |s: &str| {
+            StatusUri::parse(s)
+                .unwrap()
+                .fetchable()
+                .unwrap_or_else(|e| panic!("{s}: {e}"))
+        };
+        for s in [
+            "https://attest.got-paws.net/status/1",
+            "https://attest.got-paws.net:8443/status/1?x=1#f",
+            "https://attest.got-paws.net./status/1",
+            "https://ATTEST.Got-Paws.NET/status",
+            "https://a-b.got-paws.net",
+            "https://x1.attest.got-paws.net",
+            "at://did:plc:abc/net.got-paws.acp.statusList/1",
+        ] {
+            ok(s);
+        }
+        for bad in [
+            // every WHATWG spelling of an IPv4 literal
+            "https://169.254.169.254/latest/meta-data/",
+            "https://169.254.169.254./latest/",
+            "https://127.0.0.1/",
+            "https://127.0.0.1./x",
+            "https://127.1./x",
+            "https://127.1/x",
+            "https://0x7f000001/x",
+            "https://0x7f.0x0.0x0.0x1/x",
+            "https://0xA9FEA9FE/x",
+            "https://2130706433./x",
+            "https://2130706433/x",
+            "https://0177.0.0.1/x",
+            "https://0.0.0.0/",
+            "https://10.0.0.5:5432/",
+            "https://100.64.0.1/",
+            // IPv6, bracketed and bare
+            "https://[::1]/",
+            "https://[fe80::1]:80/",
+            "https://[::ffff:127.0.0.1]/",
+            "https://[fc00::1]/",
+            "https://::1/",
+            // special-use names
+            "https://localhost/status",
+            "https://localhost./status",
+            "https://LOCALHOST:8443/status",
+            "https://pds.localhost/status",
+            "https://metadata.internal/latest/",
+            "https://printer.local/",
+            "https://router.home.arpa/",
+            "https://x.onion/",
+            "https://x.test/",
+            "https://x.example/",
+            "https://x.invalid/",
+            // not a DNS name
+            "https://attest_example/",
+            "https://attest..example/",
+            "https://attest.got-paws.net:/x",
+            "https://attest.got-paws.net:80:443/x",
+        ] {
+            let uri = StatusUri::parse(bad).unwrap_or_else(|e| panic!("{bad}: {e}"));
+            assert!(uri.fetchable().is_err(), "{bad} fetchable");
+        }
     }
 
     #[test]
