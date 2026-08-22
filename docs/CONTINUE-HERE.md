@@ -1,4 +1,47 @@
-# Vulpes — continue here (updated 2026-08-11, post-fork sync)
+# Vulpes — continue here (updated 2026-08-22, ACP core merged)
+
+## 2026-08-22: the ACP core is on `main` (PR #10, `dc8be4c`)
+
+`src/acp/` — records with canonical DAG-CBOR, CID-first signing, the
+status-list artifact, three ports, `TrustPolicy`, `verify_attestation` +
+`verify_relationship`, the kill test (in-memory). Roadmap lines 2, 3 and 5
+are ticked. Ship-gates ran (security · code · critique · document · Copilot
+×4) and five fix rounds landed on the same branch — **too big for one PR;
+Zuri's standing feedback is smaller PRs from here on.**
+
+Rulings made during review, all recorded:
+- **F40 amended** — ownership key control = the owner holds a rotation key
+  senior to every *policy-named* custodian key (`TrustPolicy::custodian_keys`).
+  Researched: did:plc allows key reuse across DIDs; Bluesky `createAccount`
+  puts the user key first, `goat` appends last — so public data alone can't
+  say who holds a key. Co-ownership falls out of the rule.
+- **F39 amended** — the signed status-list body carries `list` (its
+  identifier; IETF Token Status List `sub` precedent) and an optional `ttl`.
+- **F42 (new)** — status fetch contract: judgment before the fetch, `StatusUri`
+  syntactic at decode + `fetchable()` before I/O, HTTP source MUST disable
+  redirects and resolve-then-refuse non-global addresses.
+- `docs/acp.md` §Verification: steps 6/7 swapped; step 1 pre-checks the
+  claim URI's authority; changelog 2026-08-21 + 22.
+
+Open, from the review — Zuri's calls, none blocking:
+- `max_status_age_secs` defaults to `None` (fails open under mirror
+  withholding; `Some(86_400)` would cut dead attestors off after a day).
+- Ship bsky.social's two operator rotation keys as a named constant for
+  `with_custodians`, or leave verifiers to track them?
+- Self-ownership (`owner == owned`) passes key control trivially.
+- `StatusUri` accepts punycode; `Handle` rejects it.
+- Features matrix prints dead-code warnings for `src/memory.rs` fakes under
+  some combos (`cargo check` only).
+
+Next roadmap line: **Talk to a PDS** — jacquard-backed ports, the `$bytes`
+boundary, the Docker PDS, and the kill test re-run against it. The HTTP
+`StatusSource` checklist is on the roadmap line (F42).
+
+Local: the Postgres suite needs the host rebooted into the 7.1.8 kernel
+(no `bridge` module under 7.1.5); CI covers it meanwhile.
+
+---
+
 
 Pick-up note. The 2026-08-11 pivot (decentralization first-class, NQ1 reopened →
 holder-held, three-layer role, broker→toolkit, atproto public/private boundary)
