@@ -58,6 +58,17 @@ pub trait TrustPolicy: Send + Sync {
 
     /// Step 6.
     fn decide(&self, ctx: &PolicyContext<'_>) -> Decision;
+
+    /// The oldest status list this verifier will act on, in seconds since
+    /// its `issuedAt`. `None` (the default) bounds nothing beyond the
+    /// structural floor the verifier always applies — a list published
+    /// before the attestation was cannot carry its bit. High-stakes
+    /// verifiers set this: with it, an adversary who can withhold fresh
+    /// copies can only push a verdict to *not checkable*, never to "not
+    /// revoked" (`docs/acp.md` §Stale-status attacks).
+    fn max_status_age_secs(&self) -> Option<i64> {
+        None
+    }
 }
 
 /// Allow-lists and an age cap — enough for most relying parties.
@@ -76,6 +87,9 @@ pub struct BasicPolicy {
     /// Reject attestations older than this many seconds, whatever their
     /// `expiresAt` — the verifier's own, tighter freshness bar.
     pub max_age_secs: Option<i64>,
+    /// Reject a status list older than this many seconds; see
+    /// [`TrustPolicy::max_status_age_secs`].
+    pub max_status_age_secs: Option<i64>,
 }
 
 impl BasicPolicy {
@@ -99,6 +113,10 @@ impl BasicPolicy {
 impl TrustPolicy for BasicPolicy {
     fn demands_freshness(&self) -> bool {
         self.demand_freshness
+    }
+
+    fn max_status_age_secs(&self) -> Option<i64> {
+        self.max_status_age_secs
     }
 
     fn decide(&self, ctx: &PolicyContext<'_>) -> Decision {

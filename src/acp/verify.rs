@@ -64,6 +64,14 @@ pub enum Reason {
     StatusUnavailable,
     /// Copies were reachable but none verified under the attestor's keys — step 7.
     StatusUnverifiable,
+    /// The newest verifiable status list was issued before the attestation
+    /// was — it cannot carry this attestation's bit — step 7.
+    StatusPredatesAttestation,
+    /// The newest verifiable status list is older than the policy's
+    /// [`max_status_age_secs`](super::policy::TrustPolicy::max_status_age_secs)
+    /// — step 7. Not "not revoked": an adversary withholding fresh copies
+    /// lands here, never on in-force.
+    StatusStale,
     /// The status list does not cover `status.index` — step 7.
     StatusIndexOutOfRange,
     /// The revocation bit is set — step 7.
@@ -222,6 +230,15 @@ impl Verifier<'_> {
             ) else {
                 not_in_force!(Reason::StatusUnverifiable);
             };
+            let list_issued = list.body.issued_at.to_unix();
+            if list_issued < issued {
+                not_in_force!(Reason::StatusPredatesAttestation);
+            }
+            if let Some(max) = self.policy.max_status_age_secs()
+                && now_s - list_issued > max
+            {
+                not_in_force!(Reason::StatusStale);
+            }
             match list.is_set(status.index) {
                 None => not_in_force!(Reason::StatusIndexOutOfRange),
                 Some(true) => not_in_force!(Reason::Revoked),
@@ -686,6 +703,53 @@ mod tests {
         .unwrap();
         w.status.publish(STATUS_URL, tiny.to_bytes().unwrap());
         assert_eq!(reason(w.verdict().await), Reason::StatusIndexOutOfRange);
+    }
+
+    #[tokio::test]
+    async fn status_list_from_before_the_attestation_is_not_evidence() {
+        // Only a copy older than the attestation itself is reachable: it
+        // cannot know about this attestation, so it cannot clear it.
+        let w = World::new();
+        w.status.clear(STATUS_URL);
+        let older = sign_status_list(
+            UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-19T00:00:00Z"), 8192),
+            &w.attestor_key,
+        )
+        .unwrap();
+        w.status.publish(STATUS_URL, older.to_bytes().unwrap());
+        assert_eq!(reason(w.verdict().await), Reason::StatusPredatesAttestation);
+    }
+
+    #[tokio::test]
+    async fn withheld_fresh_copies_cannot_clear_a_revocation() {
+        // The attestor revoked on the 21st; an adversary on the path serves
+        // only the clear copy from the 20th. With a status-age bound, the
+        // stale copy is not "not revoked" — it is not evidence.
+        let mut w = World::new();
+        w.policy.max_status_age_secs = Some(7 * 86_400); // NOW is the 29th
+        assert_eq!(reason(w.verdict().await), Reason::StatusStale);
+        let fresh = sign_status_list(
+            UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-25T00:00:00Z"), 8192),
+            &w.attestor_key,
+        )
+        .unwrap();
+        w.status.publish(STATUS_URL, fresh.to_bytes().unwrap());
+        assert!(w.verdict().await.is_in_force());
+        // Without the bound, the verifier takes what it can get (the spec's
+        // "newest verifiable wins"); high-stakes verifiers set the bound.
+        w.policy.max_status_age_secs = None;
+        w.status.clear(STATUS_URL);
+        w.status.publish(
+            STATUS_URL,
+            sign_status_list(
+                UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-20T10:12:00Z"), 8192),
+                &w.attestor_key,
+            )
+            .unwrap()
+            .to_bytes()
+            .unwrap(),
+        );
+        assert!(w.verdict().await.is_in_force());
     }
 
     #[tokio::test]
