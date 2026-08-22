@@ -167,7 +167,7 @@ impl Verifier<'_> {
             Some(Err(reason)) => not_in_force!(reason),
             Some(Ok(pair)) => pair,
         };
-        if claim_fetched.cid.to_string() != att.body.claim.cid {
+        if claim_fetched.cid().to_string() != att.body.claim.cid {
             not_in_force!(Reason::ClaimRewritten);
         }
 

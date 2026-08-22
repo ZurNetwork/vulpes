@@ -86,12 +86,7 @@ impl MemoryRepo {
             .lock()
             .expect("repo lock")
             .get(uri.as_str())
-            .map(|(repo, bytes)| FetchedRecord {
-                cid: RecordCid::of(bytes),
-                bytes: bytes.clone(),
-                uri: uri.clone(),
-                repository: repo.clone(),
-            })
+            .map(|(repo, bytes)| FetchedRecord::new(bytes.clone(), uri.clone(), repo.clone()))
     }
 
     /// Everything in `repo` — a CAR export, in spirit.
@@ -105,12 +100,7 @@ impl MemoryRepo {
                 let uri = AtUri::parse(uri).expect("stored uris are valid");
                 (
                     uri.clone(),
-                    FetchedRecord {
-                        cid: RecordCid::of(bytes),
-                        bytes: bytes.clone(),
-                        uri,
-                        repository: r.clone(),
-                    },
+                    FetchedRecord::new(bytes.clone(), uri, r.clone()),
                 )
             })
             .collect()

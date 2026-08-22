@@ -74,22 +74,41 @@ opaque_error!(
 /// A record as retrieved from a repository: its canonical bytes, its CID,
 /// its address, and — the field that matters most — **which repository it
 /// came from**.
+///
+/// The CID is **computed from the bytes** in [`FetchedRecord::new`], never
+/// accepted from the response: step 1 of verification compares it to the
+/// attestation's signed strongRef, and a CID taken from a side channel
+/// would compare an attacker-supplied value to itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchedRecord {
     /// Canonical DAG-CBOR of the record as the repository holds it.
     pub bytes: Vec<u8>,
-    /// The CID of `bytes` (as the repository reports it; implementations
-    /// should compute it from `bytes` rather than trust a side channel).
-    pub cid: RecordCid,
     /// The address it was fetched at.
     pub uri: AtUri,
     /// The DID of the repository it was retrieved from — the fetch context.
     /// This feeds [`Repository`](super::sign::Repository); it is never read
     /// out of the record itself.
     pub repository: Did,
+    cid: RecordCid,
 }
 
 impl FetchedRecord {
+    /// Wrap what a repository returned; the CID is derived from `bytes`
+    /// here and nowhere else.
+    pub fn new(bytes: Vec<u8>, uri: AtUri, repository: Did) -> Self {
+        Self {
+            cid: RecordCid::of(&bytes),
+            bytes,
+            uri,
+            repository,
+        }
+    }
+
+    /// The CID of [`bytes`](Self::bytes).
+    pub fn cid(&self) -> &RecordCid {
+        &self.cid
+    }
+
     /// Decode the bytes as a record type. A record that exists but does not
     /// decode is a distinct outcome from "absent" — callers map it to
     /// [`Reason::Malformed`](super::verify::Reason::Malformed).
