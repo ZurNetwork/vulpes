@@ -146,11 +146,13 @@ type_marker!(
 pub struct Datetime(String);
 
 impl Datetime {
-    /// Accept `YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM)`.
+    /// Accept `YYYY-MM-DDTHH:MM:SS[.fraction](Z|±HH:MM)` with every field in
+    /// range (month 1–12, day valid for that month and leap year, hour ≤ 23,
+    /// minute ≤ 59, second ≤ 60 for a leap second, offset ≤ ±23:59).
     ///
-    /// This is a syntax check (lexicon `format: datetime`), not a calendar
-    /// check: it guarantees the later orchestration layer can parse it, and
-    /// that two records that should compare equal serialize identically.
+    /// Syntax *and* calendar: a value that passes here means the same
+    /// instant to this crate's [`to_unix`](Self::to_unix), to chrono, and
+    /// to Postgres, so a verifier never compares a nonsense number.
     pub fn parse(raw: &str) -> Result<Self, CodecError> {
         fn err(detail: &str) -> CodecError {
             CodecError::InvalidField {
@@ -173,6 +175,30 @@ impl Datetime {
         if !(digits(11..13) && at(13, b':') && digits(14..16) && at(16, b':') && digits(17..19)) {
             return Err(err("expected HH:MM:SS"));
         }
+        let num = |r: std::ops::Range<usize>| -> u32 {
+            std::str::from_utf8(&b[r])
+                .unwrap_or("0")
+                .parse()
+                .unwrap_or(0)
+        };
+        let (y, m, d) = (num(0..4), num(5..7), num(8..10));
+        if !(1..=12).contains(&m) {
+            return Err(err("month out of range"));
+        }
+        let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
+        let days_in_month = match m {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            _ if leap => 29,
+            _ => 28,
+        };
+        if !(1..=days_in_month).contains(&d) {
+            return Err(err("day out of range for month"));
+        }
+        let (hh, mm, ss) = (num(11..13), num(14..16), num(17..19));
+        if hh > 23 || mm > 59 || ss > 60 {
+            return Err(err("time of day out of range"));
+        }
         let mut i = 19;
         if at(i, b'.') {
             let start = i + 1;
@@ -190,7 +216,12 @@ impl Datetime {
                 if digits(i + 1..i + 3)
                     && at(i + 3, b':')
                     && digits(i + 4..i + 6)
-                    && i + 6 == b.len() => {}
+                    && i + 6 == b.len() =>
+            {
+                if num(i + 1..i + 3) > 23 || num(i + 4..i + 6) > 59 {
+                    return Err(err("offset out of range"));
+                }
+            }
             _ => return Err(err("expected 'Z' or ±HH:MM offset")),
         }
         Ok(Self(raw.to_string()))
@@ -203,12 +234,12 @@ impl Datetime {
 
     /// Seconds since the Unix epoch, offset applied, fraction truncated.
     ///
-    /// Hand-rolled (days-from-civil) so the pure lane compares expiry without
-    /// a date library; the syntax was already checked by [`Datetime::parse`],
-    /// so the slices below cannot fail. Out-of-range calendar values
-    /// (month 13) are not rejected by `parse` and simply produce a
-    /// monotone-but-meaningless number — the orchestration layer compares,
-    /// it never renders.
+    /// Hand-rolled (days-from-civil; FORKS F41) so the pure lane compares
+    /// expiry without a date library; syntax and ranges were already checked
+    /// by [`Datetime::parse`], so the slices below cannot fail. Truncation
+    /// means two instants in the same second compare equal — callers that
+    /// must order them (the newest-status-list pick) break the tie on
+    /// content, never on arrival order.
     pub fn to_unix(&self) -> i64 {
         let b = self.0.as_bytes();
         let num = |r: std::ops::Range<usize>| -> i64 {
@@ -1092,6 +1123,33 @@ mod tests {
             "2026-08-20T09:00:00+0200",
             "2026-08-20 09:00:00Z",
             "2026-08-20T09:00:00Zx",
+        ] {
+            assert!(Datetime::parse(bad).is_err(), "{bad} accepted");
+        }
+    }
+
+    #[test]
+    fn datetime_ranges() {
+        for ok in [
+            "2024-02-29T00:00:00Z",
+            "2000-02-29T00:00:00Z",
+            "2026-12-31T23:59:60Z",
+            "2026-01-01T00:00:00+23:59",
+        ] {
+            Datetime::parse(ok).unwrap_or_else(|e| panic!("{ok}: {e}"));
+        }
+        for bad in [
+            "2026-13-45T25:00:00Z",
+            "2026-00-10T00:00:00Z",
+            "2026-02-29T00:00:00Z",
+            "1900-02-29T00:00:00Z",
+            "2026-04-31T00:00:00Z",
+            "2026-08-00T00:00:00Z",
+            "2026-08-20T24:00:00Z",
+            "2026-08-20T09:60:00Z",
+            "2026-08-20T09:00:61Z",
+            "2026-08-20T09:00:00+24:00",
+            "2026-08-20T09:00:00-05:60",
         ] {
             assert!(Datetime::parse(bad).is_err(), "{bad} accepted");
         }

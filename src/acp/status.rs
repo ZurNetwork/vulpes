@@ -212,10 +212,13 @@ pub fn newest_verifiable(
 ) -> Option<StatusList> {
     candidates
         .iter()
-        .filter_map(|bytes| StatusList::from_bytes(bytes).ok())
-        .filter(|l| &l.body.attestor == attestor && l.body.list == list)
-        .filter(|l| verify_status_list(l, keys).is_ok())
-        .max_by_key(|l| l.body.issued_at.to_unix())
+        .filter_map(|bytes| StatusList::from_bytes(bytes).map(|l| (l, bytes)).ok())
+        .filter(|(l, _)| &l.body.attestor == attestor && l.body.list == list)
+        .filter(|(l, _)| verify_status_list(l, keys).is_ok())
+        // `to_unix` truncates sub-seconds, so two copies can tie; the tie
+        // breaks on the bytes, never on which mirror answered first.
+        .max_by_key(|(l, bytes)| (l.body.issued_at.to_unix(), bytes.to_vec()))
+        .map(|(l, _)| l)
 }
 
 #[cfg(test)]
@@ -282,6 +285,22 @@ mod tests {
         }
         let body_bytes = canonical_bytes(&signed.body).unwrap();
         assert!(body_bytes.windows(LIST.len()).any(|w| w == LIST.as_bytes()));
+    }
+
+    #[test]
+    fn same_second_copies_pick_deterministically() {
+        let k = key(28);
+        let a = sign_status_list(list_at("2026-08-20T00:00:00.100Z", &[1]), &k).unwrap();
+        let b = sign_status_list(list_at("2026-08-20T00:00:00.900Z", &[2]), &k).unwrap();
+        let (ab, ba) = (
+            [a.to_bytes().unwrap(), b.to_bytes().unwrap()],
+            [b.to_bytes().unwrap(), a.to_bytes().unwrap()],
+        );
+        let keys = [vk(&k)];
+        assert_eq!(
+            newest_verifiable(&ab, &attestor(), LIST, &keys),
+            newest_verifiable(&ba, &attestor(), LIST, &keys)
+        );
     }
 
     #[test]
