@@ -40,6 +40,11 @@ pub enum Reason {
     ClaimMissing,
     /// The referenced claim exists but its CID changed (rewritten) — step 1.
     ClaimRewritten,
+    /// The referenced claim lives in some other repo than the subject's —
+    /// step 2. A claim carries no subject field; *whose* claim it is comes
+    /// entirely from the repo it sits in, and a vouch must point at the
+    /// subject's own so the subject keeps the retraction switch.
+    ClaimNotInSubjectRepo,
     /// A record exists but does not decode as its type.
     Malformed(String),
     /// `subject` is not the owner of the repo the record came from — step 2.
@@ -158,9 +163,13 @@ impl Verifier<'_> {
             not_in_force!(Reason::ClaimRewritten);
         }
 
-        // 2. The record says who it is about; the repo says whose it is.
+        // 2. The record says who it is about; the repo says whose it is —
+        //    and the claim must be there too.
         if att.body.subject != fetched.repository {
             not_in_force!(Reason::SubjectMismatch);
+        }
+        if claim_fetched.repository != att.body.subject {
+            not_in_force!(Reason::ClaimNotInSubjectRepo);
         }
 
         // 3. The attestor's *current* keys.
@@ -520,6 +529,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claim_in_another_repo_is_not_the_subjects() {
+        // The attestor vouches for a byte-identical claim sitting in
+        // Mallory's repo (same content, same CID — a Claim has no subject
+        // field). Kit could never retract it; it is not Kit's claim.
+        let w = World::new();
+        let bytes = w.repo.get(&w.claim_uri).unwrap().bytes;
+        let elsewhere = w
+            .repo
+            .put_bytes(&mallory(), CLAIM_TYPE, "3kx2vp5qmek2h", bytes);
+        let mut body = w.attestation().body;
+        body.claim.uri = elsewhere;
+        let att = sign(body, Repository(&kit()), &w.attestor_key).unwrap();
+        w.repo.replace(&w.att_uri, &att);
+        assert_eq!(reason(w.verdict().await), Reason::ClaimNotInSubjectRepo);
+    }
+
+    #[tokio::test]
     async fn malformed_record() {
         let w = World::new();
         w.repo.replace_bytes(&w.att_uri, b"\xa0".to_vec()); // an empty map
@@ -581,8 +607,13 @@ mod tests {
         // it to prove step 4 holds on its own: a vouch whose subject *is*
         // mallory but which was signed for kit's repo.
         assert_eq!(reason(v), Reason::SubjectMismatch);
+        let claim_bytes = w.repo.get(&w.claim_uri).unwrap().bytes;
+        let mallory_claim = w
+            .repo
+            .put_bytes(&mallory(), CLAIM_TYPE, "3kx2vp5qmek2h", claim_bytes);
         let mut body = w.attestation().body;
         body.subject = mallory();
+        body.claim.uri = mallory_claim; // same CID, mallory's repo: steps 1–2 pass
         let att = sign(body, Repository(&kit()), &w.attestor_key).unwrap();
         let planted = w
             .repo
