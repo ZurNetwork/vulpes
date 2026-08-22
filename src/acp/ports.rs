@@ -50,8 +50,7 @@ opaque_error!(
 /// would compare an attacker-supplied value to itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchedRecord {
-    /// Canonical DAG-CBOR of the record as the repository holds it.
-    pub bytes: Vec<u8>,
+    bytes: Vec<u8>,
     /// The address it was fetched at.
     pub uri: AtUri,
     /// The DID of the repository it was retrieved from — the fetch context.
@@ -71,6 +70,12 @@ impl FetchedRecord {
             uri,
             repository,
         }
+    }
+
+    /// Canonical DAG-CBOR of the record as the repository holds it. Read
+    /// only, so it can never drift from [`cid`](Self::cid).
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 
     /// The CID of [`bytes`](Self::bytes).

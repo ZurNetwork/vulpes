@@ -216,7 +216,7 @@ impl Verifier<'_> {
             not_in_force!(Reason::BadSig);
         }
         match canonical_bytes(&att) {
-            Ok(canonical) if canonical == fetched.bytes => {}
+            Ok(canonical) if canonical == fetched.bytes() => {}
             Ok(_) => not_in_force!(Reason::NonCanonical),
             Err(err) => not_in_force!(Reason::Malformed(format!("{uri}: {err}"))),
         }
@@ -651,7 +651,7 @@ mod tests {
         // hers), but was signed for and lives in kit's repo: step 2 catches
         // the lie before the signature.
         let w = World::new();
-        let claim_bytes = w.repo.get(&w.claim_uri).unwrap().bytes;
+        let claim_bytes = w.repo.get(&w.claim_uri).unwrap().bytes().to_vec();
         let mallory_claim = w
             .repo
             .put_bytes(&mallory(), CLAIM_TYPE, "3kx2vp5qmek2h", claim_bytes);
@@ -693,7 +693,7 @@ mod tests {
     async fn transplant_not_in_force() {
         // Mallory copies Kit's vouch byte-for-byte into Mallory's repo.
         let w = World::new();
-        let bytes = w.repo.get(&w.att_uri).unwrap().bytes;
+        let bytes = w.repo.get(&w.att_uri).unwrap().bytes().to_vec();
         let copied = w
             .repo
             .put_bytes(&mallory(), ATTESTATION_TYPE, "3kx2vq7abcd2k", bytes);
@@ -706,7 +706,7 @@ mod tests {
         // it to prove step 4 holds on its own: a vouch whose subject *is*
         // mallory but which was signed for kit's repo.
         assert_eq!(reason(v), Reason::SubjectMismatch);
-        let claim_bytes = w.repo.get(&w.claim_uri).unwrap().bytes;
+        let claim_bytes = w.repo.get(&w.claim_uri).unwrap().bytes().to_vec();
         let mallory_claim = w
             .repo
             .put_bytes(&mallory(), CLAIM_TYPE, "3kx2vp5qmek2h", claim_bytes);
@@ -753,7 +753,7 @@ mod tests {
         // Same map, header written as 0xb8 0x08 (one-byte length) instead
         // of 0xa8: decodes identically, hashes differently.
         let w = World::new();
-        let mut bytes = w.repo.get(&w.att_uri).unwrap().bytes;
+        let mut bytes = w.repo.get(&w.att_uri).unwrap().bytes().to_vec();
         assert_eq!(bytes[0], 0xa9, "nine-entry map, short form");
         bytes.splice(0..1, [0xb8, 0x09]);
         w.repo.replace_bytes(&w.att_uri, bytes);
@@ -1056,13 +1056,19 @@ mod tests {
 
     #[tokio::test]
     async fn no_status_pointer_skips_step_7() {
-        let w = World::new();
+        let mut w = World::new();
         let mut body = w.attestation().body;
         body.status = None;
         let att = sign(body, Repository(&kit()), &w.attestor_key).unwrap();
         w.repo.replace(&w.att_uri, &att);
         w.status.go_dark(); // would be Err if consulted
         assert!(w.verdict().await.is_in_force());
+        // …unless this verifier insists on a pointer.
+        w.policy.require_status = true;
+        assert!(matches!(
+            reason(w.verdict().await),
+            Reason::PolicyRejected(_)
+        ));
     }
 
     #[tokio::test]
@@ -1173,7 +1179,7 @@ mod tests {
                 &kit(),
                 uri.collection().unwrap(),
                 uri.rkey().unwrap(),
-                fetched.bytes,
+                fetched.bytes().to_vec(),
             );
         }
         w.repo.go_dark();

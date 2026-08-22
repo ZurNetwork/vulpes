@@ -96,6 +96,12 @@ pub struct BasicPolicy {
     /// Reject a status list older than this many seconds; see
     /// [`TrustPolicy::max_status_age_secs`].
     pub max_status_age_secs: Option<i64>,
+    /// Reject an attestation that carries **no** status pointer. Off by
+    /// default: the spec allows pointer-less attestations (irrevocable
+    /// until expiry). A verifier that needs same-day revocation for every
+    /// vouch it acts on turns this on — otherwise an attestor can simply
+    /// omit the pointer and `demand_freshness` never fires.
+    pub require_status: bool,
 }
 
 impl Default for BasicPolicy {
@@ -107,6 +113,7 @@ impl Default for BasicPolicy {
             demand_freshness: true,
             max_age_secs: None,
             max_status_age_secs: None,
+            require_status: false,
         }
     }
 }
@@ -136,6 +143,9 @@ impl TrustPolicy for BasicPolicy {
     }
 
     fn decide(&self, ctx: &PolicyContext<'_>) -> Decision {
+        if self.require_status && !ctx.has_status {
+            return Decision::Reject("attestation carries no status pointer".into());
+        }
         if let Some(trusted) = &self.trusted_attestors
             && !trusted.contains(ctx.attestor)
         {
@@ -222,6 +232,21 @@ mod tests {
             Decision::Reject(_)
         ));
         assert!(matches!(p.decide(&ctx(&a, None, &k)), Decision::Reject(_)));
+    }
+
+    #[test]
+    fn require_status_rejects_pointerless_attestations() {
+        let p = BasicPolicy {
+            require_status: true,
+            ..BasicPolicy::permissive()
+        };
+        let (a, k) = (attestor(), ClaimKind::Email);
+        let mut c = ctx(&a, None, &k);
+        assert_eq!(p.decide(&c), Decision::Accept);
+        c.has_status = false;
+        assert!(matches!(p.decide(&c), Decision::Reject(_)));
+        // Off by default: the spec allows irrevocable-until-expiry.
+        assert_eq!(BasicPolicy::default().decide(&c), Decision::Accept);
     }
 
     #[test]
