@@ -26,6 +26,12 @@ pub enum CodecError {
     /// The bytes were not a well-formed record of the expected shape.
     #[error("failed to decode DAG-CBOR record: {0}")]
     Decode(String),
+    /// The bytes decode, but are not the canonical DAG-CBOR encoding of what
+    /// they decode to (non-minimal headers, unsorted keys, unknown fields).
+    /// The signature would still verify — it covers the canonical form —
+    /// so the stored bytes could differ from what was signed.
+    #[error("bytes are not the canonical DAG-CBOR encoding of the record")]
+    NonCanonical,
     /// A field failed its syntax check on construction.
     #[error("invalid {field}: {detail}")]
     InvalidField {

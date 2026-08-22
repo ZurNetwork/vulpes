@@ -189,6 +189,13 @@ impl StatusList {
     /// and is rejected here, before any signature is considered.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, super::error::CodecError> {
         let list: Self = from_canonical_bytes(bytes)?;
+        // The signature covers the canonical form, so a non-canonical copy
+        // would verify while carrying bytes nobody signed — and those bytes
+        // are what `newest_verifiable` tie-breaks on. Only canonical bytes
+        // are a status list.
+        if canonical_bytes(&list)? != bytes {
+            return Err(super::error::CodecError::NonCanonical);
+        }
         if list.body.ttl.is_some_and(|t| t > MAX_SAFE_INTEGER) {
             return Err(super::error::CodecError::DisallowedValue {
                 path: "/ttl".into(),
@@ -308,6 +315,22 @@ mod tests {
         assert_eq!(b.get(16), None);
         assert!(!b.set(16));
         assert_eq!(BitString::default().get(0), None);
+    }
+
+    #[test]
+    fn non_canonical_bytes_are_not_a_status_list() {
+        // Same map, header written as 0xb8 0x06 (one-byte length) instead
+        // of 0xa6: decodes identically, and the signature — computed over
+        // the canonical form — would still verify.
+        let k = key(21);
+        let signed = sign_status_list(list_at("2026-08-20T10:12:00Z", &[4127]), &k).unwrap();
+        let mut bytes = signed.to_bytes().unwrap();
+        assert_eq!(bytes[0], 0xa6, "six-entry map, short form");
+        bytes.splice(0..1, [0xb8, 0x06]);
+        assert!(matches!(
+            StatusList::from_bytes(&bytes),
+            Err(super::super::error::CodecError::NonCanonical)
+        ));
     }
 
     #[test]
