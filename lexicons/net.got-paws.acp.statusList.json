@@ -1,0 +1,35 @@
+{
+  "lexicon": 1,
+  "id": "net.got-paws.acp.statusList",
+  "defs": {
+    "main": {
+      "type": "object",
+      "description": "An attestor's signed, static, mirrorable revocation artifact (Token Status List semantics in an ACP-native DAG-CBOR envelope). Not a repo record: published at the address attestations point to and mirrored freely. Signed CID-first over the canonical bytes minus sig. See docs/acp.md §Status lists.",
+      "required": ["attestor", "list", "issuedAt", "bits", "sig"],
+      "properties": {
+        "attestor": {
+          "type": "string",
+          "format": "did",
+          "description": "The DID whose attestations this list covers. Its DID document holds the signing key."
+        },
+        "list": {
+          "type": "string",
+          "description": "This list's identifier. Must equal the status.list of every attestation it covers; a signed copy of one list never stands in for another. An identifier, not necessarily a fetch location."
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "datetime",
+          "description": "When this version was published. The newest verifiable copy wins."
+        },
+        "bits": {
+          "type": "bytes",
+          "description": "One bit per issued attestation, LSB-first within each byte; bit status.index set = revoked."
+        },
+        "sig": {
+          "type": "bytes",
+          "description": "Attestor signature over the CIDv1 of the canonical DAG-CBOR of the record minus sig. ES256/ES256K, low-S."
+        }
+      }
+    }
+  }
+}

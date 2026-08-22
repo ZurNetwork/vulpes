@@ -191,8 +191,12 @@ impl Verifier<'_> {
             if copies.is_empty() {
                 not_in_force!(Reason::StatusUnavailable);
             }
-            let Some(list) = newest_verifiable(&copies, &att.body.attestor, &keys.verification)
-            else {
+            let Some(list) = newest_verifiable(
+                &copies,
+                &att.body.attestor,
+                &status.list,
+                &keys.verification,
+            ) else {
                 not_in_force!(Reason::StatusUnverifiable);
             };
             match list.is_set(status.index) {
@@ -398,7 +402,7 @@ mod tests {
             dids.publish(&attestor(), keys_of(&attestor_key));
 
             let list = sign_status_list(
-                UnsignedStatusList::new(attestor(), dt("2026-08-20T10:12:00Z"), 8192),
+                UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-20T10:12:00Z"), 8192),
                 &attestor_key,
             )
             .unwrap();
@@ -436,7 +440,8 @@ mod tests {
         }
 
         fn revoke(&self, index: u64) {
-            let mut body = UnsignedStatusList::new(attestor(), dt("2026-08-21T00:00:00Z"), 8192);
+            let mut body =
+                UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-21T00:00:00Z"), 8192);
             body.bits.set(index);
             let list = sign_status_list(body, &self.attestor_key).unwrap();
             self.status.publish(STATUS_URL, list.to_bytes().unwrap());
@@ -535,7 +540,7 @@ mod tests {
         w.repo.replace(&w.att_uri, &att);
         // …and republishes its status list under the new key.
         let list = sign_status_list(
-            UnsignedStatusList::new(attestor(), dt("2026-08-22T00:00:00Z"), 8192),
+            UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-22T00:00:00Z"), 8192),
             &new_key,
         )
         .unwrap();
@@ -615,7 +620,7 @@ mod tests {
         let w = World::new();
         w.status.clear(STATUS_URL);
         let forged = sign_status_list(
-            UnsignedStatusList::new(attestor(), dt("2026-08-25T00:00:00Z"), 8192),
+            UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-25T00:00:00Z"), 8192),
             &key(42),
         )
         .unwrap();
@@ -628,7 +633,7 @@ mod tests {
         let w = World::new();
         w.status.clear(STATUS_URL);
         let tiny = sign_status_list(
-            UnsignedStatusList::new(attestor(), dt("2026-08-25T00:00:00Z"), 8),
+            UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-25T00:00:00Z"), 8),
             &w.attestor_key,
         )
         .unwrap();
@@ -645,12 +650,38 @@ mod tests {
         assert_eq!(reason(w.verdict().await), Reason::Revoked);
         // A stale clear copy republished later changes nothing.
         let stale = sign_status_list(
-            UnsignedStatusList::new(attestor(), dt("2026-08-20T00:00:00Z"), 8192),
+            UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-20T00:00:00Z"), 8192),
             &w.attestor_key,
         )
         .unwrap();
         w.status.publish(STATUS_URL, stale.to_bytes().unwrap());
         assert_eq!(reason(w.verdict().await), Reason::Revoked);
+    }
+
+    #[tokio::test]
+    async fn another_list_of_the_same_attestor_is_not_ours() {
+        // Kit's bit is set in list 1. A mirror serves the attestor's list 2
+        // (clear, newer, validly signed) at list 1's address: it does not
+        // count as list 1, so the revocation stands.
+        let w = World::new();
+        w.revoke(INDEX);
+        let other = sign_status_list(
+            UnsignedStatusList::new(
+                attestor(),
+                "https://attest.example/status/2",
+                dt("2026-08-25T00:00:00Z"),
+                8192,
+            ),
+            &w.attestor_key,
+        )
+        .unwrap();
+        w.status.publish(STATUS_URL, other.to_bytes().unwrap());
+        assert_eq!(reason(w.verdict().await), Reason::Revoked);
+        // And with only list 2 on the mirror, list 1 is unverifiable — never
+        // "not revoked".
+        w.status.clear(STATUS_URL);
+        w.status.publish(STATUS_URL, other.to_bytes().unwrap());
+        assert_eq!(reason(w.verdict().await), Reason::StatusUnverifiable);
     }
 
     #[tokio::test]

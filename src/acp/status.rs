@@ -12,6 +12,10 @@
 //! There is **no `$sig` repository binding** here: a status list is not a
 //! repo record, so there is no repository to bind to. Its domain separation
 //! from an attestation pre-image is the `$type` inside the signed bytes.
+//! What the signed bytes *do* carry is the list's own identifier, `list`:
+//! without it any validly-signed list of an attestor's would satisfy any
+//! `status.list` pointer — the status-list analogue of the transplant the
+//! `$sig` binding closes for attestations (FORKS F39, amended).
 //!
 //! "Newest verifiable copy wins": a verifier gathers every copy it can reach
 //! and keeps the one with the latest `issuedAt` **whose signature verifies**.
@@ -112,6 +116,11 @@ pub struct UnsignedStatusList {
     /// The attestor whose attestations this list covers; its DID document
     /// holds the key that signs it.
     pub attestor: Did,
+    /// This list's identifier. Every attestation it covers carries the same
+    /// string in `status.list`; a verifier matches the two exactly. An
+    /// identifier, not necessarily a fetch location — mirrors may serve the
+    /// artifact from anywhere.
+    pub list: String,
     /// When this version was published. Newest verifiable wins.
     pub issued_at: Datetime,
     /// One bit per attestation; set = revoked.
@@ -119,11 +128,18 @@ pub struct UnsignedStatusList {
 }
 
 impl UnsignedStatusList {
-    /// An all-clear list with room for `capacity_bits` attestations.
-    pub fn new(attestor: Did, issued_at: Datetime, capacity_bits: u64) -> Self {
+    /// An all-clear list named `list`, with room for `capacity_bits`
+    /// attestations.
+    pub fn new(
+        attestor: Did,
+        list: impl Into<String>,
+        issued_at: Datetime,
+        capacity_bits: u64,
+    ) -> Self {
         Self {
             type_: StatusListType,
             attestor,
+            list: list.into(),
             issued_at,
             bits: BitString::with_capacity_bits(capacity_bits),
         }
@@ -184,19 +200,22 @@ pub fn verify_status_list(list: &StatusList, keys: &[VerifyingKey]) -> Result<()
 }
 
 /// From every copy a [`StatusSource`](super::ports::StatusSource) returned,
-/// the one with the latest `issuedAt` **that verifies** against `keys` and
-/// names `attestor`. Undecodable, forged, or foreign copies are skipped.
+/// the one with the latest `issuedAt` **that verifies** against `keys`,
+/// names `attestor`, and names itself `list`. Undecodable, forged, foreign,
+/// or differently-named copies are skipped — a signed copy of one list can
+/// never stand in for another.
 pub fn newest_verifiable(
     candidates: &[Vec<u8>],
     attestor: &Did,
+    list: &str,
     keys: &[VerifyingKey],
 ) -> Option<StatusList> {
     candidates
         .iter()
         .filter_map(|bytes| StatusList::from_bytes(bytes).ok())
-        .filter(|list| &list.body.attestor == attestor)
-        .filter(|list| verify_status_list(list, keys).is_ok())
-        .max_by_key(|list| list.body.issued_at.to_unix())
+        .filter(|l| &l.body.attestor == attestor && l.body.list == list)
+        .filter(|l| verify_status_list(l, keys).is_ok())
+        .max_by_key(|l| l.body.issued_at.to_unix())
 }
 
 #[cfg(test)]
@@ -212,8 +231,10 @@ mod tests {
     fn vk(k: &Secp256k1Keypair) -> VerifyingKey {
         VerifyingKey::from_did_key(&k.did()).unwrap()
     }
+    const LIST: &str = "https://attest.example/status/1";
+
     fn list_at(ts: &str, set: &[u64]) -> UnsignedStatusList {
-        let mut l = UnsignedStatusList::new(attestor(), Datetime::parse(ts).unwrap(), 8192);
+        let mut l = UnsignedStatusList::new(attestor(), LIST, Datetime::parse(ts).unwrap(), 8192);
         for i in set {
             assert!(l.bits.set(*i));
         }
@@ -248,6 +269,36 @@ mod tests {
         // bits is a CBOR byte string: "bits" then 0x59 0x04 0x00 (1024 bytes).
         let pos = bytes.windows(4).position(|w| w == b"bits").unwrap();
         assert_eq!(&bytes[pos + 4..pos + 7], &[0x59, 0x04, 0x00]);
+        // Canonical key order: sig(3) < bits(4) < list(4) < $type(5) <
+        // attestor(8) < issuedAt(8). `list` is inside the signed body.
+        let mut last = 0;
+        for k in ["sig", "bits", "list", "$type", "attestor", "issuedAt"] {
+            let p = bytes
+                .windows(k.len())
+                .position(|w| w == k.as_bytes())
+                .unwrap();
+            assert!(p > last, "{k} out of order");
+            last = p;
+        }
+        let body_bytes = canonical_bytes(&signed.body).unwrap();
+        assert!(body_bytes.windows(LIST.len()).any(|w| w == LIST.as_bytes()));
+    }
+
+    #[test]
+    fn a_list_cannot_stand_in_for_another() {
+        // The attestor runs two lists. A copy of list B — validly signed, same
+        // attestor, newer — served where list A is expected, is not list A.
+        let k = key(27);
+        let a = sign_status_list(list_at("2026-08-20T00:00:00Z", &[4127]), &k).unwrap();
+        let mut b_body = list_at("2026-08-21T00:00:00Z", &[]);
+        b_body.list = "https://attest.example/status/2".into();
+        let b = sign_status_list(b_body, &k).unwrap();
+        let copies = [b.to_bytes().unwrap()];
+        assert!(newest_verifiable(&copies, &attestor(), LIST, &[vk(&k)]).is_none());
+        let copies = [a.to_bytes().unwrap(), b.to_bytes().unwrap()];
+        let w = newest_verifiable(&copies, &attestor(), LIST, &[vk(&k)]).unwrap();
+        assert_eq!(w, a);
+        assert_eq!(w.is_set(4127), Some(true));
     }
 
     #[test]
@@ -295,13 +346,13 @@ mod tests {
             .map(|l| l.to_bytes().unwrap())
             .chain(std::iter::once(b"garbage".to_vec()))
             .collect();
-        let winner = newest_verifiable(&copies, &attestor(), &keys).unwrap();
+        let winner = newest_verifiable(&copies, &attestor(), LIST, &keys).unwrap();
         assert_eq!(winner, new);
         assert_eq!(winner.is_set(4127), Some(true));
-        assert!(newest_verifiable(&[], &attestor(), &keys).is_none());
+        assert!(newest_verifiable(&[], &attestor(), LIST, &keys).is_none());
         // Keys decide: under the forger's key, the forger's copy is the one that verifies.
         assert_eq!(
-            newest_verifiable(&copies, &attestor(), &[vk(&forger)]).unwrap(),
+            newest_verifiable(&copies, &attestor(), LIST, &[vk(&forger)]).unwrap(),
             forged
         );
     }
