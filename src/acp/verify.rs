@@ -70,13 +70,10 @@ pub enum Reason {
     StatusUnavailable,
     /// Copies were reachable but none verified under the attestor's keys — step 7.
     StatusUnverifiable,
-    /// The newest verifiable status list was issued before the attestation
-    /// was — it cannot carry this attestation's bit — step 7.
-    StatusPredatesAttestation,
     /// The newest verifiable status list is older than the policy's
     /// [`max_status_age_secs`](super::policy::TrustPolicy::max_status_age_secs)
-    /// — step 7. Not "not revoked": an adversary withholding fresh copies
-    /// lands here, never on in-force.
+    /// — step 7. Only reachable when a policy sets that bound; with it, an
+    /// adversary withholding fresh copies lands here, never on in-force.
     StatusStale,
     /// The status list does not cover `status.index` — step 7.
     StatusIndexOutOfRange,
@@ -245,9 +242,6 @@ impl Verifier<'_> {
                 not_in_force!(Reason::StatusUnverifiable);
             };
             let list_issued = list.body.issued_at.to_unix();
-            if list_issued < issued {
-                not_in_force!(Reason::StatusPredatesAttestation);
-            }
             if let Some(max) = self.policy.max_status_age_secs()
                 && now_s - list_issued > max
             {
@@ -771,9 +765,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_list_from_before_the_attestation_is_not_evidence() {
-        // Only a copy older than the attestation itself is reachable: it
-        // cannot know about this attestation, so it cannot clear it.
+    async fn status_list_published_before_issuance_still_counts() {
+        // The kill-test shape: the attestor pre-allocates a list, issues
+        // attestations against it, then dies. The only copy anywhere is
+        // older than the attestation — and it is the last word, so it is
+        // evidence. (A floor here would strand every post-publish vouch.)
         let w = World::new();
         w.status.clear(STATUS_URL);
         let older = sign_status_list(
@@ -782,7 +778,7 @@ mod tests {
         )
         .unwrap();
         w.status.publish(STATUS_URL, older.to_bytes().unwrap());
-        assert_eq!(reason(w.verdict().await), Reason::StatusPredatesAttestation);
+        assert!(w.verdict().await.is_in_force());
     }
 
     #[tokio::test]
@@ -801,7 +797,8 @@ mod tests {
         w.status.publish(STATUS_URL, fresh.to_bytes().unwrap());
         assert!(w.verdict().await.is_in_force());
         // Without the bound, the verifier takes what it can get (the spec's
-        // "newest verifiable wins"); high-stakes verifiers set the bound.
+        // "newest verifiable wins"); only a policy that sets the bound is
+        // protected from withholding.
         w.policy.max_status_age_secs = None;
         w.status.clear(STATUS_URL);
         w.status.publish(

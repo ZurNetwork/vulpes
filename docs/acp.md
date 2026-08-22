@@ -339,10 +339,12 @@ To verify an attestation, a verifier:
    hosts, no IP literals) and SHOULD route the fetch through an egress
    guard. The trust decision precedes the fetch precisely so that an
    untrusted attestor cannot cause a verifier to make a request.
-   A list issued before the attestation's `issuedAt` cannot carry its bit
-   and is not evidence; verifiers with high stakes additionally bound the
-   list's age (§Stale-status attacks) — a stale copy is *not checkable*,
-   never "not revoked".
+   The newest verifiable copy wins however old it is — a list published
+   before the attestation was issued is still the attestor's last word,
+   and must stay checkable after the attestor dies (§The kill test).
+   Verifiers with high stakes bound the list's age (§Stale-status
+   attacks): past the bound a copy is *not checkable*, never "not
+   revoked".
 
 To verify a mutual claim: fetch both halves from both repos, check each
 names the other as `counterpart` (and `counterpartRecord`, when present,

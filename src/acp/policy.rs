@@ -60,12 +60,14 @@ pub trait TrustPolicy: Send + Sync {
     fn decide(&self, ctx: &PolicyContext<'_>) -> Decision;
 
     /// The oldest status list this verifier will act on, in seconds since
-    /// its `issuedAt`. `None` (the default) bounds nothing beyond the
-    /// structural floor the verifier always applies — a list published
-    /// before the attestation was cannot carry its bit. High-stakes
-    /// verifiers set this: with it, an adversary who can withhold fresh
-    /// copies can only push a verdict to *not checkable*, never to "not
-    /// revoked" (`docs/acp.md` §Stale-status attacks).
+    /// its `issuedAt`. `None` (the default) bounds nothing: the newest
+    /// verifiable copy wins however old it is, and an adversary who can
+    /// withhold fresh copies can pin a stale all-clear. High-stakes
+    /// verifiers set this: with it, withholding can only push a verdict to
+    /// *not checkable*, never to "not revoked" (`docs/acp.md`
+    /// §Stale-status attacks). There is no structural floor — a list
+    /// published before an attestation is still that attestor's last word
+    /// after it dies (the kill test).
     fn max_status_age_secs(&self) -> Option<i64> {
         None
     }
@@ -75,9 +77,11 @@ pub trait TrustPolicy: Send + Sync {
 ///
 /// Every field `None` means "no constraint". `Default` and
 /// [`BasicPolicy::permissive`] are the same thing: any attestor, any
-/// method, **revocation checked** — the std-trait entry point is never the
-/// more dangerous one, so `BasicPolicy { trusted_attestors: …,
-/// ..Default::default() }` does not silently disable step 7.
+/// method, **revocation checked when a pointer is present** (status age
+/// bounded only when `max_status_age_secs` is set) — the std-trait entry
+/// point is never the more dangerous one, so `BasicPolicy {
+/// trusted_attestors: …, ..Default::default() }` does not silently disable
+/// step 7.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasicPolicy {
     /// Attestors this verifier accepts. `None` = any.

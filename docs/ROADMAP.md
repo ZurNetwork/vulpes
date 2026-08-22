@@ -39,8 +39,7 @@ infrastructure down and every issued vouch still verifies.
       judgment before the status fetch + `StatusUri` (SSRF), signed `list`
       identifier on status lists, senior-rotation-key ownership rule
       (F40 amended — two residuals recorded there), claim-in-subject-repo,
-      canonical-bytes check at step 4, status-list age floor + policy
-      bound, `did:key` panic guard, calendar-checked `Datetime`,
+      canonical-bytes check at step 4, policy-set status-age bound, `did:key` panic guard, calendar-checked `Datetime`,
       order-independent counterpart search, `BasicPolicy::default()`
       checks revocation.
 - [ ] **The first attestor** — email challenge → sign → deliver; Kit's story
