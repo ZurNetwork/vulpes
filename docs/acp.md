@@ -250,14 +250,17 @@ record net.got-paws.acp.statusList {
 There is no `$sig` repository binding: a status list is not a repo record,
 so there is no repository to bind to; its domain separation from an
 attestation pre-image is the `$type` inside the signed bytes. A verifier
-takes every copy it can reach (bounded: at most 16 copies, none larger
-than 1 MiB — a mirror must not be able to make a verifier allocate
-without limit), discards those that do not decode, do not name the
-expected attestor **and the expected `list`**, are dated further ahead of
-the verifier's clock than its skew tolerance (a future-dated list must
-not outrank every genuine one until then), or do not verify under the
-attestor's current keys, and keeps the newest by `issuedAt` at full
-precision, ties broken on the canonical bytes.
+takes every copy it can reach, discards those larger than 1 MiB, that do
+not decode, do not name the expected attestor **and the expected `list`**,
+or are dated further ahead of the verifier's clock than its skew
+tolerance (a future-dated list must not outrank every genuine one until
+then) — all cheap checks an adversary cannot amplify — then orders the
+survivors newest-first by `issuedAt` at full precision (ties broken on the
+canonical bytes) and verifies signatures in that order, keeping the first
+that verifies under the attestor's current keys. The bound is on
+**signature verifications** (at most 16), never on arrival position: a
+mirror cannot bury the genuine newest copy under junk, and it cannot make
+a verifier do unbounded work either.
 `list` is an identifier, not necessarily a fetch location: mirrors may serve
 a list from any address, but the identifier the attestor signed is the one
 an attestation must point at. Identity-over-location is what lets mirrors
@@ -348,7 +351,10 @@ To verify an attestation, a verifier:
    before fetching — `https` with a public DNS host: no IP literal in any
    spelling (including hex, octal, decimal and trailing-dot forms), no
    loopback, link-local or private-range host, no special-use name
-   (`localhost`, `.local`, `.internal`, `.onion`, `.arpa`, …) — and SHOULD
+   (`localhost`, `.local`, `.internal`, `.onion`, `.arpa`, `.localdomain`,
+   …), at least two labels (a bare name resolves through the search list
+   into the verifier's own network); an `at://` list is addressed by DID,
+   never by handle — and SHOULD
    route the fetch through an egress guard. A list the verifier will not
    fetch is *not checkable*, never malformed and never "not revoked". The
    trust decision precedes the fetch precisely so that an untrusted

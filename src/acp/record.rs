@@ -515,10 +515,18 @@ impl StrongRef {
 #[serde(transparent)]
 pub struct StatusUri(String);
 
+/// Names that reach loopback by convention rather than by the atproto
+/// handle spec's reserved list — `localhost.localdomain` is the stock
+/// `/etc/hosts` alias on most Linux distributions.
+const LOCAL_ONLY_TLDS: &[&str] = &["localdomain"];
+
 impl StatusUri {
-    /// Accept `https://<authority>/…` or a well-formed `at://` URI; reject
-    /// whitespace, control characters, and userinfo. Syntax only — see
-    /// [`fetchable`](Self::fetchable) for the pre-fetch rule.
+    /// Accept `https://<authority>/…` or a well-formed `at://` URI whose
+    /// authority is a DID; reject whitespace, control characters, and
+    /// userinfo. A handle authority is refused because handles are
+    /// reassignable (an identifier must not drift) and because resolving
+    /// one is a fetch the verifier never agreed to make. Syntax only
+    /// otherwise — see [`fetchable`](Self::fetchable) for the pre-fetch rule.
     pub fn parse(raw: &str) -> Result<Self, CodecError> {
         let err = |detail: &str| CodecError::InvalidField {
             field: "status.list",
@@ -528,7 +536,10 @@ impl StatusUri {
             return Err(err("contains whitespace or control characters"));
         }
         if raw.starts_with("at://") {
-            AtUri::parse(raw)?;
+            let uri = AtUri::parse(raw)?;
+            if !uri.authority().starts_with("did:") {
+                return Err(err("an at:// list must be addressed by DID, not handle"));
+            }
             return Ok(Self(raw.to_string()));
         }
         let Some(authority) = Self::https_authority(raw) else {
@@ -565,7 +576,11 @@ impl StatusUri {
     ///   an ASCII letter, which no numeric form does;
     /// - no special-use name (`localhost`, `*.local`, `*.internal`,
     ///   `*.onion`, `*.arpa`, `*.test`, `*.example`, `*.invalid`, …):
-    ///   the same table the handle validator uses;
+    ///   the handle validator's table plus `localdomain`, the
+    ///   `/etc/hosts` loopback alias the atproto spec has no reason to list;
+    /// - at least two labels — a bare name (`https://metadata/`) resolves
+    ///   through the resolver's search list straight into whatever network
+    ///   the verifier sits in;
     /// - DNS label charset only.
     ///
     /// Loopback, link-local and private ranges all fall out of the first
@@ -602,11 +617,13 @@ impl StatusUri {
         {
             return Err(err("host must be a DNS name"));
         }
-        let tld = host.rsplit('.').next().unwrap_or("");
+        let Some((_, tld)) = host.rsplit_once('.') else {
+            return Err(err("host must have at least two labels"));
+        };
         if !tld.starts_with(|c: char| c.is_ascii_alphabetic()) {
             return Err(err("IP literals are not allowed"));
         }
-        if crate::handle::RESERVED_TLDS.contains(&tld) {
+        if crate::handle::RESERVED_TLDS.contains(&tld) || LOCAL_ONLY_TLDS.contains(&tld) {
             return Err(err("special-use names are not fetched"));
         }
         Ok(())
@@ -1416,6 +1433,10 @@ mod tests {
             "https://attest.got-paws.net/\tstatus",
             "at://",
             "at://did:plc:a b/c",
+            // handle authorities: reassignable, and resolving one is a fetch
+            "at://attest.got-paws.net/net.got-paws.acp.statusList/1",
+            "at://localhost/net.got-paws.acp.statusList/1",
+            "at://internal.svc:8080/net.got-paws.acp.statusList/1",
         ] {
             assert!(StatusUri::parse(bad).is_err(), "{bad} accepted");
         }
@@ -1484,6 +1505,13 @@ mod tests {
             "https://x.test/",
             "https://x.example/",
             "https://x.invalid/",
+            "https://localhost.localdomain/",
+            "https://LOCALHOST.LocalDomain./",
+            // single-label names resolve through the search list
+            "https://a/",
+            "https://metadata/",
+            "https://metadata./",
+            "https://intranet:8443/x",
             // not a DNS name
             "https://attest_example/",
             "https://attest..example/",
