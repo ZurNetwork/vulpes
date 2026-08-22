@@ -279,7 +279,11 @@ impl Verifier<'_> {
             not_in_force!(Reason::UnknownKind);
         };
 
-        // The other half: by its declared address, else by search.
+        // The other half: by its declared address, else by search. The
+        // search accepts the first half that matches *completely* (kind,
+        // counterpart, and — when it declares one — counterpart record);
+        // a half that merely points elsewhere does not end the search, so
+        // the verdict never depends on the order a PDS lists records in.
         let other = match &a.counterpart_record {
             Some(uri) => match self.fetch::<Relationship>(uri).await? {
                 None => None,
@@ -288,18 +292,31 @@ impl Verifier<'_> {
             },
             None => {
                 let mut found = None;
+                let mut near_miss = false;
                 for fetched in self
                     .repo
                     .list_records(&a.counterpart, RELATIONSHIP_TYPE)
                     .await?
                 {
-                    if let Ok(r) = fetched.decode::<Relationship>()
-                        && r.relationship == expected_kind
-                        && r.counterpart == a_fetched.repository
-                    {
-                        found = Some((fetched, r));
-                        break;
+                    let r = match fetched.decode::<Relationship>() {
+                        Ok(r) => r,
+                        Err(err) => {
+                            not_in_force!(Reason::Malformed(format!("{}: {err}", fetched.uri)))
+                        }
+                    };
+                    if r.relationship != expected_kind || r.counterpart != a_fetched.repository {
+                        continue;
                     }
+                    match &r.counterpart_record {
+                        Some(declared) if declared != &a_fetched.uri => near_miss = true,
+                        _ => {
+                            found = Some((fetched, r));
+                            break;
+                        }
+                    }
+                }
+                if found.is_none() && near_miss {
+                    not_in_force!(Reason::CounterpartMismatch);
                 }
                 found
             }
@@ -1228,6 +1245,36 @@ mod tests {
             Relationship::new(RelKind::OwnedBy, kit(), dt("2026-08-20T11:00:00Z"), None).unwrap();
         p.repo.replace(&p.fox_half, &owned_by);
         assert!(p.verdict_from(&p.kit_half).await.is_in_force());
+    }
+
+    #[tokio::test]
+    async fn search_is_not_order_dependent() {
+        // Fox's repo holds a stale half (pointing at a record Kit deleted)
+        // listed *before* the live one. The live one must be found.
+        let p = Pair::new();
+        let owns =
+            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
+        p.repo.replace(&p.kit_half, &owns); // no counterpartRecord → search
+        let mut stale =
+            Relationship::new(RelKind::OwnedBy, kit(), dt("2026-08-19T11:00:00Z"), None).unwrap();
+        stale.counterpart_record = Some(AtUri::record(&kit(), RELATIONSHIP_TYPE, "gone"));
+        p.repo.put(&fox(), RELATIONSHIP_TYPE, "aa00", &stale); // sorts first
+        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
+        // With only the stale half present, it is a mismatch, not "missing".
+        p.repo.delete(&p.fox_half);
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::CounterpartMismatch
+        );
+        // A half that does not decode is malformed, on either path.
+        p.repo.replace_bytes(
+            &AtUri::record(&fox(), RELATIONSHIP_TYPE, "aa00"),
+            b"\xa0".to_vec(),
+        );
+        assert!(matches!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::Malformed(_)
+        ));
     }
 
     #[tokio::test]
