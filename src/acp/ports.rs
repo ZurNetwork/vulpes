@@ -12,46 +12,15 @@
 //! verification reads public, mirrorable infrastructure only, which is how
 //! the kill test passes by construction.
 
-use std::error::Error as StdError;
-use std::fmt;
-
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 
 use crate::Did;
+use crate::error::opaque_error;
 
 use super::error::CodecError;
 use super::record::{AtUri, RecordCid, StatusUri, from_canonical_bytes};
 use super::sign::VerifyingKey;
-
-type BoxError = Box<dyn StdError + Send + Sync + 'static>;
-
-macro_rules! opaque_error {
-    ($(#[$doc:meta])* $name:ident, $prefix:literal) => {
-        $(#[$doc])*
-        #[derive(Debug)]
-        pub struct $name(BoxError);
-
-        impl $name {
-            /// Wrap any thread-safe error.
-            pub fn new(source: impl Into<BoxError>) -> Self {
-                Self(source.into())
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, concat!($prefix, ": {}"), self.0)
-            }
-        }
-
-        impl StdError for $name {
-            fn source(&self) -> Option<&(dyn StdError + 'static)> {
-                Some(self.0.as_ref())
-            }
-        }
-    };
-}
 
 opaque_error!(
     /// A [`RepoReader`] failed — transport, auth, a malformed response. Not
@@ -187,6 +156,8 @@ pub trait StatusSource: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error as _;
+
     use super::*;
 
     #[test]

@@ -2,7 +2,19 @@
 //!
 //! Foreign errors (the DAG-CBOR codec, `atrium-crypto`) are stringified into
 //! owned variants rather than held as foreign types, so this crate's public
-//! error surface does not change when a dependency's does.
+//! error surface does not change when a dependency's does. The one **open**
+//! error here is [`SignerError`]: a [`Signer`](super::sign::Signer) is the
+//! caller's (an HSM, a remote service), so its failure is wrapped opaque with
+//! the source chain kept, like the ports' errors.
+
+use crate::error::opaque_error;
+
+opaque_error!(
+    /// A [`Signer`](super::sign::Signer) refused — bad key material, an HSM
+    /// saying no, a remote signer unreachable.
+    SignerError,
+    "signer error"
+);
 
 /// A record could not be encoded, decoded, or was rejected as malformed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -33,15 +45,15 @@ pub enum CodecError {
     },
 }
 
-/// Signing an attestation failed.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+/// Signing an attestation or status list failed.
+#[derive(Debug, thiserror::Error)]
 pub enum SignError {
     /// The pre-image could not be built.
     #[error(transparent)]
     Codec(#[from] CodecError),
-    /// The signing primitive refused (bad key material, RNG failure).
-    #[error("signing failed: {0}")]
-    Crypto(String),
+    /// The [`Signer`](super::sign::Signer) refused.
+    #[error(transparent)]
+    Crypto(#[from] SignerError),
 }
 
 /// An attestation signature did not verify.

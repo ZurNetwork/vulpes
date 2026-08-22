@@ -34,12 +34,12 @@
 
 use atrium_crypto::Algorithm;
 use atrium_crypto::keypair::{P256Keypair, Secp256k1Keypair};
-use atrium_crypto::verify::Verifier;
+use atrium_crypto::verify::Verifier as CryptoVerifier;
 use serde::Serialize;
 
 use crate::Did;
 
-use super::error::{CodecError, SigError, SignError};
+use super::error::{CodecError, SigError, SignError, SignerError};
 use super::record::{Attestation, RecordCid, Sig, UnsignedAttestation, canonical_bytes};
 
 /// The `$type` of the injected binding object. Minted under the ACP
@@ -126,16 +126,17 @@ impl SigAlg {
 pub trait Signer {
     /// The algorithm the signature will verify under.
     fn alg(&self) -> SigAlg;
-    /// Sign `msg`. Errors are stringified into [`SignError::Crypto`].
-    fn sign_bytes(&self, msg: &[u8]) -> Result<Vec<u8>, String>;
+    /// Sign `msg`. The error is the implementation's own, wrapped opaque
+    /// with its source chain intact (an HSM's reason survives to the log).
+    fn sign_bytes(&self, msg: &[u8]) -> Result<Vec<u8>, SignerError>;
 }
 
 impl Signer for Secp256k1Keypair {
     fn alg(&self) -> SigAlg {
         SigAlg::Es256k
     }
-    fn sign_bytes(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
-        self.sign(msg).map_err(|e| e.to_string())
+    fn sign_bytes(&self, msg: &[u8]) -> Result<Vec<u8>, SignerError> {
+        self.sign(msg).map_err(SignerError::new)
     }
 }
 
@@ -143,8 +144,8 @@ impl Signer for P256Keypair {
     fn alg(&self) -> SigAlg {
         SigAlg::Es256
     }
-    fn sign_bytes(&self, msg: &[u8]) -> Result<Vec<u8>, String> {
-        self.sign(msg).map_err(|e| e.to_string())
+    fn sign_bytes(&self, msg: &[u8]) -> Result<Vec<u8>, SignerError> {
+        self.sign(msg).map_err(SignerError::new)
     }
 }
 
@@ -159,7 +160,7 @@ pub fn sign(
     key: &impl Signer,
 ) -> Result<Attestation, SignError> {
     let cid = preimage_cid(&body, repo)?;
-    let sig = key.sign_bytes(cid.as_bytes()).map_err(SignError::Crypto)?;
+    let sig = key.sign_bytes(cid.as_bytes())?;
     Ok(body.with_sig(Sig(sig)))
 }
 
@@ -247,7 +248,7 @@ pub(crate) fn verify_cid(
         )));
     }
     // Low-S only: `allow_malleable = false` rejects high-S and DER forms.
-    let verifier = Verifier::new(false);
+    let verifier = CryptoVerifier::new(false);
     let verified = keys.iter().any(|key| {
         verifier
             .verify(key.alg.atrium(), &key.sec1, cid.as_bytes(), sig)
@@ -451,7 +452,7 @@ mod tests {
             ),
             (
                 "claim.cid",
-                Box::new(|a| a.body.claim.cid.replace_range(..1, "z")),
+                Box::new(|a| a.body.claim.cid = RecordCid::of(b"another claim")),
             ),
             ("attestor", Box::new(|a| a.body.attestor = mallory())),
             ("subject", Box::new(|a| a.body.subject = mallory())),

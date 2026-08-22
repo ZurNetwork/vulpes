@@ -30,32 +30,14 @@ use crate::Did;
 
 use super::error::{SigError, SignError};
 use super::record::{
-    Datetime, RecordCid, STATUS_LIST_TYPE, Sig, canonical_bytes, from_canonical_bytes,
+    Datetime, RecordCid, STATUS_LIST_TYPE, Sig, canonical_bytes, from_canonical_bytes, type_marker,
 };
 use super::sign::{Signer, VerifyingKey, verify_cid};
 
-/// The `$type` marker of a status list.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct StatusListType;
-
-impl Serialize for StatusListType {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(STATUS_LIST_TYPE)
-    }
-}
-
-impl<'de> Deserialize<'de> for StatusListType {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let raw = String::deserialize(d)?;
-        if raw == STATUS_LIST_TYPE {
-            Ok(Self)
-        } else {
-            Err(serde::de::Error::custom(format!(
-                "expected $type {STATUS_LIST_TYPE:?}, found {raw:?}"
-            )))
-        }
-    }
-}
+type_marker!(
+    /// The `$type` of a [`StatusList`]: serializes as [`STATUS_LIST_TYPE`].
+    StatusListType = STATUS_LIST_TYPE
+);
 
 /// A packed bitstring, LSB-first within each byte (bit `i` is byte `i / 8`,
 /// mask `1 << (i % 8)`). A CBOR byte string on the wire.
@@ -186,7 +168,7 @@ pub fn sign_status_list(
     key: &impl Signer,
 ) -> Result<StatusList, SignError> {
     let cid = body.cid()?;
-    let sig = key.sign_bytes(cid.as_bytes()).map_err(SignError::Crypto)?;
+    let sig = key.sign_bytes(cid.as_bytes())?;
     Ok(StatusList {
         body,
         sig: Sig(sig),

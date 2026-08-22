@@ -13,81 +13,78 @@
 //! so `{:#}`-style chains and `anyhow` context still read end to end.
 
 use std::error::Error as StdError;
-use std::fmt;
 
-/// A boxed, thread-safe error — what both wrappers carry.
-type BoxError = Box<dyn StdError + Send + Sync>;
+/// A boxed, thread-safe error — what every opaque wrapper carries.
+pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
 
-/// A failure inside a storage implementation ([`KeyStore`](crate::KeyStore),
-/// [`PlcOperationLog`](crate::PlcOperationLog),
-/// [`OAuthStateStore`](crate::OAuthStateStore)).
-///
-/// Deliberately opaque: vulpes never branches on *why* a store failed, only on
-/// whether it did. The one behavioural contract callers rely on is that a store
-/// error is **not** "absent" — a missing row is `Ok(None)`, a broken database is
-/// `Err`. Conflating them would let a read failure read as "no session"
-/// (fail-open); keeping them apart is what makes the OAuth and custody paths
-/// fail closed.
-///
-/// ```
-/// # use vulpes::StorageError;
-/// let err = StorageError::new(std::io::Error::other("disk on fire"));
-/// assert!(err.to_string().contains("disk on fire"));
-/// ```
-#[derive(Debug)]
-pub struct StorageError(BoxError);
+/// Define an opaque error wrapper: a newtype over [`BoxError`] with `new`,
+/// a prefixed `Display`, and the wrapped error preserved as `source`. Every
+/// "the implementation is the caller's" error in the crate is one of these
+/// (FORKS F1), so the shape is written once.
+macro_rules! opaque_error {
+    ($(#[$doc:meta])* $name:ident, $prefix:literal) => {
+        $(#[$doc])*
+        #[derive(Debug)]
+        pub struct $name($crate::error::BoxError);
 
-impl StorageError {
-    /// Wrap any thread-safe error as a storage failure. `anyhow::Error`,
-    /// `sqlx::Error`, `std::io::Error` and `String` all convert.
-    pub fn new(source: impl Into<BoxError>) -> Self {
-        Self(source.into())
-    }
+        impl $name {
+            /// Wrap any thread-safe error. `anyhow::Error`, `sqlx::Error`,
+            /// `std::io::Error` and `String` all convert.
+            pub fn new(source: impl Into<$crate::error::BoxError>) -> Self {
+                Self(source.into())
+            }
+        }
+
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                write!(f, concat!($prefix, ": {}"), self.0)
+            }
+        }
+
+        impl ::std::error::Error for $name {
+            fn source(&self) -> Option<&(dyn ::std::error::Error + 'static)> {
+                Some(self.0.as_ref())
+            }
+        }
+    };
 }
+pub(crate) use opaque_error;
 
-impl fmt::Display for StorageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "storage error: {}", self.0)
-    }
-}
-
-impl StdError for StorageError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
+opaque_error!(
+    /// A failure inside a storage implementation ([`KeyStore`](crate::KeyStore),
+    /// [`PlcOperationLog`](crate::PlcOperationLog),
+    /// [`OAuthStateStore`](crate::OAuthStateStore)).
+    ///
+    /// Deliberately opaque: vulpes never branches on *why* a store failed, only on
+    /// whether it did. The one behavioural contract callers rely on is that a store
+    /// error is **not** "absent" — a missing row is `Ok(None)`, a broken database is
+    /// `Err`. Conflating them would let a read failure read as "no session"
+    /// (fail-open); keeping them apart is what makes the OAuth and custody paths
+    /// fail closed.
+    ///
+    /// ```
+    /// # use vulpes::StorageError;
+    /// let err = StorageError::new(std::io::Error::other("disk on fire"));
+    /// assert!(err.to_string().contains("disk on fire"));
+    /// ```
+    StorageError,
+    "storage error"
+);
 
 /// The result a storage trait method returns.
 pub type StorageResult<T> = Result<T, StorageError>;
 
-/// A failure submitting an operation to a PLC directory
-/// ([`PlcDirectory`](crate::PlcDirectory)).
-///
-/// Opaque for the same reason as [`StorageError`]: the transport is the
-/// implementation's business. Every directory failure is treated as
-/// **retryable** by the minter — the operation is deterministic, so re-signing
-/// and re-submitting it is safe (see [`Minter`](crate::Minter)).
-#[derive(Debug)]
-pub struct DirectoryError(BoxError);
-
-impl DirectoryError {
-    /// Wrap any thread-safe error as a directory-submission failure.
-    pub fn new(source: impl Into<BoxError>) -> Self {
-        Self(source.into())
-    }
-}
-
-impl fmt::Display for DirectoryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PLC directory error: {}", self.0)
-    }
-}
-
-impl StdError for DirectoryError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
+opaque_error!(
+    /// A failure submitting an operation to a PLC directory
+    /// ([`PlcDirectory`](crate::PlcDirectory)).
+    ///
+    /// Opaque for the same reason as [`StorageError`]: the transport is the
+    /// implementation's business. Every directory failure is treated as
+    /// **retryable** by the minter — the operation is deterministic, so re-signing
+    /// and re-submitting it is safe (see [`Minter`](crate::Minter)).
+    DirectoryError,
+    "PLC directory error"
+);
 
 /// The result a [`PlcDirectory`](crate::PlcDirectory) method returns.
 pub type DirectoryResult<T> = Result<T, DirectoryError>;

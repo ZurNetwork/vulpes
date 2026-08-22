@@ -16,7 +16,8 @@
 //! - [`ports`] — the I/O seams a verifier needs ([`RepoReader`],
 //!   [`DidResolver`], [`StatusSource`]); implemented elsewhere, faked in tests.
 //! - [`status`] — the signed, mirrorable status-list artifact.
-//! - [`policy`] — [`TrustPolicy`], the verifier's own judgment (step 7).
+//! - [`policy`] — [`TrustPolicy`], the verifier's own judgment (step 6,
+//!   ahead of the status fetch it gates).
 //! - [`verify`] — [`Verifier::verify_attestation`] (the spec's seven steps)
 //!   and [`Verifier::verify_relationship`].
 //! - [`error`] — one closed error enum per concern.
@@ -44,21 +45,23 @@ pub mod verify;
 #[cfg(test)]
 pub(crate) mod memory;
 
-pub use error::{CodecError, SigError, SignError, VerifyError};
+pub use error::{CodecError, SigError, SignError, SignerError, VerifyError};
 pub use policy::{BasicPolicy, Decision, PolicyContext, TrustPolicy};
 pub use ports::{
     DidResolver, FetchedRecord, KeyMaterial, RepoError, RepoReader, ResolveError, StatusFetchError,
     StatusSource,
 };
 pub use record::{
-    AtUri, Attestation, Claim, ClaimKind, Datetime, RecordCid, RelKind, Relationship, Sig,
-    StatusRef, StrongRef, UnsignedAttestation, canonical_bytes,
+    ATTESTATION_TYPE, AtUri, Attestation, CLAIM_TYPE, Claim, ClaimKind, Datetime,
+    RELATIONSHIP_TYPE, RecordCid, RelKind, Relationship, STATUS_LIST_TYPE, Sig, StatusRef,
+    StatusUri, StrongRef, UnsignedAttestation, canonical_bytes, check_opaque, from_canonical_bytes,
 };
 pub use sign::{
     Repository, SIG_BINDING_TYPE, SigAlg, Signer, VerifyingKey, preimage, preimage_cid, sign,
     verify_sig,
 };
 pub use status::{
-    StatusList, UnsignedStatusList, newest_verifiable, sign_status_list, verify_status_list,
+    BitString, StatusList, StatusListType, UnsignedStatusList, newest_verifiable, sign_status_list,
+    verify_status_list,
 };
-pub use verify::{Reason, Verdict, Verifier};
+pub use verify::{CLOCK_SKEW_SECS, Reason, Verdict, Verifier};

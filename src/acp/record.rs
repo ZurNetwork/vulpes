@@ -16,10 +16,10 @@
 //!   floats, no `null` anywhere (the atproto data model).
 
 use std::fmt;
+use std::str::FromStr;
 
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::Did;
 
@@ -52,21 +52,40 @@ pub fn from_canonical_bytes<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Resul
 /// A CIDv1 (`dag-cbor`, `sha2-256`) of some canonical bytes — the content
 /// identity a strongRef points at, and the thing an attestor signs.
 ///
-/// Same construction as `plc::cid`, kept as bytes here because the signature
-/// goes over the raw CID bytes (the CID-First Attestation construction), and
-/// only the strongRef renders it as a string.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// The same construction as a PLC operation's CID ([`crate::plc::cid_bytes`]),
+/// kept as bytes here because the signature goes over the raw CID bytes (the
+/// CID-First Attestation construction). On the wire — in a strongRef — it is
+/// the multibase text form, `bafyrei…`, exactly as `com.atproto.repo.strongRef`
+/// defines it (FORKS F37), so it serializes as a string and parses from one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RecordCid([u8; 36]);
 
 impl RecordCid {
     /// Hash `canonical` (already DAG-CBOR) into its CID.
     pub fn of(canonical: &[u8]) -> Self {
-        let hash = Sha256::digest(canonical);
-        let mut bytes = [0u8; 36];
-        // CIDv1 (0x01), dag-cbor (0x71), multihash sha2-256 (0x12) of length 0x20.
-        bytes[..4].copy_from_slice(&[0x01, 0x71, 0x12, 0x20]);
-        bytes[4..].copy_from_slice(&hash);
-        Self(bytes)
+        Self(crate::plc::cid_bytes(canonical))
+    }
+
+    /// Parse the multibase text form (`bafyrei…`); only the CIDv1 dag-cbor
+    /// sha2-256 shape this crate produces is accepted.
+    pub fn parse(raw: &str) -> Result<Self, CodecError> {
+        let err = |detail: &str| CodecError::InvalidField {
+            field: "cid",
+            detail: detail.to_string(),
+        };
+        let body = raw
+            .strip_prefix('b')
+            .ok_or_else(|| err("expected multibase base32 (`b…`)"))?;
+        let decoded = data_encoding::BASE32_NOPAD
+            .decode(body.to_ascii_uppercase().as_bytes())
+            .map_err(|e| err(&e.to_string()))?;
+        let bytes: [u8; 36] = decoded
+            .try_into()
+            .map_err(|_| err("expected 36 bytes (CIDv1 + sha2-256 multihash)"))?;
+        if bytes[..4] != [0x01, 0x71, 0x12, 0x20] {
+            return Err(err("expected CIDv1 dag-cbor sha2-256"));
+        }
+        Ok(Self(bytes))
     }
 
     /// The raw CID bytes (36: 4-byte prefix + 32-byte digest).
@@ -78,11 +97,40 @@ impl RecordCid {
 impl fmt::Display for RecordCid {
     /// multibase `b` (base32 lowercase, no padding): `bafyrei…`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "b{}",
-            data_encoding::BASE32_NOPAD.encode(&self.0).to_lowercase()
-        )
+        f.write_str(&crate::plc::cid_string(&self.0))
+    }
+}
+
+impl FromStr for RecordCid {
+    type Err = CodecError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl TryFrom<&str> for RecordCid {
+    type Error = CodecError;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Self::parse(s)
+    }
+}
+
+impl TryFrom<String> for RecordCid {
+    type Error = CodecError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::parse(&s)
+    }
+}
+
+impl Serialize for RecordCid {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for RecordCid {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Self::parse(&String::deserialize(d)?).map_err(de::Error::custom)
     }
 }
 
@@ -100,19 +148,19 @@ macro_rules! type_marker {
         #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
         pub struct $name;
 
-        impl Serialize for $name {
-            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        impl ::serde::Serialize for $name {
+            fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
                 s.serialize_str($nsid)
             }
         }
 
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-                let raw = String::deserialize(d)?;
+        impl<'de> ::serde::Deserialize<'de> for $name {
+            fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                let raw = <String as ::serde::Deserialize>::deserialize(d)?;
                 if raw == $nsid {
                     Ok(Self)
                 } else {
-                    Err(de::Error::custom(format!(
+                    Err(<D::Error as ::serde::de::Error>::custom(format!(
                         "expected $type {:?}, found {:?}",
                         $nsid, raw
                     )))
@@ -121,6 +169,8 @@ macro_rules! type_marker {
         }
     };
 }
+
+pub(crate) use type_marker;
 
 type_marker!(
     /// The `$type` of a [`Claim`]: serializes as [`CLAIM_TYPE`], refuses anything else.
@@ -277,6 +327,27 @@ impl<'de> Deserialize<'de> for Datetime {
     }
 }
 
+impl FromStr for Datetime {
+    type Err = CodecError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl TryFrom<&str> for Datetime {
+    type Error = CodecError;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Self::parse(s)
+    }
+}
+
+impl TryFrom<String> for Datetime {
+    type Error = CodecError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::parse(&s)
+    }
+}
+
 impl fmt::Display for Datetime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -348,6 +419,27 @@ impl<'de> Deserialize<'de> for AtUri {
     }
 }
 
+impl FromStr for AtUri {
+    type Err = CodecError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl TryFrom<&str> for AtUri {
+    type Error = CodecError;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Self::parse(s)
+    }
+}
+
+impl TryFrom<String> for AtUri {
+    type Error = CodecError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::parse(&s)
+    }
+}
+
 impl fmt::Display for AtUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -375,17 +467,14 @@ impl fmt::Debug for Sig {
 pub struct StrongRef {
     /// Where the record lives.
     pub uri: AtUri,
-    /// The CID of its content, as a string (`bafyrei…`).
-    pub cid: String,
+    /// The CID of its content — a text string (`bafyrei…`) on the wire.
+    pub cid: RecordCid,
 }
 
 impl StrongRef {
     /// Point at `uri` holding content whose canonical bytes hash to `cid`.
     pub fn new(uri: AtUri, cid: &RecordCid) -> Self {
-        Self {
-            uri,
-            cid: cid.to_string(),
-        }
+        Self { uri, cid: *cid }
     }
 }
 
@@ -474,7 +563,7 @@ impl fmt::Display for StatusUri {
     }
 }
 
-impl std::str::FromStr for StatusUri {
+impl FromStr for StatusUri {
     type Err = CodecError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
@@ -1027,6 +1116,33 @@ mod tests {
         let bytes = canonical_bytes(&claim()).unwrap();
         assert_eq!(RecordCid::of(&bytes).to_string(), crate::plc::cid(&bytes));
         assert!(RecordCid::of(&bytes).to_string().starts_with("bafyrei"));
+    }
+
+    #[test]
+    fn record_cid_round_trips_as_text() {
+        let cid = RecordCid::of(b"x");
+        let text = cid.to_string();
+        assert_eq!(text.parse::<RecordCid>().unwrap(), cid);
+        assert_eq!(RecordCid::try_from(text.as_str()).unwrap(), cid);
+        for bad in [
+            "",
+            "z",
+            "bafyrei",
+            "Bafyreihuihzqug57iwailciamsvfctyrz76w4bf5mjxsfl4y5seje5ziya",
+        ] {
+            assert!(RecordCid::parse(bad).is_err(), "{bad}");
+        }
+        // A CIDv1 with a different codec prefix is not a record CID.
+        let mut raw = *cid.as_bytes();
+        raw[1] = 0x55; // raw codec
+        let other = format!(
+            "b{}",
+            data_encoding::BASE32_NOPAD.encode(&raw).to_lowercase()
+        );
+        assert!(RecordCid::parse(&other).is_err());
+        // Datetime and AtUri speak the same std vocabulary.
+        assert!("2026-08-20T09:00:00Z".parse::<Datetime>().is_ok());
+        assert!(AtUri::try_from("at://did:plc:abc/c/r".to_string()).is_ok());
     }
 
     #[test]
