@@ -73,10 +73,12 @@ pub trait TrustPolicy: Send + Sync {
 
 /// Allow-lists and an age cap — enough for most relying parties.
 ///
-/// Every field `None` means "no constraint"; [`BasicPolicy::permissive`] is
-/// all-`None` with freshness demanded, i.e. "any attestor, any method, but do
-/// check revocation".
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// Every field `None` means "no constraint". `Default` and
+/// [`BasicPolicy::permissive`] are the same thing: any attestor, any
+/// method, **revocation checked** — the std-trait entry point is never the
+/// more dangerous one, so `BasicPolicy { trusted_attestors: …,
+/// ..Default::default() }` does not silently disable step 7.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasicPolicy {
     /// Attestors this verifier accepts. `None` = any.
     pub trusted_attestors: Option<BTreeSet<Did>>,
@@ -92,13 +94,23 @@ pub struct BasicPolicy {
     pub max_status_age_secs: Option<i64>,
 }
 
-impl BasicPolicy {
-    /// Any attestor, any method, revocation checked.
-    pub fn permissive() -> Self {
+impl Default for BasicPolicy {
+    /// Revocation checked; nothing else constrained.
+    fn default() -> Self {
         Self {
+            trusted_attestors: None,
+            accepted_methods: None,
             demand_freshness: true,
-            ..Self::default()
+            max_age_secs: None,
+            max_status_age_secs: None,
         }
+    }
+}
+
+impl BasicPolicy {
+    /// Any attestor, any method, revocation checked — the same as `Default`.
+    pub fn permissive() -> Self {
+        Self::default()
     }
 
     /// Only these attestors.
@@ -158,6 +170,17 @@ mod tests {
             remaining_secs: 21 * 86_400,
             has_status: true,
         }
+    }
+
+    #[test]
+    fn default_demands_freshness() {
+        // The footgun: `..Default::default()` must not switch revocation off.
+        let p = BasicPolicy {
+            trusted_attestors: Some([attestor()].into()),
+            ..Default::default()
+        };
+        assert!(p.demands_freshness());
+        assert_eq!(BasicPolicy::default(), BasicPolicy::permissive());
     }
 
     #[test]
