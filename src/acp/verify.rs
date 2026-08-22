@@ -22,7 +22,7 @@ use super::error::VerifyError;
 use super::policy::{Decision, PolicyContext, TrustPolicy};
 use super::ports::{DidResolver, FetchedRecord, KeyMaterial, RepoReader, StatusSource};
 use super::record::{
-    AtUri, Attestation, Claim, Datetime, RELATIONSHIP_TYPE, RelKind, Relationship,
+    AtUri, Attestation, Claim, Datetime, RELATIONSHIP_TYPE, RelKind, Relationship, canonical_bytes,
 };
 use super::sign::{Repository, verify_sig};
 use super::status::newest_verifiable;
@@ -54,6 +54,12 @@ pub enum Reason {
     /// The signature does not verify under the attestor's current keys, as
     /// fetched from this repository — step 4 (tamper, rotation, transplant).
     BadSig,
+    /// The stored bytes are not the canonical encoding of the record they
+    /// decode to — step 4. Unknown fields ride along unsigned, or the CBOR
+    /// is non-minimal / mis-ordered: either way the record's CID is not a
+    /// stable identifier for what was signed, and a subject who holds the
+    /// repo could plant attestor-attributed data the attestor never saw.
+    NonCanonical,
     /// `expiresAt` has passed — step 5.
     Expired,
     /// `issuedAt` is further in the future than [`CLOCK_SKEW_SECS`].
@@ -185,9 +191,16 @@ impl Verifier<'_> {
             not_in_force!(Reason::AttestorUnresolvable);
         };
 
-        // 4. The signature, bound to the repository we actually read from.
+        // 4. The signature, bound to the repository we actually read from —
+        //    and the stored bytes must be exactly the canonical form of what
+        //    was signed, so nothing rides along outside the signature.
         if verify_sig(&att, Repository(&fetched.repository), &keys.verification).is_err() {
             not_in_force!(Reason::BadSig);
+        }
+        match canonical_bytes(&att) {
+            Ok(canonical) if canonical == fetched.bytes => {}
+            Ok(_) => not_in_force!(Reason::NonCanonical),
+            Err(err) => not_in_force!(Reason::Malformed(format!("{uri}: {err}"))),
         }
 
         // 5. Lifetime.
@@ -642,6 +655,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reason(v), Reason::BadSig);
+    }
+
+    #[tokio::test]
+    async fn unsigned_extra_field_is_not_canonical() {
+        // Kit owns the repo. She appends a field the attestor never signed;
+        // the eight known fields still verify, but the bytes on disk are
+        // not the canonical form of the signed record.
+        let w = World::new();
+        #[derive(serde::Serialize)]
+        struct Padded {
+            #[serde(flatten)]
+            att: Attestation,
+            #[serde(rename = "assuranceLevel")]
+            assurance_level: u8,
+        }
+        let padded = canonical_bytes(&Padded {
+            att: w.attestation(),
+            assurance_level: 9,
+        })
+        .unwrap();
+        w.repo.replace_bytes(&w.att_uri, padded);
+        assert_eq!(reason(w.verdict().await), Reason::NonCanonical);
+    }
+
+    #[tokio::test]
+    async fn non_minimal_cbor_is_not_canonical() {
+        // Same map, header written as 0xb8 0x08 (one-byte length) instead
+        // of 0xa8: decodes identically, hashes differently.
+        let w = World::new();
+        let mut bytes = w.repo.get(&w.att_uri).unwrap().bytes;
+        assert_eq!(bytes[0], 0xa9, "nine-entry map, short form");
+        bytes.splice(0..1, [0xb8, 0x09]);
+        w.repo.replace_bytes(&w.att_uri, bytes);
+        assert_eq!(reason(w.verdict().await), Reason::NonCanonical);
     }
 
     #[tokio::test]
