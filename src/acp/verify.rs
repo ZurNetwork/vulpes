@@ -381,7 +381,9 @@ impl Verifier<'_> {
 /// (`docs/ccs.md`) the owner's own key is always above the custodian's in
 /// the owner's list, and an owner who controls the owned DID has that same
 /// key above every custodian in the owned DID's list. Verification keys do
-/// not count: `did:plc` gives them no control over the identity.
+/// not count: `did:plc` gives them no control over the identity. The
+/// comparison is on the `did:key` strings as the directory lists them —
+/// the port's contract is to preserve that order.
 ///
 /// Residuals, stated plainly: a junior co-owner (key below another owner's)
 /// does not pass from this check alone; and two DIDs that are both *purely*
@@ -428,7 +430,7 @@ mod tests {
     fn rotation(keys: &[&Secp256k1Keypair]) -> KeyMaterial {
         KeyMaterial {
             verification: vec![],
-            rotation: keys.iter().map(|k| vk(k)).collect(),
+            rotation: keys.iter().map(|k| k.did()).collect(),
         }
     }
     fn dt(s: &str) -> Datetime {
@@ -1275,7 +1277,7 @@ mod tests {
             &kit(),
             KeyMaterial {
                 verification: vec![vk(&signing)],
-                rotation: vec![vk(&key(50))],
+                rotation: vec![key(50).did()],
             },
         );
         p.dids.rotate(&fox(), rotation(&[&signing, &key(51)]));

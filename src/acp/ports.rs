@@ -111,16 +111,23 @@ pub struct KeyMaterial {
     /// Every `verificationMethod` key the document publishes (an attestor may
     /// sign with any of them; the verifier tries each).
     pub verification: Vec<VerifyingKey>,
-    /// The `did:plc` rotation keys, **most senior first**, parsed at the port
-    /// boundary so the verifier never parses and never silently drops one.
+    /// The `did:plc` rotation keys as `did:key` strings, in **directory
+    /// order — most senior first**, exactly as the directory lists them.
     /// Empty for methods without rotation keys (`did:web`). Used only for
     /// ownership-tier key control.
     ///
+    /// Strings, not parsed keys, on purpose: the senior-key check is an
+    /// equality on the top entry and never needs the key material, and
+    /// parsing here would let one rotation key on an unsupported curve make
+    /// the whole `keys()` call fail — breaking plain-signature verification
+    /// for an attestor whose rotation keys it never uses.
+    ///
     /// These are **not** in the DID document — `did:plc` deliberately omits
     /// them. Read `https://plc.directory/<did>/data` (`rotationKeys`) or the
-    /// audit log's last operation. An implementation that reads the document
-    /// alone will leave this empty and every ownership pair will fail closed.
-    pub rotation: Vec<VerifyingKey>,
+    /// audit log's last operation, and preserve the order. An
+    /// implementation that reads the document alone will leave this empty
+    /// and every ownership pair will fail closed.
+    pub rotation: Vec<String>,
 }
 
 /// Resolve a DID to its current keys.
@@ -131,8 +138,10 @@ pub struct KeyMaterial {
 /// rotation keys come from.
 #[async_trait]
 pub trait DidResolver: Send + Sync {
-    /// `Ok(None)` when the DID does not resolve (unknown, tombstoned). A key
-    /// the port cannot parse is a port failure (`Err`), not a missing key.
+    /// `Ok(None)` when the DID does not resolve (unknown, tombstoned). A
+    /// verification key the port cannot parse is a port failure (`Err`),
+    /// not a missing key. Rotation keys are passed through as strings in
+    /// the directory's seniority order (see [`KeyMaterial::rotation`]).
     async fn keys(&self, did: &Did) -> Result<Option<KeyMaterial>, ResolveError>;
 }
 

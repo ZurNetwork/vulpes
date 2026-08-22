@@ -95,11 +95,14 @@ senior-key custody rule (`docs/ccs.md`) the owner's own key is above the
 custodian's in the owner's list, and control of the owned DID means that
 same key is above every custodian there too. Only rotation keys count; the
 owner's verification (signing) keys are not control keys per did:plc and
-are no longer admitted. `KeyMaterial::rotation` is parsed at the port
-boundary (a key that does not parse is a port `Err`, never a silent skip),
-and `DidResolver::keys` sources rotation keys from the PLC directory's
-`/data` (or the audit log), never from the DID document, which does not
-carry them.
+are no longer admitted. `KeyMaterial::rotation` carries the `did:key`
+strings in directory (seniority) order, unparsed: the check is an equality
+on the top entry and needs no key material, and parsing at the port would
+let one rotation key on an unsupported curve fail the whole `keys()` call
+— breaking plain-signature verification for an attestor whose rotation
+keys the verifier never uses. `DidResolver::keys` sources them from the
+PLC directory's `/data` (or the audit log), preserving order, never from
+the DID document, which does not carry them.
 
 Two residuals, stated rather than hidden: a junior co-owner (key below
 another owner's on the owned DID) does not pass from this check alone —
