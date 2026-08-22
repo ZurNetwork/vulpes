@@ -122,10 +122,11 @@ into your identity — not "+18", not "great engineer", not anything — because
 they can't write to your repo. What someone says about you in *their* repo
 is their speech (ATProto already has that: follows, labels); ACP just never
 confuses it with *your* record. And for claims that inherently bind two
-parties — ownership, membership — ACP uses **mutual claims**: one record in
-each repo, each naming the other, valid only while *both* exist. Either side
-deletes theirs and the relationship is over, unilaterally, without touching
-the other's repo.
+parties — ownership, membership — nothing new is needed: you claim the
+relationship in your repo, and the *other* party is the one who vouches for
+it. No vouch, no relationship. You end it by deleting your claim; they end
+it by withdrawing their vouch — each unilaterally, neither touching the
+other's repo.
 
 ## How this differs from what you know
 
