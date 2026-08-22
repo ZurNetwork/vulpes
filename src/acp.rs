@@ -55,7 +55,7 @@ pub use kind::{
     Authority, Category, ClaimAuthority, ClaimKind, ClaimLabel, ClaimName, NSID_MAX_LEN, Name,
     Protocol,
 };
-pub use policy::{BasicPolicy, Decision, PolicyContext, TrustPolicy};
+pub use policy::{BasicPolicy, DEFAULT_MAX_STATUS_AGE_SECS, Decision, PolicyContext, TrustPolicy};
 pub use ports::{
     DidResolver, FetchedRecord, KeyMaterial, RepoError, RepoReader, ResolveError, StatusFetchError,
     StatusSource,

@@ -75,13 +75,16 @@ pub trait TrustPolicy: Send + Sync {
 
 /// Allow-lists and an age cap — enough for most relying parties.
 ///
-/// Every field `None` means "no constraint". `Default` and
-/// [`BasicPolicy::permissive`] are the same thing: any attestor, any
-/// method, **revocation checked when a pointer is present** (status age
-/// bounded only when `max_status_age_secs` is set) — the std-trait entry
-/// point is never the more dangerous one, so `BasicPolicy {
-/// trusted_attestors: …, ..Default::default() }` does not silently disable
-/// step 7.
+/// Every field `None` means "no constraint". `Default` is the **safe**
+/// entry point: any attestor, any method, revocation checked when a pointer
+/// is present, and a status list older than
+/// [`DEFAULT_MAX_STATUS_AGE_SECS`] (30 days) is *not checkable* rather than
+/// trusted — so a withheld fresh copy can push a verdict to
+/// `StatusStale`, never to "not revoked" (FORKS F43). The std-trait entry
+/// point is never the more dangerous one: `BasicPolicy {
+/// trusted_attestors: …, ..Default::default() }` neither disables step 7
+/// nor unbounds it. [`BasicPolicy::permissive`] is the explicit opt-out of
+/// the age bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasicPolicy {
     /// Attestors this verifier accepts. `None` = any.
@@ -115,16 +118,30 @@ impl Default for BasicPolicy {
             accepted_methods: None,
             demand_freshness: true,
             max_age_secs: None,
-            max_status_age_secs: None,
+            max_status_age_secs: Some(DEFAULT_MAX_STATUS_AGE_SECS),
             require_status: false,
         }
     }
 }
 
+/// The status-list age [`BasicPolicy::default`] tolerates: 30 days.
+///
+/// Long enough that an attestor republishing monthly never flickers, short
+/// enough that a pinned stale all-clear has a horizon. An attestor that
+/// knows its own cadence says so with the signed `ttl`, which wins when
+/// tighter; a verifier with higher stakes lowers this, one that accepts
+/// the withholding risk sets `None` ([`BasicPolicy::permissive`]).
+pub const DEFAULT_MAX_STATUS_AGE_SECS: i64 = 30 * 86_400;
+
 impl BasicPolicy {
-    /// Any attestor, any method, revocation checked — the same as `Default`.
+    /// Any attestor, any method, revocation checked, **no status-age
+    /// bound** — `Default` minus the 30-day horizon. The one way a stale
+    /// copy can be pinned indefinitely; choose it knowingly.
     pub fn permissive() -> Self {
-        Self::default()
+        Self {
+            max_status_age_secs: None,
+            ..Self::default()
+        }
     }
 
     /// Only these attestors.
@@ -197,7 +214,13 @@ mod tests {
             ..Default::default()
         };
         assert!(p.demands_freshness());
-        assert_eq!(BasicPolicy::default(), BasicPolicy::permissive());
+        assert_eq!(p.max_status_age_secs(), Some(DEFAULT_MAX_STATUS_AGE_SECS));
+        // `permissive` differs from `Default` in exactly one field.
+        let permissive = BasicPolicy {
+            max_status_age_secs: None,
+            ..Default::default()
+        };
+        assert_eq!(permissive, BasicPolicy::permissive());
     }
 
     #[test]

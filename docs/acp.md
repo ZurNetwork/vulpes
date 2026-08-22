@@ -325,6 +325,9 @@ that verifies under the attestor's current keys. The bound is on
 **signature verifications** (at most 16), never on arrival position: a
 mirror cannot bury the genuine newest copy under junk, and it cannot make
 a verifier do unbounded work either.
+Attestors SHOULD set `ttl` to their republish cadence; the reference
+verifier's default policy treats a copy older than 30 days as not checkable
+(FORKS F43), and a tighter `ttl` wins over it.
 `list` is an identifier, not necessarily a fetch location: mirrors may serve
 a list from any address, but the identifier the attestor signed is the one
 an attestation must point at. Identity-over-location is what lets mirrors
