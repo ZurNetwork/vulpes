@@ -16,6 +16,8 @@
 //! Conflating them would let an outage read as "not revoked" (fail-open) or
 //! as "revoked" (an outage becomes a denial of service on honest subjects).
 
+use std::collections::BTreeSet;
+
 use crate::Did;
 
 use super::error::VerifyError;
@@ -101,9 +103,10 @@ pub enum Reason {
     KindsNotAPair,
     /// A kind this build does not know; ignored, not rejected wholesale.
     UnknownKind,
-    /// Ownership-tier pair without key control over the owned DID: the
-    /// owner's most senior rotation key is not the owned DID's most senior
-    /// rotation key.
+    /// Ownership-tier pair without key control over the owned DID: no
+    /// rotation key of the owner's — custodians' keys excluded, per the
+    /// policy's [`custodian_keys`](super::policy::TrustPolicy::custodian_keys)
+    /// — sits above every custodian key in the owned DID's rotation list.
     NoKeyControl,
 }
 
@@ -289,7 +292,13 @@ impl Verifier<'_> {
 
     /// A mutual claim, starting from either half: both halves exist, name
     /// each other, form a defined pair, and — for ownership-tier kinds — the
-    /// owner's senior rotation key is the owned DID's senior rotation key.
+    /// owner holds a rotation key of the owned DID senior to every
+    /// custodian's (see [`holds_senior_rotation_key`]).
+    ///
+    /// The trust policy is consulted for exactly one thing here, its
+    /// [`custodian_keys`](super::policy::TrustPolicy::custodian_keys):
+    /// `decide` is an attestation-shaped judgment (attestor, method, age)
+    /// and a mutual claim has none of those signals.
     pub async fn verify_relationship(&self, half: &AtUri) -> Result<Verdict, VerifyError> {
         let (a_fetched, a) = match self.fetch::<Relationship>(half).await? {
             None => not_in_force!(Reason::HalfMissing),
@@ -381,7 +390,7 @@ impl Verifier<'_> {
             };
             let owned_keys = self.dids.keys(owned).await?.unwrap_or_default();
             let owner_keys = self.dids.keys(owner).await?.unwrap_or_default();
-            if !holds_senior_rotation_key(&owner_keys, &owned_keys) {
+            if !holds_senior_rotation_key(&owner_keys, &owned_keys, self.policy.custodian_keys()) {
                 not_in_force!(Reason::NoKeyControl);
             }
         }
@@ -394,37 +403,47 @@ impl Verifier<'_> {
     }
 }
 
-/// Key control (FORKS F40, amended 2026-08-21): the owner's **most senior**
-/// rotation key is the owned DID's **most senior** rotation key.
+/// Key control (FORKS F40, ruled 2026-08-22): the owner holds a rotation
+/// key that sits **above every custodian's** in the owned DID's list —
+/// `docs/ccs.md`'s senior-key rule, checked literally.
 ///
-/// Why this shape and not "some key in both lists": a custodian's rotation
-/// key sits in *both* lists whenever the two DIDs share a host (bsky.social
-/// puts one operator key on every account), so set intersection proved
-/// nothing and matched the very key the senior-key rule exists to exclude.
-/// The only position the verifier can read without knowing who the
-/// custodian is, is the top: under the senior-key custody rule
-/// (`docs/ccs.md`) the owner's own key is always above the custodian's in
-/// the owner's list, and an owner who controls the owned DID has that same
-/// key above every custodian in the owned DID's list. Verification keys do
-/// not count: `did:plc` gives them no control over the identity. The
-/// comparison is on the `did:key` strings as the directory lists them —
-/// the port's contract is to preserve that order.
+/// Ownership holds iff some `K` in the owner's rotation list, with `K` not a
+/// custodian key, appears in the owned DID's rotation list at an index
+/// lower (more senior) than every custodian key there — or there is no
+/// custodian key there at all. Which keys are custodians' is the policy's
+/// to say ([`TrustPolicy::custodian_keys`]): `did:plc` lets one key sit on
+/// any number of DIDs and records nothing about who holds it, so no rule
+/// over the lists alone can tell an owner's key from an operator's —
+/// "some key in both lists" matched bsky.social's operator key on every
+/// co-hosted pair, and "top equals top" both failed junior co-owners and
+/// passed two accounts with *only* operator keys. Position conventions
+/// differ by tool, too (Bluesky's signup puts a user key first; `goat`
+/// appends one last), so only the order relative to the named custodians
+/// is meaningful.
 ///
-/// Both sides must be the verbatim `did:key:` strings the directory holds;
-/// the port contract forbids re-encoding, so there is nothing to normalize.
-///
-/// Residuals, stated plainly: a junior co-owner (key below another owner's)
-/// does not pass from this check alone; and two DIDs that are both *purely*
-/// custodied by the same operator (no owner key at all — a violation of the
-/// senior-key rule on both) are indistinguishable from public data.
-fn holds_senior_rotation_key(owner: &KeyMaterial, owned: &KeyMaterial) -> bool {
-    match (owner.rotation.first(), owned.rotation.first()) {
-        // Equality on verbatim `did:key:` strings. Anything else on top —
-        // empty, a placeholder, an unprefixed multikey — is not a key the
-        // directory would hold, and two equal non-keys must not pass.
-        (Some(own), Some(top)) => own == top && own.starts_with("did:key:") && own.len() > 8,
-        _ => false,
-    }
+/// Consequences: a junior co-owner passes as long as they are above the
+/// custodian; two DIDs carrying nothing but custodian keys fail closed
+/// (nobody personal holds either); and with an **empty** custodian set the
+/// check degrades to "some key in both lists" — the permissive mode the
+/// policy documents. Verification keys never count: `did:plc` gives them no
+/// control over the identity. Both lists are the verbatim `did:key:`
+/// strings the directory holds, in its order; the port contract forbids
+/// re-encoding, so there is nothing to normalize, and an entry that is not
+/// a `did:key:` string is never a key.
+fn holds_senior_rotation_key(
+    owner: &KeyMaterial,
+    owned: &KeyMaterial,
+    custodians: &BTreeSet<String>,
+) -> bool {
+    let is_key = |k: &str| k.starts_with("did:key:") && k.len() > 8;
+    // The most senior custodian position in the owned list, if any.
+    let custodian_floor = owned.rotation.iter().position(|k| custodians.contains(k));
+    owner
+        .rotation
+        .iter()
+        .filter(|k| is_key(k) && !custodians.contains(*k))
+        .filter_map(|k| owned.rotation.iter().position(|o| o == k))
+        .any(|idx| custodian_floor.is_none_or(|floor| idx < floor))
 }
 
 #[cfg(test)]
@@ -1297,14 +1316,16 @@ mod tests {
             let (fox_half, _) = repo.put(&fox(), RELATIONSHIP_TYPE, "ab12", &owned_by);
 
             // Kit's own account: her key senior to her host's (bsky, say).
-            // Fox, custodied by Zurfur: Kit's key senior to Zurfur's.
+            // Fox, custodied by Zurfur: Kit's key senior to Zurfur's. The
+            // verifier names both operators as custodians — the one fact
+            // public data cannot supply.
             dids.publish(&kit(), rotation(&[&kit_key, &key(52)]));
             dids.publish(&fox(), rotation(&[&kit_key, &host_key]));
             Self {
                 repo,
                 dids,
                 status: MemoryStatus::new(),
-                policy: BasicPolicy::permissive(),
+                policy: BasicPolicy::permissive().with_custodians([host_key.did(), key(52).did()]),
                 kit_half,
                 fox_half,
             }
@@ -1351,10 +1372,77 @@ mod tests {
             Reason::NoKeyControl
         );
         // Same with a different owner key on top of Fox: as long as Fox
-        // honours the senior-key rule, no co-hosted stranger passes. (Two
-        // DIDs *both* purely custodied by one operator are the documented
-        // residual — nothing in public data tells them apart.)
+        // honours the senior-key rule, no co-hosted stranger passes.
         p.dids.rotate(&fox(), rotation(&[&key(55), &host]));
+        assert_eq!(
+            reason(p.verdict_from(&mallory_half).await),
+            Reason::NoKeyControl
+        );
+    }
+
+    #[tokio::test]
+    async fn bsky_shaped_pair_is_not_ownership() {
+        // The dominant deployment: every bsky.social account carries the
+        // same two operator keys and nothing else. Two such accounts share
+        // their entire rotation list; with the operator named as custodian
+        // that proves nothing — nobody personal holds either DID.
+        let mut p = Pair::new();
+        let (bsky_a, bsky_b) = (key(60), key(61));
+        p.policy = p.policy.with_custodians([bsky_a.did(), bsky_b.did()]);
+        p.dids.rotate(&kit(), rotation(&[&bsky_a, &bsky_b]));
+        p.dids.rotate(&fox(), rotation(&[&bsky_a, &bsky_b]));
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::NoKeyControl
+        );
+        assert_eq!(
+            reason(p.verdict_from(&p.fox_half).await),
+            Reason::NoKeyControl
+        );
+        // Kit enrols a personal key above the operator's on Fox — and the
+        // operator's keys sit on her own account too, as they do for every
+        // bsky.social user. Now she owns Fox.
+        p.dids
+            .rotate(&kit(), rotation(&[&key(50), &bsky_a, &bsky_b]));
+        p.dids
+            .rotate(&fox(), rotation(&[&key(50), &bsky_a, &bsky_b]));
+        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
+        // Personal key present on Fox but *below* the operator's: the
+        // operator could take Fox from her. Not ownership.
+        p.dids
+            .rotate(&fox(), rotation(&[&bsky_a, &key(50), &bsky_b]));
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::NoKeyControl
+        );
+    }
+
+    #[tokio::test]
+    async fn no_custodian_set_is_the_permissive_mode() {
+        // With no custodian named, the check degrades to "some key in both
+        // lists" — the host's own key included. Documented on
+        // `TrustPolicy::custodian_keys`; a verifier that acts on ownership
+        // names its operators.
+        let mut p = Pair::new();
+        p.policy = BasicPolicy::permissive();
+        let host = key(51);
+        p.dids.rotate(&mallory(), rotation(&[&host]));
+        let mut owns =
+            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
+        owns.counterpart_record = Some(p.fox_half.clone());
+        let (mallory_half, _) = p.repo.put(&mallory(), RELATIONSHIP_TYPE, "ef56", &owns);
+        let mut owned_by = Relationship::new(
+            RelKind::OwnedBy,
+            mallory(),
+            dt("2026-08-20T11:00:00Z"),
+            None,
+        )
+        .unwrap();
+        owned_by.counterpart_record = Some(mallory_half.clone());
+        p.repo.replace(&p.fox_half, &owned_by);
+        assert!(p.verdict_from(&mallory_half).await.is_in_force());
+        // Naming the host closes it.
+        p.policy = BasicPolicy::permissive().with_custodians([host.did()]);
         assert_eq!(
             reason(p.verdict_from(&mallory_half).await),
             Reason::NoKeyControl
@@ -1399,9 +1487,10 @@ mod tests {
 
     #[tokio::test]
     async fn co_owner_ordering() {
-        // Two owners, priority-ordered on Fox: [kit, bo, host]. The senior
-        // co-owner passes; the junior one does not from this check alone
-        // (documented residual — key priority implies seniority).
+        // Two owners, priority-ordered on Fox: [kit, bo, host]. Both are
+        // above the custodian, so both own Fox; key priority settles
+        // disputes between them (`docs/characters-atproto.md`), not whether
+        // either owns. Bo below the host would not.
         let p = Pair::new();
         let (kit_key, bo_key, host) = (key(50), key(54), key(51));
         let bo = Did::new("did:plc:bo12345678901234567890ab");
@@ -1422,12 +1511,15 @@ mod tests {
         .unwrap();
         owned_by.counterpart_record = Some(bo_half.clone());
         p.repo.replace(&p.fox_half, &owned_by);
+        assert!(p.verdict_from(&bo_half).await.is_in_force());
+        // Bo slips below the host: the custodian outranks him on Fox.
+        p.dids.rotate(&fox(), rotation(&[&kit_key, &host, &bo_key]));
         assert_eq!(reason(p.verdict_from(&bo_half).await), Reason::NoKeyControl);
     }
 
     #[tokio::test]
     async fn placeholder_rotation_entries_are_not_keys() {
-        // A resolver that answers with an empty or non-did:key top entry for
+        // A resolver that answers with an empty or non-did:key entry for
         // both DIDs produces two *equal* strings — which is not key control.
         let p = Pair::new();
         for junk in [

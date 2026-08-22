@@ -13,6 +13,13 @@
 //! [`TrustPolicy`] is the seam; [`BasicPolicy`] is the obvious
 //! implementation (allow-lists and an age cap). Anything richer — reputation,
 //! per-kind rules, "two independent attestors" — implements the trait.
+//!
+//! The policy also holds the one fact ownership-tier verification cannot
+//! read from public data: **which rotation keys belong to custodians**
+//! ([`TrustPolicy::custodian_keys`]). `did:plc` lets one key sit on many
+//! DIDs and says nothing about who holds it, so "the owner's key is senior
+//! to the custodian's" (`docs/ccs.md`) is only checkable once the verifier
+//! names the custodians — the same shape as naming the attestors it trusts.
 
 use std::collections::BTreeSet;
 
@@ -71,6 +78,23 @@ pub trait TrustPolicy: Send + Sync {
     fn max_status_age_secs(&self) -> Option<i64> {
         None
     }
+
+    /// Rotation keys (`did:key` strings, verbatim as the PLC directory lists
+    /// them) known to belong to **custodians** — PDS operators, wallet
+    /// services, the reference instance's own vault. Ownership-tier key
+    /// control means an owner's key sits *above every one of these* in the
+    /// owned DID's rotation list (`docs/ccs.md`, the senior-key rule); a key
+    /// not listed here is presumed personal.
+    ///
+    /// The default is empty, which is the **permissive mode**: with no
+    /// custodian named, any rotation key shared by owner and owned DID
+    /// passes — including a host's operator key that sits on every account
+    /// it hosts. Verifiers acting on ownership list the operators their
+    /// subjects use (bsky.social publishes two; Zurfur's vault key is one).
+    fn custodian_keys(&self) -> &BTreeSet<String> {
+        static NONE: BTreeSet<String> = BTreeSet::new();
+        &NONE
+    }
 }
 
 /// Allow-lists and an age cap — enough for most relying parties.
@@ -105,6 +129,9 @@ pub struct BasicPolicy {
     /// never read. Set both when "must be revocable" means "must be
     /// checked".
     pub require_status: bool,
+    /// Custodians' rotation keys; see [`TrustPolicy::custodian_keys`].
+    /// Empty by default — ownership verification is then permissive.
+    pub custodian_keys: BTreeSet<String>,
 }
 
 impl Default for BasicPolicy {
@@ -117,6 +144,7 @@ impl Default for BasicPolicy {
             max_age_secs: None,
             max_status_age_secs: None,
             require_status: false,
+            custodian_keys: BTreeSet::new(),
         }
     }
 }
@@ -134,6 +162,13 @@ impl BasicPolicy {
             ..Self::permissive()
         }
     }
+
+    /// Name the custodians whose rotation keys must never count as an
+    /// owner's (see [`TrustPolicy::custodian_keys`]).
+    pub fn with_custodians(mut self, keys: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.custodian_keys.extend(keys.into_iter().map(Into::into));
+        self
+    }
 }
 
 impl TrustPolicy for BasicPolicy {
@@ -143,6 +178,10 @@ impl TrustPolicy for BasicPolicy {
 
     fn max_status_age_secs(&self) -> Option<i64> {
         self.max_status_age_secs
+    }
+
+    fn custodian_keys(&self) -> &BTreeSet<String> {
+        &self.custodian_keys
     }
 
     fn decide(&self, ctx: &PolicyContext<'_>) -> Decision {
@@ -250,6 +289,24 @@ mod tests {
         assert!(matches!(p.decide(&c), Decision::Reject(_)));
         // Off by default: the spec allows irrevocable-until-expiry.
         assert_eq!(BasicPolicy::default().decide(&c), Decision::Accept);
+    }
+
+    #[test]
+    fn custodian_keys_default_empty_and_build() {
+        struct Bare;
+        impl TrustPolicy for Bare {
+            fn demands_freshness(&self) -> bool {
+                false
+            }
+            fn decide(&self, _: &PolicyContext<'_>) -> Decision {
+                Decision::Accept
+            }
+        }
+        assert!(Bare.custodian_keys().is_empty());
+        assert!(BasicPolicy::default().custodian_keys().is_empty());
+        let p = BasicPolicy::permissive().with_custodians(["did:key:zHost", "did:key:zVault"]);
+        assert_eq!(p.custodian_keys().len(), 2);
+        assert!(p.custodian_keys().contains("did:key:zVault"));
     }
 
     #[test]

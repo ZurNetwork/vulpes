@@ -83,33 +83,42 @@ implementations arrive with the PDS-client line and wrap, exactly as
   into the other.
 
 Key control for ownership-tier pairs was first checked as "at least one of
-the owner's keys is among the owned DID's rotation keys". **Superseded
-2026-08-21 (ship-gates review, ruled by the Engineer):** that check is a
-no-op wherever a PDS lists one operator rotation key on every account
-(bsky.social does — and refuses PLC operations that omit it), because the
-*custodian's* key then sits in both lists and any two co-hosted accounts
-pass. Ruled fix (a), position-aware: **the owner's most senior rotation key
-must be the owned DID's most senior rotation key.** The top position is the
-only one readable without knowing who the custodian is — under the
-senior-key custody rule (`docs/ccs.md`) the owner's own key is above the
-custodian's in the owner's list, and control of the owned DID means that
-same key is above every custodian there too. Only rotation keys count; the
-owner's verification (signing) keys are not control keys per did:plc and
-are no longer admitted. `KeyMaterial::rotation` carries the `did:key`
-strings in directory (seniority) order, unparsed: the check is an equality
-on the top entry and needs no key material, and parsing at the port would
-let one rotation key on an unsupported curve fail the whole `keys()` call
-— breaking plain-signature verification for an attestor whose rotation
-keys the verifier never uses. `DidResolver::keys` sources them from the
-PLC directory's `/data` (or the audit log), preserving order, never from
-the DID document, which does not carry them.
+the owner's keys is among the owned DID's rotation keys". Superseded
+2026-08-21 by "the owner's most senior rotation key is the owned DID's most
+senior rotation key" — and that, too, **superseded 2026-08-22 (ruled by the
+Engineer after sourced research):**
 
-Two residuals, stated rather than hidden: a junior co-owner (key below
-another owner's on the owned DID) does not pass from this check alone —
-co-ownership verification is an open line; and two DIDs *both* purely
-custodied by the same operator, with no owner key at all, cannot be told
-apart from public data — that is a violation of the senior-key rule on both
-sides, and the rule is what makes the check meaningful.
+- The did:plc spec orders `rotationKeys` by descending authority, caps them
+  at five, keeps them out of the DID document (`/data`, `/log/audit`), and
+  **explicitly allows one key to be reused across many DIDs**. Seniority buys
+  one thing — a 72-hour window in which a higher key can nullify a lower
+  key's operation.
+- bsky.social puts the same two operator keys on every account and refuses
+  operations that drop its own; so "some key in both lists" passed any two
+  co-hosted accounts. "Top equals top" fixed that only where the owner's
+  personal key sits first on *both* DIDs — Bluesky's signup `unshift`s a
+  user recovery key to the front, but `goat add-rotation-key` appends one
+  last, a junior co-owner is never first, and two accounts carrying *only*
+  the operator's keys have equal tops and passed anyway. A rule over the
+  lists alone cannot work: **public data never says who holds a key.**
+- **Ruled:** the verifier names the custodians. `TrustPolicy::custodian_keys`
+  (the same shape as `trusted_attestors`) lists operator rotation keys —
+  bsky.social's two, Zurfur's vault key, whatever a deployment's subjects
+  use. Ownership holds iff some owner rotation key that is *not* a
+  custodian key appears in the owned DID's list above every custodian key
+  there (or no custodian key is there). That is `docs/ccs.md`'s senior-key
+  rule checked literally. Junior co-owners pass while above the custodian;
+  pure-custody pairs fail closed; an **empty** custodian set is the
+  documented permissive mode ("some key in both lists" — the verifier has
+  opted out of the distinction).
+- Only rotation keys count; verification (signing) keys confer no control
+  per did:plc. `KeyMaterial::rotation` carries the `did:key` strings
+  verbatim, in directory order, unparsed: the check is set membership and
+  position, needs no key material, and parsing at the port would let one
+  rotation key on an unsupported curve fail the whole `keys()` call —
+  breaking plain-signature verification for an attestor whose rotation keys
+  the verifier never uses. `DidResolver::keys` sources them from the PLC
+  directory's `/data` (or the audit log), never from the DID document.
 
 ### F41. `Datetime::to_unix` is hand-rolled
 

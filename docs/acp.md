@@ -199,9 +199,15 @@ record net.got-paws.acp.relationship {
   relationship with one surviving half is not in force.
 - **Ownership tier**: relationship kinds designated *ownership-tier* (e.g.
   `owns`/`ownedBy`) additionally require key control: the owning DID must
-  hold rotation keys for the owned DID at equal or senior position to any
-  custodian (verified against the PLC operation log). Two records without
-  key control do not constitute ownership.
+  hold a rotation key for the owned DID at senior position to every
+  custodian's (read from the PLC directory's rotation list, which the DID
+  document does not carry). Two records without key control do not
+  constitute ownership. Public data never says *who holds* a rotation key
+  — did:plc allows one key on any number of DIDs, and a host's operator key
+  sits on every account it hosts — so **the verifier names the custodians**
+  in its trust policy; a key it has not named is presumed personal. With no
+  custodian named, key control degrades to "a key shared by both DIDs",
+  and a verifier acting on ownership must not leave it there.
 - The full CCS semantics (transfer flows, the ~72h PLC-recovery-window
   finality rule, gallery consent) are specified in `docs/ccs.md`; this
   section defines the record shape and validity rule.
@@ -369,8 +375,12 @@ To verify an attestation, a verifier:
 To verify a mutual claim: fetch both halves from both repos, check each
 names the other as `counterpart` (and `counterpartRecord`, when present,
 resolves to the other half), check both records' kinds form a defined pair,
-and for ownership-tier kinds verify key control against the PLC operation
-log. Any missing element → not in force.
+and for ownership-tier kinds verify key control: some rotation key of the
+owner's that the verifier's policy does not list as a custodian's appears
+in the owned DID's rotation list above every key the policy does list (or
+none is listed there). Junior co-owners pass while above the custodian; a
+pair carrying nothing but custodian keys does not. Any missing element →
+not in force.
 
 ## Conformance
 

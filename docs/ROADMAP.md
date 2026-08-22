@@ -37,8 +37,9 @@ infrastructure down and every issued vouch still verifies.
       when "Talk to a PDS" lands.
       **Ship-gates review 2026-08-21** (security, code, critique) landed:
       judgment before the status fetch + `StatusUri` (SSRF), signed `list`
-      identifier on status lists, senior-rotation-key ownership rule
-      (F40 amended — two residuals recorded there), claim-in-subject-repo,
+      identifier on status lists, ownership key control against a
+      policy-named custodian set (F40, ruled 2026-08-22 after research —
+      co-ownership falls out of it), claim-in-subject-repo,
       canonical-bytes check at step 4, policy-set status-age bound, `did:key` panic guard, calendar-checked `Datetime`,
       order-independent counterpart search, `BasicPolicy::default()`
       checks revocation.
