@@ -25,6 +25,7 @@ use std::collections::BTreeSet;
 
 use crate::Did;
 
+use super::ports::{DidResolver, ResolveError};
 use super::record::ClaimKind;
 
 /// What step 6 concluded.
@@ -171,6 +172,41 @@ impl BasicPolicy {
             trusted_attestors: Some(attestors.into_iter().collect()),
             ..Self::permissive()
         }
+    }
+
+    /// Discover a host's custodian keys from the directory instead of
+    /// copying them: the rotation keys **common to every one of** `samples`
+    /// — two or more unrelated accounts on the same host — are the
+    /// operator's, because a personal key sits on one account and an
+    /// operator key sits on all of them. Resolved live through the
+    /// [`DidResolver`], so the set is as current as the directory and the
+    /// crate ships no operator's keys (FORKS F44).
+    ///
+    /// Give at least two accounts per host; with one, every key on it is
+    /// taken — including that account's personal key, if any — which is
+    /// only right for an account the operator itself owns. Repeat the call
+    /// per host. An unresolvable sample is an error, not an empty set: a
+    /// silently empty set would be the permissive mode with a verifier that
+    /// believes otherwise.
+    pub async fn with_custodians_from(
+        self,
+        resolver: &dyn DidResolver,
+        samples: impl IntoIterator<Item = &Did>,
+    ) -> Result<Self, ResolveError> {
+        let mut common: Option<BTreeSet<String>> = None;
+        for did in samples {
+            let Some(keys) = resolver.keys(did).await? else {
+                return Err(ResolveError::new(format!(
+                    "custodian sample {did} does not resolve"
+                )));
+            };
+            let these: BTreeSet<String> = keys.rotation.into_iter().collect();
+            common = Some(match common {
+                None => these,
+                Some(prior) => prior.intersection(&these).cloned().collect(),
+            });
+        }
+        Ok(self.with_custodians(common.unwrap_or_default()))
     }
 
     /// Name the custodians whose rotation keys must never count as an
@@ -331,6 +367,50 @@ mod tests {
         let p = BasicPolicy::permissive().with_custodians([HOST, VAULT]);
         assert_eq!(p.custodian_keys().len(), 2);
         assert!(p.custodian_keys().contains(VAULT));
+    }
+
+    #[tokio::test]
+    async fn custodians_are_the_keys_every_sample_shares() {
+        use crate::acp::memory::MemoryResolver;
+        use crate::acp::ports::KeyMaterial;
+        const HOST_A: &str = "did:key:zQ3shhCGUqDKjStzuDxPkTxN6ujddP4RkEKJJouJGRRkaLGbg";
+        const HOST_B: &str = "did:key:zQ3shpKnbdPx3g3CmPf5cRVTPe1HtSwVn5ish3wSnDPQCbLJK";
+        const KIT: &str = "did:key:zQ3shXjHeiBuRCKmM36cuYnm7YEMzhGnCmCyW92sRJ9pribSF";
+        let rot = |keys: &[&str]| KeyMaterial {
+            verification: vec![],
+            rotation: keys.iter().map(|k| k.to_string()).collect(),
+        };
+        let dir = MemoryResolver::new();
+        // Kit holds a personal key senior to the host's; Mallory is host-only.
+        dir.publish(&attestor(), rot(&[KIT, HOST_A, HOST_B]));
+        dir.publish(&mallory(), rot(&[HOST_A, HOST_B]));
+
+        let p = BasicPolicy::default()
+            .with_custodians_from(&dir, [&attestor(), &mallory()])
+            .await
+            .unwrap();
+        assert_eq!(
+            p.custodian_keys()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [HOST_A, HOST_B],
+            "the intersection is the operator's keys; Kit's personal key is not in it"
+        );
+        // One sample takes everything on it — personal key included.
+        let one = BasicPolicy::default()
+            .with_custodians_from(&dir, [&attestor()])
+            .await
+            .unwrap();
+        assert!(one.custodian_keys().contains(KIT));
+        // An unresolvable sample is an error, never a quietly empty set.
+        let ghost: Did = "did:plc:ghost7tw3bc2rvzqg3pwzvy3".parse().unwrap();
+        assert!(
+            BasicPolicy::default()
+                .with_custodians_from(&dir, [&ghost])
+                .await
+                .is_err()
+        );
     }
 
     #[test]

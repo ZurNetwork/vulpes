@@ -134,6 +134,21 @@ Engineer after sourced research):**
   the verifier never uses. `DidResolver::keys` sources them from the PLC
   directory's `/data` (or the audit log), never from the DID document.
 
+### F44. Custodian keys are discovered from the directory, never shipped
+
+**Where:** `src/acp/policy.rs` (`BasicPolicy::with_custodians_from`).
+
+F40 makes ownership verification depend on the verifier naming every
+operator rotation key among its subjects' hosts, and an incomplete set
+fails open silently. The obvious convenience — a `BSKY_SOCIAL_ROTATION_KEYS`
+constant — would put a fact the crate cannot keep true into a git-dep
+library, and per F40's completeness rule a stale constant is worse than
+none. **Ruled (Engineer, 2026-08-22): no operator's keys live in vulpes.**
+A verifier names two or more unrelated accounts on a host; the rotation
+keys common to all of them are the operator's, fetched live through the
+`DidResolver`. Always current, no registry to maintain, and no line of this
+crate that knows who Bluesky is.
+
 ### F42. A status-list fetcher is a network policy, not a URL parser
 
 **Where:** `src/acp/ports.rs` (`StatusSource`), `src/acp/record.rs`

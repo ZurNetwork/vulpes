@@ -205,7 +205,10 @@ record net.got-paws.acp.relationship {
   constitute ownership. Public data never says *who holds* a rotation key
   — did:plc allows one key on any number of DIDs, and a host's operator key
   sits on every account it hosts — so **the verifier names the custodians**
-  in its trust policy; a key it has not named is presumed personal. With no
+  in its trust policy; a key it has not named is presumed personal. The
+  names need not be copied from anywhere: the rotation keys common to two
+  or more unrelated accounts on a host are that host's operator keys, and
+  a verifier can take them from the directory live (FORKS F44). With no
   custodian named, key control degrades to "a key shared by both DIDs",
   and a verifier acting on ownership must not leave it there. The set must
   also be complete for every host in play: an operator key left unnamed
