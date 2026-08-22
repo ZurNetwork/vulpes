@@ -31,7 +31,7 @@ test:
 features:
     #!/usr/bin/env bash
     set -euo pipefail
-    for f in "" "minter" "directory" "oauth" "postgres" "axum" "vc" "minter,postgres" "oauth,postgres" "axum,postgres"; do
+    for f in "" "minter" "directory" "oauth" "postgres" "axum" "vc" "acp" "acp,minter" "minter,postgres" "oauth,postgres" "axum,postgres"; do
         echo "--- features: '${f}'"
         cargo check --no-default-features --features "${f}" --all-targets --locked
     done

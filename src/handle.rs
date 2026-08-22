@@ -30,7 +30,7 @@ const PUNYCODE_PREFIX: &str = "xn--";
 
 /// Top-level domains the atproto handle spec forbids as handles: special-use
 /// names that either resolve locally or must never resolve at all.
-const RESERVED_TLDS: &[&str] = &[
+pub(crate) const RESERVED_TLDS: &[&str] = &[
     "alt",
     "arpa",
     "example",

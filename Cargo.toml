@@ -40,6 +40,11 @@ axum = ["dep:axum", "dep:http"]
 # protocol libraries ride along pinned-but-uncalled so CI proves the chosen
 # set stays buildable together (VUL-2's version-locking checkbox).
 vc = ["dep:ssi", "dep:openid4vp", "dep:oid4vci"]
+# The ACP reference verifier: the record types with canonical DAG-CBOR bytes,
+# the attestation pre-image / sign / verify heart, status lists, and the
+# seven-step verifier over three caller-implemented I/O ports. No transport
+# of its own; the PDS/directory/mirror clients arrive with "Talk to a PDS".
+acp = ["dep:atrium-crypto", "dep:serde_bytes"]
 
 [dependencies]
 # --- core (no feature gate) ---
@@ -72,6 +77,11 @@ atrium-crypto = { version = "0.1.3", optional = true }
 rand = { version = "0.8", optional = true }
 # base64url (no pad) for the operation signature.
 base64 = { version = "0.22", optional = true }
+
+# --- acp ---
+# `sig` must be CBOR major type 2 (a byte string); without this marker serde
+# encodes `Vec<u8>` as an array of integers — canonical, but wrong on the wire.
+serde_bytes = { version = "0.11", optional = true }
 
 # --- directory / oauth ---
 reqwest = { version = "0.12", default-features = false, features = [

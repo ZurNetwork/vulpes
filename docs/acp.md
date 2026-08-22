@@ -133,12 +133,17 @@ stored**:
 
 ```
 $sig: {
-  $type:      string  // the binding marker (aligned with the ecosystem
-                      // construction; cross-check against the
-                      // atproto-attestation CLIs when building)
+  $type:      "net.got-paws.acp.sigBinding"   // the binding marker (fixed)
   repository: did     // the DID of the repo this record lives in
 }
 ```
+
+What the key signs is the **CIDv1 of the pre-image** (dag-cbor `0x71`,
+sha2-256 — 36 raw bytes), not the DAG-CBOR bytes directly. This is the
+CID-First Attestation construction (Gerakines, badge.blue), adopted 2026-08-20
+so independent tooling can reproduce the signed bytes; the `$type` value is
+minted under the ACP authority because that construction leaves it to the
+implementer. Reference: `src/acp/sign.rs`.
 
 At signing time the attestor injects the **subject's repo DID** as
 `repository`. At verification time the verifier injects **the DID of the repo
@@ -194,9 +199,18 @@ record net.got-paws.acp.relationship {
   relationship with one surviving half is not in force.
 - **Ownership tier**: relationship kinds designated *ownership-tier* (e.g.
   `owns`/`ownedBy`) additionally require key control: the owning DID must
-  hold rotation keys for the owned DID at equal or senior position to any
-  custodian (verified against the PLC operation log). Two records without
-  key control do not constitute ownership.
+  hold a rotation key for the owned DID at senior position to every
+  custodian's (read from the PLC directory's rotation list, which the DID
+  document does not carry). Two records without key control do not
+  constitute ownership. Public data never says *who holds* a rotation key
+  — did:plc allows one key on any number of DIDs, and a host's operator key
+  sits on every account it hosts — so **the verifier names the custodians**
+  in its trust policy; a key it has not named is presumed personal. With no
+  custodian named, key control degrades to "a key shared by both DIDs",
+  and a verifier acting on ownership must not leave it there. The set must
+  also be complete for every host in play: an operator key left unnamed
+  counts as personal and sets no floor, so one that outranks the named
+  keys reopens the shared-host hole for that host without any signal.
 - The full CCS semantics (transfer flows, the ~72h PLC-recovery-window
   finality rule, gallery consent) are specified in `docs/ccs.md`; this
   section defines the record shape and validity rule.
@@ -222,6 +236,54 @@ recognize (forward compatibility), never reject the whole repo.
   the newest verifiable copy wins.
 - An attestation without a `status` pointer is irrevocable until expiry —
   attestors should size `expiresAt` accordingly.
+
+**Artifact shape (v0.1).** The envelope is ACP-native — canonical DAG-CBOR,
+signed CID-first with the same primitive as attestations (FORKS F39); the
+IETF Token Status List JWT/CWT envelope is deferred to the private lane.
+Semantics are TSL's: bit `status.index` of `bits` (packed LSB-first within
+each byte), set = revoked.
+
+```
+record net.got-paws.acp.statusList {
+  attestor: did       // whose attestations this covers; its DID document
+                      // holds the signing key
+  list:     string    // this list's identifier — MUST equal the `status.list`
+                      // of every attestation it covers (a signed copy of one
+                      // list cannot stand in for another)
+  issuedAt: datetime  // newest verifiable copy wins
+  ttl?:     integer   // seconds after issuedAt the attestor vouches for this
+                      // version; past it a copy is not checkable. Absent: no
+                      // issuer bound — the newest verifiable copy stands until
+                      // the attestations it covers expire
+  bits:     bytes     // one bit per issued attestation
+  sig:      bytes     // signature over the CIDv1 of the record minus `sig`
+}
+```
+
+There is no `$sig` repository binding: a status list is not a repo record,
+so there is no repository to bind to; its domain separation from an
+attestation pre-image is the `$type` inside the signed bytes. A verifier
+takes every copy it can reach, discards those larger than 1 MiB, that do
+not decode, do not name the expected attestor **and the expected `list`**,
+or are dated further ahead of the verifier's clock than its skew
+tolerance (a future-dated list must not outrank every genuine one until
+then) — all cheap checks an adversary cannot amplify — then orders the
+survivors newest-first by `issuedAt` at full precision (ties broken on the
+canonical bytes) and verifies signatures in that order, keeping the first
+that verifies under the attestor's current keys. The bound is on
+**signature verifications** (at most 16), never on arrival position: a
+mirror cannot bury the genuine newest copy under junk, and it cannot make
+a verifier do unbounded work either.
+`list` is an identifier, not necessarily a fetch location: mirrors may serve
+a list from any address, but the identifier the attestor signed is the one
+an attestation must point at. Identity-over-location is what lets mirrors
+outlive the attestor's domain (the kill test). An index beyond the bitstring is
+**not checkable** (treated as not in force when freshness is demanded),
+never "not revoked". Both `list` and `ttl` follow the IETF Token Status
+List's `sub` and `ttl` (FORKS F39): the issuer names the list and may bound
+how long a copy is evidence; a verifier applies the tighter of `ttl` and its
+own policy bound, and a list with neither stands until the attestations it
+covers expire. Reference: `src/acp/status.rs`.
 
 ## Expiry and renewal
 
@@ -271,10 +333,16 @@ architecturally.
 
 To verify an attestation, a verifier:
 
-1. Fetches the `net.got-paws.acp.attestation` record from the subject's repo and
-   the referenced claim record; checks the claim's CID matches
-   `claim.cid`. If the claim is missing or rewritten → **not in force**.
-2. Checks `subject` matches the repo owner's DID.
+1. Fetches the `net.got-paws.acp.attestation` record from the subject's repo.
+   Before fetching the referenced claim, checks `claim.uri`'s authority
+   **is** the `subject` DID — the author wrote that address, and a
+   verifier sends no request to any authority the record does not name as
+   its subject (a handle authority is rejected: handles re-assign). Then
+   fetches the claim; checks its CID matches `claim.cid`. If the claim is
+   missing or rewritten → **not in force**.
+2. Checks `subject` matches the repo owner's DID, and that the claim was
+   fetched from that same repo — a claim carries no subject field, so the
+   repo it sits in is the only fact that says whose it is.
 3. Resolves `attestor` to its DID document; obtains the verification key(s).
 4. Verifies `sig` over the pre-image: the canonical DAG-CBOR of the record
    minus `sig`, plus the injected `$sig` binding object whose `repository`
@@ -284,19 +352,55 @@ To verify an attestation, a verifier:
    Key rotation note: verification uses the *current* DID document; an
    attestor that rotates keys re-signs or re-issues attestations it wants to
    keep alive (as with did:plc, no historical-key verification is defined).
+   The stored bytes MUST be the canonical DAG-CBOR of the record they decode
+   to (re-encode and compare): nothing rides along outside the signature,
+   and the attestation's CID is a stable identifier for what was signed.
 5. Checks `expiresAt` is in the future.
-6. If `status` is present and the verifier's policy demands freshness:
+6. Applies local trust policy: is this `attestor`, using this `method`, at
+   this age, sufficient for this decision? The protocol supplies signals;
+   the verifier supplies judgment. A verifier that would reject here
+   performs no further I/O on the attestation's behalf.
+7. If `status` is present and the verifier's policy demands freshness:
    fetches the status artifact (any mirror), verifies its signature against
    the attestor's DID document, checks the bit at `index` is not set.
-7. Applies local trust policy: is this `attestor`, using this `method`, at
-   this age, sufficient for this decision? The protocol supplies signals;
-   the verifier supplies judgment.
+   `status.list` is an identifier at rest (§Status lists) and
+   attacker-influenced input: verifiers MUST validate it immediately
+   before fetching — `https` with a public DNS host: no IP literal in any
+   spelling (including hex, octal, decimal and trailing-dot forms), no
+   loopback, link-local or private-range host, no special-use name
+   (`localhost`, `.local`, `.internal`, `.onion`, `.arpa`, `.localdomain`,
+   …), at least two labels (a bare name resolves through the search list
+   into the verifier's own network); an `at://` list is addressed by DID,
+   never by handle — and SHOULD
+   route the fetch through an egress guard. A list the verifier will not
+   fetch is *not checkable*, never malformed and never "not revoked". The
+   trust decision precedes the fetch precisely so that an untrusted
+   attestor cannot cause a verifier to make a request. Syntactic validation
+   is necessary, not sufficient: an HTTP fetcher MUST disable redirects,
+   MUST resolve the host and refuse non-global addresses at connect time
+   (DNS rebinding), SHOULD sit behind an egress guard, SHOULD cap the
+   response size, and SHOULD bound the number of copies it returns (the
+   reference verifier verifies at most a fixed number, newest first)
+   (FORKS F42).
+   Strictly past the list's own `ttl` (when it declares one; `age > ttl`)
+   or the verifier's policy bound, whichever is tighter, a copy is *not
+   checkable*.
+   The newest verifiable copy wins however old it is — a list published
+   before the attestation was issued is still the attestor's last word,
+   and must stay checkable after the attestor dies (§The kill test).
+   Verifiers with high stakes bound the list's age (§Stale-status
+   attacks): past the bound a copy is *not checkable*, never "not
+   revoked".
 
 To verify a mutual claim: fetch both halves from both repos, check each
 names the other as `counterpart` (and `counterpartRecord`, when present,
 resolves to the other half), check both records' kinds form a defined pair,
-and for ownership-tier kinds verify key control against the PLC operation
-log. Any missing element → not in force.
+and for ownership-tier kinds verify key control: some rotation key of the
+owner's that the verifier's policy does not list as a custodian's appears
+in the owned DID's rotation list above every key the policy does list (or
+none is listed there). Junior co-owners pass while above the custodian; a
+pair carrying nothing but custodian keys does not. Any missing element →
+not in force.
 
 ## Conformance
 
@@ -321,7 +425,14 @@ Conformance is per role:
 - must reject expired attestations and unresolved claim references;
 - must treat a single-halved mutual claim as not in force;
 - must not treat any attestor — including the reference instance — as
-  privileged by protocol.
+  privileged by protocol;
+- must decide trust before fetching a status list, and must not fetch an
+  unvalidated `status.list` (step 7); its HTTP fetcher must disable
+  redirects and must refuse non-global resolved addresses at connect time,
+  and should sit behind an egress guard, cap the response size and bound
+  the number of copies it returns (FORKS F42);
+- must name the custodians whose rotation keys never count as an owner's
+  before acting on an ownership-tier mutual claim (§Mutual claims).
 
 **Custodians** (PDS hosts, wallet services)
 - must not hold rotation keys senior to the subject's own for any DID they
@@ -378,6 +489,11 @@ private layer exists to prevent.
   until rotation. Mitigations: PLC rotation (which invalidates the old key
   for step-4 verification), short expiries, status lists. Attestors should
   keep signing keys distinct from rotation keys.
+- **The attestor's custodian.** On a hosted PDS the custodian holds a
+  `verificationMethod` key of the attestor's DID and can sign attestations
+  in its name. This is inherent to custody, not to ACP; an attestor that
+  cannot accept it self-hosts its signing key (the senior-key rule keeps
+  the DID recoverable from a custodian either way).
 - **Replay/transplant.** Attestations bind claim CID, expiry, and — through
   the `$sig` repository binding (§Signing) — the very repo they live in, so
   they cannot be transplanted to another subject, claim version, or repo:
@@ -434,6 +550,29 @@ private layer exists to prevent.
   future changes).
 - **2026-08-12** — lexicon namespace settled: `net.got-paws.acp.*`
   (authority domain `got-paws.net`). No longer provisional.
+- **2026-08-20** — signing pinned to the CID-First construction: the key signs
+  the CIDv1 of the pre-image; `$sig.$type` fixed as
+  `net.got-paws.acp.sigBinding`; strongRef `cid` confirmed a text string on
+  the wire (§Signing; FORKS F36–F38; reference `src/acp/`).
+- **2026-08-21** — ship-gates review rulings: the trust decision moves
+  ahead of the status fetch (steps 6/7 swapped) and `status.list` must be
+  validated before any request — an untrusted attestor must not be able to
+  make a verifier perform I/O (§Verification; FORKS F29 precedent). Ownership
+  key control re-specified as *senior to every key the owner does not hold*
+  (FORKS F40, amended). The status-list body gains a signed `list`
+  identifier so one attestor's lists are not interchangeable
+  (§Status lists; FORKS F39, amended).
+- **2026-08-22** — research-backed rulings on the three review forks.
+  Ownership key control: the verifier names the custodians (policy
+  `custodian_keys`); an owner key that is not a custodian's must sit above
+  every custodian key in the owned DID's rotation list — did:plc allows
+  key reuse across DIDs and public data never says who holds a key, so no
+  rule over the lists alone could work (§Mutual claims, §Verification;
+  FORKS F40). Status lists gain an issuer-declared signed `ttl`, after
+  IETF Token Status List `sub`/`ttl` (§Status lists; FORKS F39). The
+  status fetch's HTTP contract is pinned — redirects off, resolve-then-
+  check, egress guard, size cap — after OWASP's SSRF guidance and the JWT
+  `jku`/`x5u` history (§Verification step 7, §Conformance; FORKS F42).
 
 ## References
 

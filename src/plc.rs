@@ -382,15 +382,26 @@ pub fn derive_did(signed_op_cbor: &[u8]) -> crate::Did {
 /// base32 hash to the 24-character DID *suffix*; a `prev` is a full multiformats
 /// CID (`bafyrei…`).
 pub fn cid(signed_op_cbor: &[u8]) -> String {
-    let hash = Sha256::digest(signed_op_cbor);
-    // multibase `b` (base32) over: CIDv1 (0x01), dag-cbor (0x71), then the
-    // multihash (sha2-256 = 0x12, length 0x20 = 32 bytes, then the hash bytes).
-    let mut bytes = Vec::with_capacity(4 + hash.len());
-    bytes.extend_from_slice(&[0x01, 0x71, 0x12, 0x20]);
-    bytes.extend_from_slice(&hash);
+    cid_string(&cid_bytes(signed_op_cbor))
+}
+
+/// The raw CIDv1 bytes of some DAG-CBOR: CIDv1 (0x01), dag-cbor (0x71), then
+/// the multihash (sha2-256 = 0x12, length 0x20 = 32 bytes, then the hash).
+/// The one construction every content identity in the crate — PLC operation
+/// CIDs and ACP record CIDs alike — is built from.
+pub fn cid_bytes(dag_cbor: &[u8]) -> [u8; 36] {
+    let hash = Sha256::digest(dag_cbor);
+    let mut bytes = [0u8; 36];
+    bytes[..4].copy_from_slice(&[0x01, 0x71, 0x12, 0x20]);
+    bytes[4..].copy_from_slice(&hash);
+    bytes
+}
+
+/// Render CID bytes as multibase `b` (base32 lowercase, no padding): `bafyrei…`.
+pub fn cid_string(cid: &[u8; 36]) -> String {
     format!(
         "b{}",
-        data_encoding::BASE32_NOPAD.encode(&bytes).to_lowercase()
+        data_encoding::BASE32_NOPAD.encode(cid).to_lowercase()
     )
 }
 
