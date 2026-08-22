@@ -102,13 +102,14 @@ pub enum Reason {
 pub enum Verdict {
     /// Every step passed.
     InForce {
-        /// Who vouched (attestation) or the two parties (relationship: the
-        /// half that was asked about first).
+        /// Who vouched (attestation), or — for a relationship — the
+        /// counterpart the asked-about half turned out to be paired with.
         attestor: Did,
-        /// The stated method, if any.
+        /// The stated method, if any. Relationships have none.
         method: Option<String>,
         /// Seconds until expiry — a freshness signal for the caller.
-        remaining_secs: i64,
+        /// `None` for a relationship: it has no expiry, it is severed.
+        remaining_secs: Option<i64>,
     },
     /// A step failed; see [`Reason`].
     NotInForce(Reason),
@@ -262,7 +263,7 @@ impl Verifier<'_> {
         Ok(Verdict::InForce {
             attestor: att.body.attestor,
             method: att.body.method,
-            remaining_secs: expires - now_s,
+            remaining_secs: Some(expires - now_s),
         })
     }
 
@@ -355,9 +356,9 @@ impl Verifier<'_> {
         }
 
         Ok(Verdict::InForce {
-            attestor: a_fetched.repository,
+            attestor: b_fetched.repository,
             method: None,
-            remaining_secs: i64::MAX,
+            remaining_secs: None,
         })
     }
 }
@@ -540,7 +541,7 @@ mod tests {
             } => {
                 assert_eq!(a, attestor());
                 assert_eq!(method.as_deref(), Some("email-challenge"));
-                assert_eq!(remaining_secs, 21 * 86_400);
+                assert_eq!(remaining_secs, Some(21 * 86_400));
             }
             other => panic!("{other:?}"),
         }
@@ -1231,8 +1232,22 @@ mod tests {
     #[tokio::test]
     async fn pair_in_force_from_either_half() {
         let p = Pair::new();
-        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
-        assert!(p.verdict_from(&p.fox_half).await.is_in_force());
+        match p.verdict_from(&p.kit_half).await {
+            Verdict::InForce {
+                attestor,
+                method,
+                remaining_secs,
+            } => {
+                assert_eq!(attestor, fox(), "the counterpart is what was learned");
+                assert_eq!(method, None);
+                assert_eq!(remaining_secs, None, "relationships do not expire");
+            }
+            other => panic!("{other:?}"),
+        }
+        match p.verdict_from(&p.fox_half).await {
+            Verdict::InForce { attestor, .. } => assert_eq!(attestor, kit()),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[tokio::test]
