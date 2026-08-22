@@ -53,16 +53,16 @@ pub enum Reason {
     Expired,
     /// `issuedAt` is further in the future than [`CLOCK_SKEW_SECS`].
     NotYetValid,
-    /// Freshness was demanded and no copy of the status list was reachable — step 6.
-    StatusUnavailable,
-    /// Copies were reachable but none verified under the attestor's keys — step 6.
-    StatusUnverifiable,
-    /// The status list does not cover `status.index` — step 6.
-    StatusIndexOutOfRange,
-    /// The revocation bit is set — step 6.
-    Revoked,
-    /// The verifier's own policy declined — step 7.
+    /// The verifier's own policy declined — step 6.
     PolicyRejected(String),
+    /// Freshness was demanded and no copy of the status list was reachable — step 7.
+    StatusUnavailable,
+    /// Copies were reachable but none verified under the attestor's keys — step 7.
+    StatusUnverifiable,
+    /// The status list does not cover `status.index` — step 7.
+    StatusIndexOutOfRange,
+    /// The revocation bit is set — step 7.
+    Revoked,
 
     /// A relationship half (or its counterpart) is absent.
     HalfMissing,
@@ -184,8 +184,20 @@ impl Verifier<'_> {
             not_in_force!(Reason::NotYetValid);
         }
 
-        // 6. Revocation, when there is a pointer and the policy cares.
-        let mut status_checked = false;
+        // 6. Judgment — before any fetch the attestation could steer.
+        let ctx = PolicyContext {
+            attestor: &att.body.attestor,
+            method: att.body.method.as_deref(),
+            claim_kind: &claim.kind,
+            age_secs: now_s - issued,
+            remaining_secs: expires - now_s,
+            has_status: att.body.status.is_some(),
+        };
+        if let Decision::Reject(why) = self.policy.decide(&ctx) {
+            not_in_force!(Reason::PolicyRejected(why));
+        }
+
+        // 7. Revocation, when there is a pointer and the policy cares.
         if let Some(status) = &att.body.status
             && self.policy.demands_freshness()
         {
@@ -196,7 +208,7 @@ impl Verifier<'_> {
             let Some(list) = newest_verifiable(
                 &copies,
                 &att.body.attestor,
-                &status.list,
+                status.list.as_str(),
                 &keys.verification,
             ) else {
                 not_in_force!(Reason::StatusUnverifiable);
@@ -204,27 +216,15 @@ impl Verifier<'_> {
             match list.is_set(status.index) {
                 None => not_in_force!(Reason::StatusIndexOutOfRange),
                 Some(true) => not_in_force!(Reason::Revoked),
-                Some(false) => status_checked = true,
+                Some(false) => {}
             }
         }
 
-        // 7. Judgment.
-        let ctx = PolicyContext {
-            attestor: &att.body.attestor,
-            method: att.body.method.as_deref(),
-            claim_kind: &claim.kind,
-            age_secs: now_s - issued,
+        Ok(Verdict::InForce {
+            attestor: att.body.attestor,
+            method: att.body.method,
             remaining_secs: expires - now_s,
-            status_checked,
-        };
-        match self.policy.decide(&ctx) {
-            Decision::Reject(why) => not_in_force!(Reason::PolicyRejected(why)),
-            Decision::Accept => Ok(Verdict::InForce {
-                attestor: att.body.attestor,
-                method: att.body.method,
-                remaining_secs: expires - now_s,
-            }),
-        }
+        })
     }
 
     /// A mutual claim, starting from either half: both halves exist, name
@@ -408,7 +408,7 @@ mod tests {
             );
             body.method = Some("email-challenge".into());
             body.status = Some(StatusRef {
-                list: STATUS_URL.into(),
+                list: STATUS_URL.parse().unwrap(),
                 index: INDEX,
             });
             let att = sign(body, Repository(&kit()), &attestor_key).unwrap();
@@ -719,7 +719,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_status_pointer_skips_step_6() {
+    async fn rejected_attestor_causes_no_fetch() {
+        // Mallory self-attests in her own repo and points `status.list` at
+        // something she would like the verifier to request. The policy does
+        // not trust her, so the verifier never asks the mirror.
+        let mut w = World::new();
+        w.policy = BasicPolicy::trusting([attestor()]);
+        let mallory_key = key(43);
+        w.dids.publish(&mallory(), keys_of(&mallory_key));
+        let claim = Claim::new(
+            ClaimKind::Email,
+            serde_json::json!({ "address": "mallory@example.com" }),
+            dt("2026-08-20T09:00:00Z"),
+        )
+        .unwrap();
+        let (claim_uri, claim_cid) = w.repo.put(&mallory(), CLAIM_TYPE, "3kx2self", &claim);
+        let mut body = UnsignedAttestation::new(
+            StrongRef::new(claim_uri, &claim_cid),
+            mallory(),
+            mallory(),
+            dt("2026-08-20T10:00:00Z"),
+            dt("2026-09-19T10:00:00Z"),
+        );
+        body.status = Some(StatusRef {
+            list: "https://metadata.internal.example/latest/".parse().unwrap(),
+            index: 0,
+        });
+        let att = sign(body, Repository(&mallory()), &mallory_key).unwrap();
+        let (uri, _) = w
+            .repo
+            .put(&mallory(), ATTESTATION_TYPE, "3kx2selfatt", &att);
+        w.status.go_dark(); // would be Err — and counted — if consulted
+        let before = w.status.fetch_count();
+        let v = w
+            .verifier()
+            .verify_attestation(&uri, &dt(NOW))
+            .await
+            .unwrap();
+        assert!(matches!(reason(v), Reason::PolicyRejected(_)));
+        assert_eq!(
+            w.status.fetch_count(),
+            before,
+            "no fetch for a rejected attestor"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_status_pointer_skips_step_7() {
         let w = World::new();
         let mut body = w.attestation().body;
         body.status = None;
@@ -730,7 +776,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn policy_not_demanding_freshness_skips_step_6() {
+    async fn policy_not_demanding_freshness_skips_step_7() {
         let mut w = World::new();
         w.policy.demand_freshness = false;
         w.revoke(INDEX);

@@ -21,7 +21,7 @@ use serde::de::DeserializeOwned;
 use crate::Did;
 
 use super::error::CodecError;
-use super::record::{AtUri, RecordCid, from_canonical_bytes};
+use super::record::{AtUri, RecordCid, StatusUri, from_canonical_bytes};
 use super::sign::VerifyingKey;
 
 type BoxError = Box<dyn StdError + Send + Sync + 'static>;
@@ -153,11 +153,17 @@ pub trait DidResolver: Send + Sync {
 /// Returns **every copy it can find, unverified** — the origin, mirrors,
 /// caches. The verifier checks each signature and takes the newest that
 /// verifies; a stale or forged mirror can only lose, never win.
+///
+/// The verifier only calls this *after* its trust policy has accepted the
+/// attestor, and only with a [`StatusUri`] (already `https`, DNS host, no
+/// IP literal). An HTTP implementation should still route through an
+/// egress-guarded client the deployment injects — DNS rebinding and
+/// redirects are its concern, not the type's.
 #[async_trait]
 pub trait StatusSource: Send + Sync {
     /// All reachable copies of the artifact at `list`. Empty when none
     /// answered; `Err` only for a failure the caller should see.
-    async fn fetch(&self, list: &str) -> Result<Vec<Vec<u8>>, StatusFetchError>;
+    async fn fetch(&self, list: &StatusUri) -> Result<Vec<Vec<u8>>, StatusFetchError>;
 }
 
 #[cfg(test)]

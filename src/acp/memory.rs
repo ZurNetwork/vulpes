@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use serde::Serialize;
@@ -20,7 +20,7 @@ use super::ports::{
     DidResolver, FetchedRecord, KeyMaterial, RepoError, RepoReader, ResolveError, StatusFetchError,
     StatusSource,
 };
-use super::record::{AtUri, RecordCid, canonical_bytes};
+use super::record::{AtUri, RecordCid, StatusUri, canonical_bytes};
 
 /// Every subject's repo at once, keyed by at-uri.
 #[derive(Default)]
@@ -200,10 +200,12 @@ impl DidResolver for MemoryResolver {
 }
 
 /// Status-list mirrors: URL → every copy anyone has published there.
+/// Counts fetches, so a test can prove the verifier made none.
 #[derive(Default)]
 pub struct MemoryStatus {
     lists: Mutex<BTreeMap<String, Vec<Vec<u8>>>>,
     dark: AtomicBool,
+    fetches: AtomicUsize,
 }
 
 impl MemoryStatus {
@@ -231,11 +233,17 @@ impl MemoryStatus {
     pub fn go_dark(&self) {
         self.dark.store(true, Ordering::SeqCst);
     }
+
+    /// How many times the verifier asked — dark calls included.
+    pub fn fetch_count(&self) -> usize {
+        self.fetches.load(Ordering::SeqCst)
+    }
 }
 
 #[async_trait]
 impl StatusSource for MemoryStatus {
-    async fn fetch(&self, list: &str) -> Result<Vec<Vec<u8>>, StatusFetchError> {
+    async fn fetch(&self, list: &StatusUri) -> Result<Vec<Vec<u8>>, StatusFetchError> {
+        self.fetches.fetch_add(1, Ordering::SeqCst);
         if self.dark.load(Ordering::SeqCst) {
             return Err(StatusFetchError::new("mirrors unreachable"));
         }
@@ -243,7 +251,7 @@ impl StatusSource for MemoryStatus {
             .lists
             .lock()
             .expect("status lock")
-            .get(list)
+            .get(list.as_str())
             .cloned()
             .unwrap_or_default())
     }

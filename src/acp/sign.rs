@@ -459,14 +459,17 @@ mod tests {
             ),
             (
                 "status.list",
-                Box::new(|a| a.body.status.as_mut().unwrap().list.push('x')),
+                Box::new(|a| {
+                    a.body.status.as_mut().unwrap().list =
+                        "https://attest.example/status/2".parse().unwrap()
+                }),
             ),
             ("status removed", Box::new(|a| a.body.status = None)),
             (
                 "status added",
                 Box::new(|a| {
                     a.body.status = Some(StatusRef {
-                        list: "u".into(),
+                        list: "https://u.example/s".parse().unwrap(),
                         index: 0,
                     })
                 }),

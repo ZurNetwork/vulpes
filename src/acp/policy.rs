@@ -1,10 +1,14 @@
-//! Step 7: the verifier's own judgment.
+//! Step 6: the verifier's own judgment.
 //!
-//! Steps 1–6 of verification are facts the protocol lets anyone check. Step
-//! 7 is not: *is this attestor, using this method, at this age, sufficient
+//! Steps 1–5 of verification are facts the protocol lets anyone check. Step
+//! 6 is not: *is this attestor, using this method, at this age, sufficient
 //! for this decision?* The protocol supplies signals; the verifier supplies
 //! judgment — and the protocol never ranks attestors, so a policy that
 //! trusts "anyone" is as legitimate as one that trusts three names.
+//!
+//! Judgment comes **before** the status fetch (step 7) on purpose: the
+//! fetch goes to an address the attestation chose, and an attestor this
+//! verifier would reject anyway must not be able to make it perform I/O.
 //!
 //! [`TrustPolicy`] is the seam; [`BasicPolicy`] is the obvious
 //! implementation (allow-lists and an age cap). Anything richer — reputation,
@@ -16,7 +20,7 @@ use crate::Did;
 
 use super::record::ClaimKind;
 
-/// What step 7 concluded.
+/// What step 6 concluded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     /// The signals suffice for this verifier's purpose.
@@ -26,7 +30,7 @@ pub enum Decision {
     Reject(String),
 }
 
-/// The signals steps 1–6 established, handed to the policy.
+/// The signals steps 1–5 established, handed to the policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyContext<'a> {
     /// Who vouched.
@@ -39,20 +43,20 @@ pub struct PolicyContext<'a> {
     pub age_secs: i64,
     /// Seconds until `expiresAt` — remaining lifetime is a freshness signal.
     pub remaining_secs: i64,
-    /// Whether step 6 ran and found the bit clear. `false` when the
-    /// attestation carries no status pointer or the policy did not demand
-    /// freshness.
-    pub status_checked: bool,
+    /// Whether the attestation carries a status pointer at all. The lookup
+    /// itself runs after this decision (step 7), when
+    /// [`TrustPolicy::demands_freshness`] says so.
+    pub has_status: bool,
 }
 
 /// The verifier's trust policy.
 pub trait TrustPolicy: Send + Sync {
-    /// Whether step 6 (status-list lookup) runs when a status pointer is
+    /// Whether step 7 (status-list lookup) runs when a status pointer is
     /// present. A policy that does not care about same-day revocation can
     /// skip the fetch; expiry still applies regardless.
     fn demands_freshness(&self) -> bool;
 
-    /// Step 7.
+    /// Step 6.
     fn decide(&self, ctx: &PolicyContext<'_>) -> Decision;
 }
 
@@ -67,7 +71,7 @@ pub struct BasicPolicy {
     pub trusted_attestors: Option<BTreeSet<Did>>,
     /// `method` values this verifier accepts. `None` = any, including absent.
     pub accepted_methods: Option<BTreeSet<String>>,
-    /// Run step 6 when a status pointer is present.
+    /// Run step 7 when a status pointer is present.
     pub demand_freshness: bool,
     /// Reject attestations older than this many seconds, whatever their
     /// `expiresAt` — the verifier's own, tighter freshness bar.
@@ -134,7 +138,7 @@ mod tests {
             claim_kind: kind,
             age_secs: 9 * 86_400,
             remaining_secs: 21 * 86_400,
-            status_checked: true,
+            has_status: true,
         }
     }
 

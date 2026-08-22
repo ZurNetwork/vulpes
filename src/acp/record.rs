@@ -358,11 +358,118 @@ impl StrongRef {
     }
 }
 
+/// The address of a status-list artifact — `status.list` — validated at
+/// the boundary so a verifier can never be pointed at something it must not
+/// fetch.
+///
+/// This is attacker-influenced input: anyone can write an attestation with
+/// any `status.list` into their own repo. The rules (FORKS F29 precedent —
+/// unreachable by construction, not by a check that can be forgotten):
+/// `https` only; a DNS host, never an IP literal (which removes loopback,
+/// link-local and private ranges in one stroke) and never `localhost`; no
+/// userinfo; no whitespace. DNS rebinding is the egress guard's concern —
+/// the HTTP `StatusSource` should accept an injected client for exactly
+/// that. The same string is the list's identifier (see
+/// [`UnsignedStatusList::list`](super::status::UnsignedStatusList::list)).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct StatusUri(String);
+
+impl StatusUri {
+    /// Accept `https://<dns-host>[:port]/…` and nothing else.
+    pub fn parse(raw: &str) -> Result<Self, CodecError> {
+        let err = |detail: &str| CodecError::InvalidField {
+            field: "status.list",
+            detail: detail.to_string(),
+        };
+        if raw.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(err("contains whitespace or control characters"));
+        }
+        let rest = raw
+            .strip_prefix("https://")
+            .ok_or_else(|| err("must start with https://"))?;
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        if authority.contains('@') {
+            return Err(err("userinfo is not allowed"));
+        }
+        if authority.starts_with('[') {
+            return Err(err("IP literals are not allowed"));
+        }
+        let host = authority.rsplit_once(':').map_or(authority, |(h, port)| {
+            if port.chars().all(|c| c.is_ascii_digit()) {
+                h
+            } else {
+                authority
+            }
+        });
+        if host.is_empty() {
+            return Err(err("missing host"));
+        }
+        if host.eq_ignore_ascii_case("localhost")
+            || host.to_ascii_lowercase().ends_with(".localhost")
+        {
+            return Err(err("localhost is not allowed"));
+        }
+        let looks_like_ipv4 = host
+            .split('.')
+            .all(|l| !l.is_empty() && l.chars().all(|c| c.is_ascii_digit()));
+        if looks_like_ipv4 {
+            return Err(err("IP literals are not allowed"));
+        }
+        if !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+        {
+            return Err(err("host must be a DNS name"));
+        }
+        Ok(Self(raw.to_string()))
+    }
+
+    /// The string form.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for StatusUri {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Self::parse(&String::deserialize(d)?).map_err(de::Error::custom)
+    }
+}
+
+impl fmt::Display for StatusUri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::str::FromStr for StatusUri {
+    type Err = CodecError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl TryFrom<&str> for StatusUri {
+    type Error = CodecError;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Self::parse(s)
+    }
+}
+
+impl TryFrom<String> for StatusUri {
+    type Error = CodecError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::parse(&s)
+    }
+}
+
 /// Where an attestation's revocation bit lives.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StatusRef {
-    /// URI of the signed status-list artifact (any mirror may serve it).
-    pub list: String,
+    /// The signed status-list artifact's identifier and address (any mirror
+    /// may serve it). Validated: see [`StatusUri`].
+    pub list: StatusUri,
     /// Bit index of this attestation in that list.
     pub index: u64,
 }
@@ -734,7 +841,7 @@ pub(crate) mod fixtures {
     pub fn body_full() -> UnsignedAttestation {
         let mut b = body();
         b.status = Some(StatusRef {
-            list: "https://attest.example/status/1".into(),
+            list: "https://attest.example/status/1".parse().unwrap(),
             index: 4127,
         });
         b.method = Some("email-challenge".into());
@@ -1026,6 +1133,45 @@ mod tests {
         for bad in ["", "https://x", "at://", "at:///c/r", "at://did:plc:a b/c"] {
             assert!(AtUri::parse(bad).is_err(), "{bad} accepted");
         }
+    }
+
+    #[test]
+    fn status_uri_rejects_what_a_verifier_must_not_fetch() {
+        for ok in [
+            "https://attest.example/status/1",
+            "https://attest.example:8443/status/1?x=1#f",
+            "https://a-b.example",
+        ] {
+            StatusUri::parse(ok).unwrap_or_else(|e| panic!("{ok}: {e}"));
+        }
+        for bad in [
+            "",
+            "http://attest.example/status/1",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://127.0.0.1/",
+            "https://10.0.0.5:5432/",
+            "https://[::1]/",
+            "https://[fe80::1]:80/",
+            "https://localhost/status",
+            "https://LOCALHOST:8443/status",
+            "https://pds.localhost/status",
+            "https://user:pw@attest.example/",
+            "https:///status",
+            "https://attest.example/st atus",
+            "https://attest_example/",
+            "ftp://attest.example/",
+        ] {
+            assert!(StatusUri::parse(bad).is_err(), "{bad} accepted");
+        }
+        // And the same rule applies on decode.
+        let mut b = body_full();
+        b.status.as_mut().unwrap().index = 0;
+        let bytes = canonical_bytes(&b).unwrap();
+        let pos = bytes.windows(8).position(|w| w == b"https://").unwrap();
+        let mut evil = bytes.clone();
+        evil[pos..pos + 8].copy_from_slice(b"http://1");
+        assert!(from_canonical_bytes::<UnsignedAttestation>(&evil).is_err());
+        from_canonical_bytes::<UnsignedAttestation>(&bytes).unwrap();
     }
 
     #[test]
