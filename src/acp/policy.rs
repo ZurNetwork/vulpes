@@ -100,7 +100,10 @@ pub struct BasicPolicy {
     /// default: the spec allows pointer-less attestations (irrevocable
     /// until expiry). A verifier that needs same-day revocation for every
     /// vouch it acts on turns this on — otherwise an attestor can simply
-    /// omit the pointer and `demand_freshness` never fires.
+    /// omit the pointer and `demand_freshness` never fires. It does **not**
+    /// imply `demand_freshness`: with that off, a pointer is required but
+    /// never read. Set both when "must be revocable" means "must be
+    /// checked".
     pub require_status: bool,
 }
 
