@@ -34,7 +34,7 @@ infrastructure down and every issued vouch still verifies.
       `MAX_STATUS_LIST_BYTES` · at most `MAX_STATUS_COPIES` copies returned.
       The `DidResolver` reads rotation keys from `/data` in directory order.
 - [x] **`verify_attestation` end-to-end** — the spec's 7 steps as one public
-      function + mutual-claim verification, over three ports (`RepoReader`,
+      function (+ mutual-claim verification, retired by F45), over three ports (`RepoReader`,
       `DidResolver`, `StatusSource`; FORKS F40) with the status-list
       artifact (F39) and `TrustPolicy`. Contains the **`kill_test`** —
       passing against in-memory fakes; it re-runs against the Docker PDS
@@ -52,16 +52,28 @@ infrastructure down and every issued vouch still verifies.
 - [ ] **Expiry & renewal** — per-kind lifetimes, the auto-renew loop
       (re-runs diligence), human vouches never auto-renew, the
       strand-on-attestor-death test.
-- [ ] **CCS relationship pairs** — write / sever / verify both halves.
-      ⚠ Rule the **"unanswered half"** fork first (a public first-half names
-      a counterpart who never agreed; commitment-first is the candidate fix).
+- [ ] **CCS as attestations** (FORKS F45, ruled 2026-08-22) — delete the
+      relationship path (`Relationship`, `RelKind`, `verify_relationship`,
+      the counterpart search, the `relationship` lexicon); move the seniority
+      check and custodian discovery into pure `acp::custody` helpers and drop
+      `TrustPolicy::custodian_keys`; define the `owns` / `memberOf` /
+      `hasMember` / `consentsTo` kinds (who claims, who attests); show the
+      consumer pattern — verify, then check seniority — in the explainer.
+      The "unanswered half" fork is dissolved: an unattested claim is a claim.
+- [ ] **Mint layout D** (FORKS F46) — `MintPolicy` mints
+      `[user_cold, vulpes_recovery, zurfur_operational]` by default, offers
+      E, refuses F/G; the user key is generated client-side.
 
 ## Owed, non-blocking
 
 - [ ] DNS `_lexicon` TXT on `acp.got-paws.net` → the schema-hosting repo's
       DID (needs Zuri's DNS panel; publication, not correctness).
 - [ ] Spec sentence: `attestor == subject` is valid, adds recency +
-      exportability, adds no trust (ruled in conversation 2026-08-12).
+      exportability, adds no trust (ruled in conversation 2026-08-12). Now
+      load-bearing: it is also the answer to self-ownership (F45).
+- [ ] Confluence Ruling Record (49184769): record F45 (CCS is attestations)
+      and F46 (rotation layout D) — they supersede the 2026-08-11
+      `owns ↔ ownedBy + keys` shape.
 
 ## Later (in rough order)
 
@@ -69,7 +81,12 @@ infrastructure down and every issued vouch still verifies.
   catalog, two-signature linking, private Index store, security review) —
   Index-side, independent of the ACP lane.
 - **Zurfur consumes the ACP** — first external consumer; the crate-swap
-  ticket (ZMVP, FORKS F9) and characters-on-ATProto (ZMVP-197).
+  ticket (ZMVP, FORKS F9) and characters-on-ATProto (ZMVP-197). Includes
+  the ownership pattern: verify the `owns` attestation, then the seniority
+  helper against a complete custodian set.
+- **PLC-log watcher** (Zurfur-side) — alert a user to any operation on
+  their DID they did not initiate, inside the 72 h window. The window is
+  did:plc's; detection is the lever (F46).
 - **The private lane** — holder-held VC/OID4VP for claims whose existence is
   private; Path A (BBS) vs Path B (SD-JWT-VC) decided then. The old VUL-2
   scaffolding re-scopes here.
