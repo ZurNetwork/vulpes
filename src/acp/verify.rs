@@ -24,7 +24,7 @@ use super::ports::{DidResolver, FetchedRecord, KeyMaterial, RepoReader, StatusSo
 use super::record::{
     AtUri, Attestation, Claim, Datetime, RELATIONSHIP_TYPE, RelKind, Relationship,
 };
-use super::sign::{Repository, VerifyingKey, verify_sig};
+use super::sign::{Repository, verify_sig};
 use super::status::newest_verifiable;
 
 /// Tolerated clock skew when checking `issuedAt` is not in the future.
@@ -336,6 +336,7 @@ mod tests {
     use atrium_crypto::keypair::{Did as _, Secp256k1Keypair};
 
     use super::*;
+    use crate::acp::VerifyingKey;
     use crate::acp::memory::{MemoryRepo, MemoryResolver, MemoryStatus};
     use crate::acp::policy::BasicPolicy;
     use crate::acp::record::fixtures::{attestor, kit, mallory};

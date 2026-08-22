@@ -178,17 +178,27 @@ pub struct VerifyingKey {
 impl VerifyingKey {
     /// From a `did:key:z…` string.
     pub fn from_did_key(did_key: &str) -> Result<Self, SigError> {
-        let (alg, sec1) = atrium_crypto::did::parse_did_key(did_key)
-            .map_err(|e| SigError::UnsupportedAlgorithm(e.to_string()))?;
-        Ok(Self {
-            alg: SigAlg::from_atrium(alg),
-            sec1,
-        })
+        let multikey = did_key
+            .strip_prefix("did:key:")
+            .ok_or_else(|| SigError::Malformed("expected a did:key".into()))?;
+        Self::from_multikey(multikey)
     }
 
     /// From a multibase multikey (`z…`, multicodec-prefixed) — the
     /// `publicKeyMultibase` of a `Multikey` verification method.
     pub fn from_multikey(multikey: &str) -> Result<Self, SigError> {
+        // `atrium-crypto` slices the first two decoded bytes unchecked; a
+        // key string that decodes to fewer would panic the verifier on
+        // public input (a DID document is anyone's to write). Four base58
+        // characters after the `z` decode to at least three bytes.
+        let Some(body) = multikey.strip_prefix('z') else {
+            return Err(SigError::Malformed(
+                "expected a base58btc multikey (`z…`)".into(),
+            ));
+        };
+        if body.len() < 4 || !body.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return Err(SigError::Malformed("multikey too short".into()));
+        }
         let (alg, sec1) = atrium_crypto::did::parse_multikey(multikey)
             .map_err(|e| SigError::UnsupportedAlgorithm(e.to_string()))?;
         Ok(Self {
@@ -553,5 +563,31 @@ mod tests {
             Err(SigError::UnsupportedAlgorithm(_))
         ));
         assert!(VerifyingKey::from_did_key("not a did").is_err());
+    }
+
+    /// A DID document is public input; a malformed key in it must be an
+    /// error, never a panic (`atrium-crypto` slices `decoded[..2]` unchecked).
+    #[test]
+    fn short_or_garbage_keys_are_errors_not_panics() {
+        for bad in [
+            "did:key:z",
+            "did:key:z1",
+            "did:key:zQ",
+            "did:key:zQ3",
+            "did:key:",
+            "did:key:Q3shaaaaaaaa",
+            "did:key:z!!!!!",
+            "did:key:zQ3shaaaaaa",
+        ] {
+            assert!(
+                matches!(
+                    VerifyingKey::from_did_key(bad),
+                    Err(SigError::Malformed(_) | SigError::UnsupportedAlgorithm(_))
+                ),
+                "{bad}"
+            );
+        }
+        assert!(VerifyingKey::from_multikey("z").is_err());
+        assert!(VerifyingKey::from_multikey("").is_err());
     }
 }
