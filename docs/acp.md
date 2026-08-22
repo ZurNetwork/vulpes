@@ -446,6 +446,11 @@ private layer exists to prevent.
   until rotation. Mitigations: PLC rotation (which invalidates the old key
   for step-4 verification), short expiries, status lists. Attestors should
   keep signing keys distinct from rotation keys.
+- **The attestor's custodian.** On a hosted PDS the custodian holds a
+  `verificationMethod` key of the attestor's DID and can sign attestations
+  in its name. This is inherent to custody, not to ACP; an attestor that
+  cannot accept it self-hosts its signing key (the senior-key rule keeps
+  the DID recoverable from a custodian either way).
 - **Replay/transplant.** Attestations bind claim CID, expiry, and — through
   the `$sig` repository binding (§Signing) — the very repo they live in, so
   they cannot be transplanted to another subject, claim version, or repo:

@@ -95,7 +95,12 @@ impl FetchedRecord {
 ///
 /// Implemented over `com.atproto.repo.getRecord` / `listRecords` (or a CAR
 /// export, or a mirror). The implementation must set
-/// [`FetchedRecord::repository`] to the repository it **actually read from**.
+/// [`FetchedRecord::repository`] to the repository it **actually read from**,
+/// and **must verify the repo's commit signature** against that DID's
+/// signing key before returning anything: for relationship halves — which
+/// carry no signature of their own — the commit signature is the only
+/// cryptographic assertion that the repo owner said it, and the verifier
+/// relies on this port for it.
 #[async_trait]
 pub trait RepoReader: Send + Sync {
     /// One record by address. `Ok(None)` when the record does not exist.
