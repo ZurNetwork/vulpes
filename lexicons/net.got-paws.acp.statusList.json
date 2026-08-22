@@ -21,6 +21,11 @@
           "format": "datetime",
           "description": "When this version was published. The newest verifiable copy wins."
         },
+        "ttl": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional. Seconds after issuedAt for which the attestor vouches for this version (Token Status List ttl). Past it a copy is not checkable, never 'not revoked'. Absent: no issuer bound — the newest verifiable copy stands until the attestations it covers expire."
+        },
         "bits": {
           "type": "bytes",
           "maxLength": 1048576,

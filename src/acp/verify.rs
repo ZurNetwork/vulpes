@@ -85,10 +85,12 @@ pub enum Reason {
     StatusUnavailable,
     /// Copies were reachable but none verified under the attestor's keys — step 7.
     StatusUnverifiable,
-    /// The newest verifiable status list is older than the policy's
-    /// [`max_status_age_secs`](super::policy::TrustPolicy::max_status_age_secs)
-    /// — step 7. Only reachable when a policy sets that bound; with it, an
-    /// adversary withholding fresh copies lands here, never on in-force.
+    /// The newest verifiable status list is older than a freshness bound
+    /// — step 7: the attestor's own signed `ttl`, the policy's
+    /// [`max_status_age_secs`](super::policy::TrustPolicy::max_status_age_secs),
+    /// whichever is tighter. Only reachable when one of them is set; with
+    /// either, an adversary withholding fresh copies lands here, never on
+    /// in-force.
     StatusStale,
     /// The status list does not cover `status.index` — step 7.
     StatusIndexOutOfRange,
@@ -270,9 +272,18 @@ impl Verifier<'_> {
             ) else {
                 not_in_force!(Reason::StatusUnverifiable);
             };
-            let list_issued = list.body.issued_at.to_unix();
-            if let Some(max) = self.policy.max_status_age_secs()
-                && now_s - list_issued > max
+            // Two freshness bounds, the tighter wins: the attestor's own
+            // `ttl` inside the signed list, and the verifier's policy. A
+            // list with neither stands however old it is (the kill test:
+            // a dead attestor's last list ages out with its attestations).
+            let list_age = now_s - list.body.issued_at.to_unix();
+            let issuer_bound = list.body.ttl.and_then(|t| i64::try_from(t).ok());
+            let bound = match (issuer_bound, self.policy.max_status_age_secs()) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            if let Some(max) = bound
+                && list_age > max
             {
                 not_in_force!(Reason::StatusStale);
             }
@@ -979,6 +990,43 @@ mod tests {
             .to_bytes()
             .unwrap(),
         );
+        assert!(w.verdict().await.is_in_force());
+    }
+
+    #[tokio::test]
+    async fn issuer_declared_ttl_bounds_a_copy() {
+        // The attestor signs "this version is good for seven days". NOW is
+        // nine days after the fixture list: not checkable, whatever the
+        // policy thinks. A thirty-day ttl is still evidence.
+        let mut w = World::new();
+        let publish = |w: &World, ttl: u64| {
+            w.status.clear(STATUS_URL);
+            let l =
+                UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-20T10:12:00Z"), 8192)
+                    .with_ttl(ttl);
+            w.status.publish(
+                STATUS_URL,
+                sign_status_list(l, &w.attestor_key)
+                    .unwrap()
+                    .to_bytes()
+                    .unwrap(),
+            );
+        };
+        publish(&w, 7 * 86_400);
+        assert_eq!(reason(w.verdict().await), Reason::StatusStale);
+        publish(&w, 30 * 86_400);
+        assert!(w.verdict().await.is_in_force());
+        // The tighter bound wins in both directions: a policy stricter than
+        // the ttl, and a ttl stricter than the policy.
+        w.policy.max_status_age_secs = Some(86_400);
+        assert_eq!(reason(w.verdict().await), Reason::StatusStale);
+        w.policy.max_status_age_secs = Some(365 * 86_400);
+        publish(&w, 86_400);
+        assert_eq!(reason(w.verdict().await), Reason::StatusStale);
+        // A ttl that does not fit i64 bounds nothing rather than panicking
+        // or rejecting — it is an attestor saying "effectively forever".
+        publish(&w, u64::MAX);
+        w.policy.max_status_age_secs = None;
         assert!(w.verdict().await.is_in_force());
     }
 

@@ -248,6 +248,10 @@ record net.got-paws.acp.statusList {
                       // of every attestation it covers (a signed copy of one
                       // list cannot stand in for another)
   issuedAt: datetime  // newest verifiable copy wins
+  ttl?:     integer   // seconds after issuedAt the attestor vouches for this
+                      // version; past it a copy is not checkable. Absent: no
+                      // issuer bound — the newest verifiable copy stands until
+                      // the attestations it covers expire
   bits:     bytes     // one bit per issued attestation
   sig:      bytes     // signature over the CIDv1 of the record minus `sig`
 }
@@ -272,7 +276,11 @@ a list from any address, but the identifier the attestor signed is the one
 an attestation must point at. Identity-over-location is what lets mirrors
 outlive the attestor's domain (the kill test). An index beyond the bitstring is
 **not checkable** (treated as not in force when freshness is demanded),
-never "not revoked". Reference: `src/acp/status.rs`.
+never "not revoked". Both `list` and `ttl` follow the IETF Token Status
+List's `sub` and `ttl` (FORKS F39): the issuer names the list and may bound
+how long a copy is evidence; a verifier applies the tighter of `ttl` and its
+own policy bound, and a list with neither stands until the attestations it
+covers expire. Reference: `src/acp/status.rs`.
 
 ## Expiry and renewal
 
@@ -365,6 +373,8 @@ To verify an attestation, a verifier:
    fetch is *not checkable*, never malformed and never "not revoked". The
    trust decision precedes the fetch precisely so that an untrusted
    attestor cannot cause a verifier to make a request.
+   Past the list's own `ttl` (when it declares one) or the verifier's policy
+   bound, whichever is tighter, a copy is *not checkable*.
    The newest verifiable copy wins however old it is — a list published
    before the attestation was issued is still the attestor's last word,
    and must stay checkable after the attestor dies (§The kill test).

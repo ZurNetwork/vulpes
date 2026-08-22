@@ -58,6 +58,20 @@ satisfied *any* pointer — the status-list analogue of the transplant the
 `$sig` binding closes for attestations. `list` is an identifier, not a fetch
 URL, so mirrors stay free to serve it from anywhere (kill test intact).
 
+**Amended again 2026-08-22 (ruled by the Engineer after sourced research):**
+the IETF Token Status List draft (draft-ietf-oauth-status-list) is the
+direct precedent for both amendments and the shape now matches it: its
+Status List Token `sub` "MUST specify the URI of the Status List Token" and
+"MUST be equal to that of the `uri` claim" in the referenced token — our
+`list`; and it carries `iat` (REQUIRED) with `exp`/`ttl` (RECOMMENDED) so
+the *issuer* states how long a copy is evidence. The signed body gains
+`ttl: Option<u64>` seconds after `issuedAt`. The verifier applies the
+tighter of `ttl` and its policy's `max_status_age_secs`; a list with
+neither stands until the attestations it covers expire, so a dead
+attestor's last list still ages out rather than failing closed (kill
+test). W3C Bitstring Status List makes the `id`/`statusListCredential`
+match only a MAY — the gap the first amendment closed.
+
 ### F40. The verifier's I/O is three vulpes-owned `#[async_trait]` ports, and the attestor is not one of them
 
 **Where:** `src/acp/ports.rs`, `src/acp/verify.rs`.

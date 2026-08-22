@@ -105,6 +105,17 @@ pub struct UnsignedStatusList {
     pub list: String,
     /// When this version was published. Newest verifiable wins.
     pub issued_at: Datetime,
+    /// How long, in seconds after `issued_at`, the attestor vouches for
+    /// this version — the issuer-declared freshness bound (IETF Token
+    /// Status List's `ttl`; FORKS F39, amended). Past it a copy is *not
+    /// checkable*, never "not revoked". Absent means the attestor declares
+    /// no bound: the newest verifiable copy stands until the attestations
+    /// it covers expire — a dead attestor's last list ages out with them
+    /// (the kill test). A verifier's own
+    /// [`max_status_age_secs`](super::policy::TrustPolicy::max_status_age_secs)
+    /// applies on top; the tighter bound wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<u64>,
     /// One bit per attestation; set = revoked.
     pub bits: BitString,
 }
@@ -123,8 +134,16 @@ impl UnsignedStatusList {
             attestor,
             list: list.into(),
             issued_at,
+            ttl: None,
             bits: BitString::with_capacity_bits(capacity_bits),
         }
+    }
+
+    /// Declare how long this version stays evidence (see
+    /// [`UnsignedStatusList::ttl`]).
+    pub fn with_ttl(mut self, secs: u64) -> Self {
+        self.ttl = Some(secs);
+        self
     }
 
     /// The CID the attestor signs.
@@ -300,6 +319,27 @@ mod tests {
         }
         let body_bytes = canonical_bytes(&signed.body).unwrap();
         assert!(body_bytes.windows(LIST.len()).any(|w| w == LIST.as_bytes()));
+        // Without a ttl the field is absent, never null — the bytes above
+        // are unchanged by its existence. With one it is inside the signed
+        // body, ordered after `sig` (same length, 's' < 't').
+        assert!(!bytes.windows(3).any(|w| w == b"ttl"));
+        let with_ttl = sign_status_list(
+            list_at("2026-08-20T10:12:00Z", &[4127]).with_ttl(7 * 86_400),
+            &k,
+        )
+        .unwrap();
+        let tb = with_ttl.to_bytes().unwrap();
+        let back = StatusList::from_bytes(&tb).unwrap();
+        assert_eq!(back.body.ttl, Some(7 * 86_400));
+        verify_status_list(&back, &[vk(&k)]).unwrap();
+        let sig_pos = tb.windows(3).position(|w| w == b"sig").unwrap();
+        let ttl_pos = tb.windows(3).position(|w| w == b"ttl").unwrap();
+        let bits_pos = tb.windows(4).position(|w| w == b"bits").unwrap();
+        assert!(sig_pos < ttl_pos && ttl_pos < bits_pos);
+        // And it is signed: changing it breaks the signature.
+        let mut forged = back.clone();
+        forged.body.ttl = Some(365 * 86_400);
+        assert!(verify_status_list(&forged, &[vk(&k)]).is_err());
     }
 
     fn now() -> Datetime {
