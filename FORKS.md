@@ -134,6 +134,32 @@ Engineer after sourced research):**
   the verifier never uses. `DidResolver::keys` sources them from the PLC
   directory's `/data` (or the audit log), never from the DID document.
 
+### F42. A status-list fetcher is a network policy, not a URL parser
+
+**Where:** `src/acp/ports.rs` (`StatusSource`), `src/acp/record.rs`
+(`StatusUri::fetchable`), `docs/acp.md` §Verification step 7, §Conformance.
+
+The 2026-08-21 SSRF fix put the trust decision ahead of the status fetch
+and added `StatusUri::fetchable` — a syntactic denylist (scheme, IP
+literals in every WHATWG spelling, special-use names, label count). The
+re-verification found bypasses on the first pass (`localhost.localdomain`,
+bare names, hex IPv4) and would keep finding them: OWASP's SSRF cheat sheet
+is blunt that deny-lists are bypass-prone and "URLs are difficult to
+validate and the parser can be abused", and the JWT `jku`/`x5u` history
+(a decade of IMDS pivots, still producing CVEs in 2026) says the same.
+IETF Token Status List orders "validate the referenced token, then fetch";
+W3C Bitstring Status List has no SSRF text at all.
+
+**Ruled (Engineer, 2026-08-22): keep `fetchable()` in the pure lane — it
+costs nothing and removes the cheap cases without DNS — and pin the
+contract the HTTP implementation must meet when the PDS-client line lands:
+redirects disabled; A/AAAA resolved and non-global addresses refused at
+connect time (the only answer to rebinding); an injected egress-guarded
+client (`with_client`, as `HttpPlcDirectory`); response size capped at
+`MAX_STATUS_LIST_BYTES`.** The spec says "necessary, not sufficient" in so
+many words so that no conforming verifier mistakes the syntax check for the
+defense.
+
 ### F41. `Datetime::to_unix` is hand-rolled
 
 **Where:** `src/acp/record.rs`.

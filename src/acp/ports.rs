@@ -171,9 +171,25 @@ pub trait DidResolver: Send + Sync {
 /// attestor and after [`StatusUri::fetchable`] passed (an `https` URL
 /// with a public DNS host — no IP literal in any spelling, no special-use
 /// name — or an `at://` identifier the implementation resolves through the
-/// repo path). An HTTP implementation should still route through an
-/// egress-guarded client the deployment injects — DNS rebinding and
-/// redirects are its concern, not the type's.
+/// repo path).
+///
+/// That syntactic check is **necessary, not sufficient** (FORKS F42): the
+/// list address is attacker-influenced input and a URL parser is not a
+/// network policy. An HTTP implementation
+///
+/// - **MUST** disable redirects — a public host that 302s to
+///   `169.254.169.254` is the classic bypass;
+/// - **MUST** resolve the host (A and AAAA) and refuse to connect to any
+///   non-global address — loopback, link-local, private, CGNAT, ULA,
+///   IPv4-mapped — *at connect time*, against the resolved addresses, not
+///   the name (DNS rebinding);
+/// - **SHOULD** run behind an egress guard the deployment injects (the
+///   `with_client` pattern of `HttpPlcDirectory`), so the network says no
+///   even if the code is wrong;
+/// - **SHOULD** cap the response at
+///   [`MAX_STATUS_LIST_BYTES`](super::status::MAX_STATUS_LIST_BYTES) and
+///   bound the copies it returns — the verifier skips oversize copies, but
+///   it cannot un-download them.
 #[async_trait]
 pub trait StatusSource: Send + Sync {
     /// All reachable copies of the artifact at `list`. Empty when none

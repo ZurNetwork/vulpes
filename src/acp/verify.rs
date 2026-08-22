@@ -304,7 +304,7 @@ impl Verifier<'_> {
     /// A mutual claim, starting from either half: both halves exist, name
     /// each other, form a defined pair, and — for ownership-tier kinds — the
     /// owner holds a rotation key of the owned DID senior to every
-    /// custodian's (see [`holds_senior_rotation_key`]).
+    /// custodian's (FORKS F40; [`Reason::NoKeyControl`] states the rule).
     ///
     /// The trust policy is consulted for exactly one thing here, its
     /// [`custodian_keys`](super::policy::TrustPolicy::custodian_keys):

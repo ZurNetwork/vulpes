@@ -372,7 +372,11 @@ To verify an attestation, a verifier:
    route the fetch through an egress guard. A list the verifier will not
    fetch is *not checkable*, never malformed and never "not revoked". The
    trust decision precedes the fetch precisely so that an untrusted
-   attestor cannot cause a verifier to make a request.
+   attestor cannot cause a verifier to make a request. Syntactic validation
+   is necessary, not sufficient: an HTTP fetcher MUST disable redirects,
+   MUST resolve the host and refuse non-global addresses at connect time
+   (DNS rebinding), SHOULD sit behind an egress guard, and SHOULD cap the
+   response size (FORKS F42).
    Past the list's own `ttl` (when it declares one) or the verifier's policy
    bound, whichever is tighter, a copy is *not checkable*.
    The newest verifiable copy wins however old it is — a list published
@@ -415,7 +419,12 @@ Conformance is per role:
 - must reject expired attestations and unresolved claim references;
 - must treat a single-halved mutual claim as not in force;
 - must not treat any attestor — including the reference instance — as
-  privileged by protocol.
+  privileged by protocol;
+- must decide trust before fetching a status list, and must not fetch an
+  unvalidated `status.list` (step 7): no redirects, resolved addresses
+  checked against non-global ranges, egress guarded where possible;
+- must name the custodians whose rotation keys never count as an owner's
+  before acting on an ownership-tier mutual claim (§Mutual claims).
 
 **Custodians** (PDS hosts, wallet services)
 - must not hold rotation keys senior to the subject's own for any DID they
@@ -545,6 +554,17 @@ private layer exists to prevent.
   (FORKS F40, amended). The status-list body gains a signed `list`
   identifier so one attestor's lists are not interchangeable
   (§Status lists; FORKS F39, amended).
+- **2026-08-22** — research-backed rulings on the three review forks.
+  Ownership key control: the verifier names the custodians (policy
+  `custodian_keys`); an owner key that is not a custodian's must sit above
+  every custodian key in the owned DID's rotation list — did:plc allows
+  key reuse across DIDs and public data never says who holds a key, so no
+  rule over the lists alone could work (§Mutual claims, §Verification;
+  FORKS F40). Status lists gain an issuer-declared signed `ttl`, after
+  IETF Token Status List `sub`/`ttl` (§Status lists; FORKS F39). The
+  status fetch's HTTP contract is pinned — redirects off, resolve-then-
+  check, egress guard, size cap — after OWASP's SSRF guidance and the JWT
+  `jku`/`x5u` history (§Verification step 7, §Conformance; FORKS F42).
 
 ## References
 

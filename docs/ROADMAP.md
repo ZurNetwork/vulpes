@@ -28,7 +28,11 @@ infrastructure down and every issued vouch still verifies.
       fetch-and-check, local PDS in Docker as the test bed. Now concretely:
       jacquard-backed `RepoReader` / `DidResolver` / `StatusSource` (and a
       `RepoWriter`), the `$bytes` JSON↔DAG-CBOR boundary, and the kill test
-      re-run against the container.
+      re-run against the container. The HTTP `StatusSource` meets FORKS
+      F42: redirects off · resolve A/AAAA and refuse non-global addresses at
+      connect time · injected egress-guarded client · response capped at
+      `MAX_STATUS_LIST_BYTES` · at most `MAX_STATUS_COPIES` copies returned.
+      The `DidResolver` reads rotation keys from `/data` in directory order.
 - [x] **`verify_attestation` end-to-end** — the spec's 7 steps as one public
       function + mutual-claim verification, over three ports (`RepoReader`,
       `DidResolver`, `StatusSource`; FORKS F40) with the status-list
