@@ -48,6 +48,7 @@ macro_rules! opaque_error {
         }
     };
 }
+#[cfg(feature = "acp")]
 pub(crate) use opaque_error;
 
 opaque_error!(
