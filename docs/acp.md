@@ -33,9 +33,10 @@ where a design choice here seems arbitrary, the manifesto is why.
    resolve the attestor's DID, fetch its key, verify the signature, check
    expiry, optionally check a mirrorable **status list**. No call to the
    attestor is made.
-5. Relationships between two subjects use **mutual claims** (the Consensual
-   Claims System): a record pair, one in each party's repo, each referencing
-   the other. The relationship exists only while both halves exist.
+5. Relationships between two subjects are the same primitive (the
+   Consensual Claims System): one party's self-claim, **attested by the
+   counterpart**. The relationship exists only while the claim stands and
+   an attestation from the counterpart is in force.
 
 Trust is decided entirely at the edge: any DID may attest, and each verifier
 chooses which attestors it honors. ACP defines shapes, never authorities.
@@ -47,12 +48,13 @@ ACP is built from primitives the AT Protocol already provides:
 - **Identity**: subjects and attestors are DIDs (did:plc or did:web); signing
   keys are published in DID documents; key rotation and recovery come from the
   [PLC directory].
-- **Storage**: claims, attestations, and mutual-claim halves are records in
-  the owning subject's repo, addressed by at-uri and content-hash
+- **Storage**: claims and attestations are records in the owning subject's
+  repo, addressed by at-uri and content-hash
   ([strongRef]), under the ACP Lexicons.
 - **Complement, not overlap**: ATProto labels are unilateral third-party
-  broadcast; ACP attestations are subject-held and expiring, and ACP mutual
-  claims are consent-structural. ACP adds what labels cannot express and
+  broadcast; ACP attestations are subject-held and expiring, and a relationship is
+  an attestation whose attestor is the counterpart — consent *is* the
+  signature. ACP adds what labels cannot express and
   reuses everything else.
 
 This version of ACP specifies the **public lane** only. Records in PDS repos
@@ -68,7 +70,7 @@ scope for v0.1 (see [Possible future changes](#possible-future-changes)).
 | **Self-claim** | A record in the subject's own repo asserting something about itself. |
 | **Attestor** | Any DID that verifies a self-claim and signs an attestation of it. |
 | **Attestation** | A signed, expiring statement by an attestor that a specific claim was verified. Colloquially: a *vouch* (the manifesto's term). |
-| **Mutual claim** | A relationship asserted by both subjects as a referencing record pair (CCS). |
+| **Relationship** | A claim attested by its counterpart (CCS). Not a record type of its own. |
 | **Verifier** | Any party deciding whether to rely on a claim, and on whose attestations. |
 | **Status list** | A signed, mirrorable artifact stating which attestations an attestor has revoked. |
 | **Custodian** | An operator hosting a subject's repo or keys on its behalf. |
@@ -172,57 +174,54 @@ content (CID). If the subject rewrites the claim, existing attestations no
 longer resolve and are no longer in force. Attest the new version or live
 without.
 
-### Mutual claim — `net.got-paws.acp.relationship`
+### Relationships are attestations
 
-One half of a Consensual Claims System pair. Each party writes one record in
-its own repo; the relationship exists **iff both halves exist and reference
-each other**.
+A relationship between two DIDs is **not a separate record type**
+(ruled 2026-08-22, FORKS F45). The party asserting it writes an ordinary
+self-claim — `kind` from the catalog (`owns`, `memberOf`, `consentsTo`, …),
+the counterpart's DID in the payload — and the counterpart signs an
+ordinary attestation of it, stored in the claimant's repo like every
+attestation. A verifier checks it exactly as it checks any attestation.
+Third parties may attest the same claim; trust policy decides whose
+signature counts.
 
-```
-record net.got-paws.acp.relationship {
-  relationship: string     // from the published catalog, e.g. "owns",
-                           // "ownedBy", "memberOf", "hasMember",
-                           // "consentsTo" (see Relationship kinds)
-  counterpart:  did        // the other party
-  counterpartRecord: at-uri?  // the expected uri of the other half, once known
-  scope:        object?    // relationship-defined content this side is
-                           // authoritative for (e.g. role, consent terms)
-  createdAt:    datetime
-}
-```
+- **Authority partitioning**: each kind names who claims and who attests.
+  The attestor's signature over the claim's CID is agreement to exactly
+  that content; where the counterpart has something of its own to assert
+  (a role), the kind defines a reciprocal claim in the counterpart's repo,
+  attested by the first party.
+- **Severance is asymmetric.** The claimant deletes the claim and every
+  attestation of it stops resolving (§Self-claim). The counterpart cannot
+  delete a record in another repo: it revokes (§Status lists) or declines
+  to renew. A human counterpart without infrastructure uses a short
+  `expiresAt` and silence.
+- **Ownership kinds** require a third fact the protocol does not check:
+  the owner holds a rotation key on the owned DID senior to every
+  custodian's. The attestation proves consent (the owned DID's signing
+  key agreed — whoever operates that DID holds that key); seniority proves
+  control (no custodian can take the DID). That check is the **consumer's**,
+  run after the attestation verifies, against a custodian set the consumer
+  keeps complete; vulpes provides it as a helper, never as a verification
+  step. The rule, the rotation-key layout it relies on, and the custodian
+  discovery route are in `docs/ccs.md`.
+- **Lifetime**: ownership-kind attestations may carry a far-future
+  `expiresAt`; the permanent mode stays deferred and additive (§Possible
+  future changes).
+- `net.got-paws.acp.relationship` is **deprecated**: implementations must
+  ignore it, and the reference implementation removes it.
 
-- **Authority partitioning**: each side's `scope` may only carry what that
-  side is authoritative for (an account asserts the member's role; the member
-  asserts their consent). Verifiers must ignore scope fields a side is not
-  authoritative for, per the relationship-kind definition.
-- **Severance**: either party deletes its half at any time, unilaterally. A
-  relationship with one surviving half is not in force.
-- **Ownership tier**: relationship kinds designated *ownership-tier* (e.g.
-  `owns`/`ownedBy`) additionally require key control: the owning DID must
-  hold a rotation key for the owned DID at senior position to every
-  custodian's (read from the PLC directory's rotation list, which the DID
-  document does not carry). Two records without key control do not
-  constitute ownership. Public data never says *who holds* a rotation key
-  — did:plc allows one key on any number of DIDs, and a host's operator key
-  sits on every account it hosts — so **the verifier names the custodians**
-  in its trust policy; a key it has not named is presumed personal. With no
-  custodian named, key control degrades to "a key shared by both DIDs",
-  and a verifier acting on ownership must not leave it there. The set must
-  also be complete for every host in play: an operator key left unnamed
-  counts as personal and sets no floor, so one that outranks the named
-  keys reopens the shared-host hole for that host without any signal.
-- The full CCS semantics (transfer flows, the ~72h PLC-recovery-window
-  finality rule, gallery consent) are specified in `docs/ccs.md`; this
-  section defines the record shape and validity rule.
+### Claim kinds
 
-### Claim kinds and relationship kinds
-
-The set of claim `kind`s and `relationship` values is a **published, versioned
-catalog**, not a free-form string space. New kinds are added by specification
-change (additive only). v0.1 seeds: claims `email`, `external-account`,
-`character`; relationships `owns`/`ownedBy`, `memberOf`/`hasMember`,
-`consentsTo`. Implementations must ignore records whose kind they do not
-recognize (forward compatibility), never reject the whole repo.
+The set of claim `kind`s is a **published, versioned catalog**, not a
+free-form string space. New kinds are added by specification change
+(additive only). v0.1 seeds: `email`, `external-account`, `character`, and
+the relationship kinds `owns` (claimed by the owner, attested by the owned
+DID), `memberOf` (claimed by the member, attested by the account),
+`hasMember` (claimed by the account with the role, attested by the member),
+`consentsTo` (claimed by the consenting character, attested by the artist).
+Implementations must ignore records whose kind they do not recognize
+(forward compatibility), never reject the whole repo. What a kind *means* —
+which consumer-side checks it carries — is the consumer's, per `docs/ccs.md`.
 
 ## Status lists
 
@@ -392,23 +391,17 @@ To verify an attestation, a verifier:
    attacks): past the bound a copy is *not checkable*, never "not
    revoked".
 
-To verify a mutual claim: fetch both halves from both repos, check each
-names the other as `counterpart` (and `counterpartRecord`, when present,
-resolves to the other half), check both records' kinds form a defined pair,
-and for ownership-tier kinds verify key control: some rotation key of the
-owner's that the verifier's policy does not list as a custodian's appears
-in the owned DID's rotation list above every key the policy does list (or
-none is listed there). Junior co-owners pass while above the custodian; a
-pair carrying nothing but custodian keys does not. Any missing element →
-not in force.
+A relationship is verified as the attestation it is — there is no second
+procedure. Kinds that carry a consumer-side check (ownership: rotation-key
+seniority, `docs/ccs.md`) run it *after* the attestation is in force.
 
 ## Conformance
 
 Conformance is per role:
 
 **Subjects / holders**
-- must store their claims, attestations, and relationship halves in a repo
-  they can export (CAR) and migrate;
+- must store their claims and attestations in a repo they can export (CAR)
+  and migrate;
 - should export or mirror routinely (custody is theirs).
 
 **Attestors**
@@ -423,16 +416,22 @@ Conformance is per role:
 - must verify using only public infrastructure (DID resolution, repo fetch,
   status artifacts) with no callback to the attestor;
 - must reject expired attestations and unresolved claim references;
-- must treat a single-halved mutual claim as not in force;
+- must treat an unattested relationship claim as a mere claim;
 - must not treat any attestor — including the reference instance — as
   privileged by protocol;
 - must decide trust before fetching a status list, and must not fetch an
   unvalidated `status.list` (step 7); its HTTP fetcher must disable
   redirects and must refuse non-global resolved addresses at connect time,
   and should sit behind an egress guard, cap the response size and bound
-  the number of copies it returns (FORKS F42);
-- must name the custodians whose rotation keys never count as an owner's
-  before acting on an ownership-tier mutual claim (§Mutual claims).
+  the number of copies it returns (FORKS F42).
+
+**Consumers** (applications acting on what a kind means)
+- must, before acting on an ownership kind, check that the owner holds a
+  rotation key on the owned DID senior to every custodian's, against a
+  custodian set kept complete for every host in play (`docs/ccs.md`); an
+  attestation alone proves consent, never control;
+- must not mint a rotation layout that places a recovery custodian below the
+  operating custodian, or any custodian above the user (FORKS F46).
 
 **Custodians** (PDS hosts, wallet services)
 - must not hold rotation keys senior to the subject's own for any DID they
@@ -445,7 +444,7 @@ An implementation conforms only if, upon the permanent disappearance of any
 operator (attestor, custodian, or the reference instance itself):
 
 - every subject's identity remains resolvable (PLC directory);
-- every self-claim and mutual claim remains (subjects' own repos);
+- every claim remains (subjects' own repos);
 - every attestation signature remains verifiable (keys in DID documents,
   artifacts in subject custody);
 - the last-published status remains checkable (mirrors);
@@ -475,13 +474,13 @@ private layer exists to prevent.
 
 ## Privacy and security concerns
 
-- **Everything in v0.1 is public.** Repos, attestations, and relationship
-  pairs are world-readable and permanently linkable to their DIDs. Users
+- **Everything in v0.1 is public.** Repos, claims and attestations —
+  relationships included — are world-readable and permanently linkable to their DIDs. Users
   must understand that publishing a claim is publishing a link. Claims
   requiring private existence must wait for the private lane; do not model
   them as public records with obscure names.
 - **Cross-persona correlation.** Nothing in ACP links two DIDs unless a
-  mutual claim does so explicitly. Implementations must not require, and
+  relationship claim does so explicitly. Implementations must not require, and
   should not encourage, publishing links between personas a user keeps
   separate. Aggregation of many identities under one holder is an
   implementation-private concern, never an ACP record.
@@ -511,10 +510,12 @@ private layer exists to prevent.
   records may persist in caches, mirrors, and repo history. Deletion is
   prospective severance, not retroactive erasure; the CCS finality rules
   (e.g. transfer windows) are designed around this.
-- **Coercion asymmetry in mutual claims.** Unilateral severance is the
-  safety valve: no party can be held in a relationship record they no longer
-  assert. Ownership-tier transfer adds the PLC recovery window as a
-  scam-defense delay.
+- **Coercion asymmetry in relationships.** Unilateral severance is the
+  safety valve, and it is asymmetric: the claimant deletes; the counterpart
+  revokes or declines to renew — so a counterpart who cannot run a status
+  list must attest with an expiry short enough that silence is a real
+  exit. No party can be held in a relationship they no longer assert.
+  Ownership transfer adds the PLC recovery window as a scam-defense delay.
 
 ## Possible future changes
 
@@ -529,7 +530,8 @@ private layer exists to prevent.
   (cross-boundary actives are a correlation oracle); *permanent* — immutable
   facts, living in the subject's repo with status mandatory instead of
   expiry (the honest carve-out from the pulse doctrine: no switching exists
-  to exercise there). Taxonomy details parked on The Claims Model page.
+  to exercise there). Until it lands, ownership-kind attestations use a
+  far-future `expiresAt` (FORKS F45). Taxonomy details parked on The Claims Model page.
 - **Predicate attestations**: issuer-baked booleans ("+18: true") as a claim
   kind, and possibly blinded-token (Privacy Pass) issuance for yes/no gates.
 - DNS publication of the lexicon schemas (`_lexicon` TXT on
@@ -573,6 +575,15 @@ private layer exists to prevent.
   status fetch's HTTP contract is pinned — redirects off, resolve-then-
   check, egress guard, size cap — after OWASP's SSRF guidance and the JWT
   `jku`/`x5u` history (§Verification step 7, §Conformance; FORKS F42).
+- **2026-08-22** — **relationships are attestations** (FORKS F45): the
+  `relationship` record type and the mutual-claim verification procedure
+  are retired; a relationship is a self-claim attested by its counterpart,
+  verified as any attestation. Ownership's key-control check leaves the
+  verifier and becomes the consumer's, with vulpes supplying the helper.
+  Severance is asymmetric and stated. The rotation-key layout
+  `[user, vulpes, zurfur]` is the minted default and the user's key is
+  client-generated (FORKS F46; `docs/ccs.md`). Dissolved: the "unanswered
+  half" fork and the self-ownership question.
 
 ## References
 
