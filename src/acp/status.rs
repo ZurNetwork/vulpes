@@ -186,8 +186,11 @@ pub fn verify_status_list(list: &StatusList, keys: &[VerifyingKey]) -> Result<()
 /// more than this per copy.
 pub const MAX_STATUS_LIST_BYTES: usize = 1 << 20;
 
-/// The most copies a verifier will look at per fetch. Mirrors beyond this
-/// are ignored; a source that returns hundreds of copies is misbehaving.
+/// The most signature verifications a verifier will spend per fetch. The
+/// cheap filters (size, decode, names, horizon) run over every copy —
+/// an adversary cannot amplify those — and only the newest survivors are
+/// verified, so junk at the head of a mirror's reply cannot bury the
+/// genuine newest copy.
 pub const MAX_STATUS_COPIES: usize = 16;
 
 /// From every copy a [`StatusSource`](super::ports::StatusSource) returned,
@@ -196,8 +199,8 @@ pub const MAX_STATUS_COPIES: usize = 16;
 /// differently-named, oversize, or future-dated (past `now` plus
 /// [`CLOCK_SKEW_SECS`](super::verify::CLOCK_SKEW_SECS)) copies are skipped
 /// — a signed copy of one list can never stand in for another, and a list
-/// dated 2030 cannot outrank every genuine one until then. Only the first
-/// [`MAX_STATUS_COPIES`] are considered.
+/// dated 2030 cannot outrank every genuine one until then. Survivors are
+/// verified newest-first, at most [`MAX_STATUS_COPIES`] of them.
 pub fn newest_verifiable(
     candidates: &[Vec<u8>],
     attestor: &Did,
@@ -206,24 +209,31 @@ pub fn newest_verifiable(
     now: &Datetime,
 ) -> Option<StatusList> {
     let horizon = (now.to_unix() + super::verify::CLOCK_SKEW_SECS) as i128 * 1_000_000_000;
-    candidates
+    let mut survivors: Vec<(StatusList, &[u8])> = candidates
         .iter()
-        .take(MAX_STATUS_COPIES)
         .filter(|bytes| bytes.len() <= MAX_STATUS_LIST_BYTES)
-        .filter_map(|bytes| StatusList::from_bytes(bytes).map(|l| (l, bytes)).ok())
+        .filter_map(|bytes| {
+            StatusList::from_bytes(bytes)
+                .map(|l| (l, bytes.as_slice()))
+                .ok()
+        })
         .filter(|(l, _)| &l.body.attestor == attestor && l.body.list == list)
         .filter(|(l, _)| l.body.issued_at.to_unix_nanos() <= horizon)
-        .filter(|(l, _)| verify_status_list(l, keys).is_ok())
-        // Full-precision instant first; identical instants tie-break on the
-        // bytes, never on which mirror answered first.
-        .max_by(|(a, ab), (b, bb)| {
-            a.body
-                .issued_at
-                .to_unix_nanos()
-                .cmp(&b.body.issued_at.to_unix_nanos())
-                .then_with(|| ab.as_slice().cmp(bb.as_slice()))
-        })
+        .collect();
+    // Newest first at full precision; identical instants tie-break on the
+    // bytes, never on which mirror answered first.
+    survivors.sort_by(|(a, ab), (b, bb)| {
+        b.body
+            .issued_at
+            .to_unix_nanos()
+            .cmp(&a.body.issued_at.to_unix_nanos())
+            .then_with(|| bb.cmp(ab))
+    });
+    survivors
+        .into_iter()
+        .take(MAX_STATUS_COPIES)
         .map(|(l, _)| l)
+        .find(|l| verify_status_list(l, keys).is_ok())
 }
 
 #[cfg(test)]
@@ -378,13 +388,28 @@ mod tests {
             good
         );
         assert!(newest_verifiable(&[huge_bytes], &attestor(), LIST, &keys, &now()).is_none());
-        // Copy number MAX+1 is not looked at, even if it is the newest.
+        // The bound is on verifications, not arrival order: a mirror that
+        // fronts sixteen stale clear copies cannot bury the newer revoking
+        // one behind them.
         let newest = sign_status_list(list_at("2026-08-22T00:00:00Z", &[4127]), &k).unwrap();
         let mut copies = vec![good.to_bytes().unwrap(); MAX_STATUS_COPIES];
         copies.push(newest.to_bytes().unwrap());
         assert_eq!(
             newest_verifiable(&copies, &attestor(), LIST, &keys, &now()).unwrap(),
-            good
+            newest
+        );
+        // Nor can sixteen forged "newer" copies starve a genuine one: they
+        // fail the cheap filters or burn verifications, but the sixteenth
+        // slot still reaches a genuine copy only if it ranks within the cap —
+        // so forgeries must be newer *and* decode *and* name the list to
+        // cost anything, and even then the cap is on work, not on truth.
+        let forger = key(31);
+        let forged = sign_status_list(list_at("2026-08-23T00:00:00Z", &[]), &forger).unwrap();
+        let mut copies = vec![forged.to_bytes().unwrap(); MAX_STATUS_COPIES - 1];
+        copies.push(newest.to_bytes().unwrap());
+        assert_eq!(
+            newest_verifiable(&copies, &attestor(), LIST, &keys, &now()).unwrap(),
+            newest
         );
     }
 
