@@ -181,25 +181,48 @@ pub fn verify_status_list(list: &StatusList, keys: &[VerifyingKey]) -> Result<()
     verify_cid(&cid, &list.sig.0, keys)
 }
 
+/// The largest status-list artifact a verifier will decode: 1 MiB, room for
+/// eight million attestations. A mirror cannot make a verifier allocate
+/// more than this per copy.
+pub const MAX_STATUS_LIST_BYTES: usize = 1 << 20;
+
+/// The most copies a verifier will look at per fetch. Mirrors beyond this
+/// are ignored; a source that returns hundreds of copies is misbehaving.
+pub const MAX_STATUS_COPIES: usize = 16;
+
 /// From every copy a [`StatusSource`](super::ports::StatusSource) returned,
 /// the one with the latest `issuedAt` **that verifies** against `keys`,
 /// names `attestor`, and names itself `list`. Undecodable, forged, foreign,
-/// or differently-named copies are skipped — a signed copy of one list can
-/// never stand in for another.
+/// differently-named, oversize, or future-dated (past `now` plus
+/// [`CLOCK_SKEW_SECS`](super::verify::CLOCK_SKEW_SECS)) copies are skipped
+/// — a signed copy of one list can never stand in for another, and a list
+/// dated 2030 cannot outrank every genuine one until then. Only the first
+/// [`MAX_STATUS_COPIES`] are considered.
 pub fn newest_verifiable(
     candidates: &[Vec<u8>],
     attestor: &Did,
     list: &str,
     keys: &[VerifyingKey],
+    now: &Datetime,
 ) -> Option<StatusList> {
+    let horizon = (now.to_unix() + super::verify::CLOCK_SKEW_SECS) as i128 * 1_000_000_000;
     candidates
         .iter()
+        .take(MAX_STATUS_COPIES)
+        .filter(|bytes| bytes.len() <= MAX_STATUS_LIST_BYTES)
         .filter_map(|bytes| StatusList::from_bytes(bytes).map(|l| (l, bytes)).ok())
         .filter(|(l, _)| &l.body.attestor == attestor && l.body.list == list)
+        .filter(|(l, _)| l.body.issued_at.to_unix_nanos() <= horizon)
         .filter(|(l, _)| verify_status_list(l, keys).is_ok())
-        // `to_unix` truncates sub-seconds, so two copies can tie; the tie
-        // breaks on the bytes, never on which mirror answered first.
-        .max_by_key(|(l, bytes)| (l.body.issued_at.to_unix(), bytes.to_vec()))
+        // Full-precision instant first; identical instants tie-break on the
+        // bytes, never on which mirror answered first.
+        .max_by(|(a, ab), (b, bb)| {
+            a.body
+                .issued_at
+                .to_unix_nanos()
+                .cmp(&b.body.issued_at.to_unix_nanos())
+                .then_with(|| ab.as_slice().cmp(bb.as_slice()))
+        })
         .map(|(l, _)| l)
 }
 
@@ -269,19 +292,99 @@ mod tests {
         assert!(body_bytes.windows(LIST.len()).any(|w| w == LIST.as_bytes()));
     }
 
+    fn now() -> Datetime {
+        Datetime::parse("2026-08-29T10:00:00Z").unwrap()
+    }
+
     #[test]
-    fn same_second_copies_pick_deterministically() {
+    fn sub_second_ordering_is_real() {
+        // A clear list at .100 and a revoking one at .900 in the same
+        // second: the revoking one is newer and must win, whichever order
+        // the mirrors answer in and whatever its bytes sort like.
         let k = key(28);
-        let a = sign_status_list(list_at("2026-08-20T00:00:00.100Z", &[1]), &k).unwrap();
-        let b = sign_status_list(list_at("2026-08-20T00:00:00.900Z", &[2]), &k).unwrap();
+        let clear = sign_status_list(list_at("2026-08-20T00:00:00.100Z", &[]), &k).unwrap();
+        let revoking = sign_status_list(list_at("2026-08-20T00:00:00.900Z", &[4127]), &k).unwrap();
+        let (ab, ba) = (
+            [clear.to_bytes().unwrap(), revoking.to_bytes().unwrap()],
+            [revoking.to_bytes().unwrap(), clear.to_bytes().unwrap()],
+        );
+        let keys = [vk(&k)];
+        let w1 = newest_verifiable(&ab, &attestor(), LIST, &keys, &now()).unwrap();
+        let w2 = newest_verifiable(&ba, &attestor(), LIST, &keys, &now()).unwrap();
+        assert_eq!(w1, revoking);
+        assert_eq!(w2, revoking);
+        // Identical instants, different content: deterministic on bytes.
+        let a = sign_status_list(list_at("2026-08-20T00:00:00Z", &[1]), &k).unwrap();
+        let b = sign_status_list(list_at("2026-08-20T00:00:00Z", &[2]), &k).unwrap();
         let (ab, ba) = (
             [a.to_bytes().unwrap(), b.to_bytes().unwrap()],
             [b.to_bytes().unwrap(), a.to_bytes().unwrap()],
         );
-        let keys = [vk(&k)];
         assert_eq!(
-            newest_verifiable(&ab, &attestor(), LIST, &keys),
-            newest_verifiable(&ba, &attestor(), LIST, &keys)
+            newest_verifiable(&ab, &attestor(), LIST, &keys, &now()),
+            newest_verifiable(&ba, &attestor(), LIST, &keys, &now())
+        );
+    }
+
+    #[test]
+    fn future_dated_list_does_not_outrank_the_present() {
+        // A clear list dated 2030 (a compromised key, say) would otherwise
+        // pin "not revoked" until 2030. It is skipped; the genuine revoking
+        // list wins. Inside the skew window is still fine.
+        let k = key(29);
+        let revoking = sign_status_list(list_at("2026-08-29T09:00:00Z", &[4127]), &k).unwrap();
+        let future = sign_status_list(list_at("2030-01-01T00:00:00Z", &[]), &k).unwrap();
+        let skewed = sign_status_list(list_at("2026-08-29T10:04:00Z", &[4127, 1]), &k).unwrap();
+        let keys = [vk(&k)];
+        let copies = [future.to_bytes().unwrap(), revoking.to_bytes().unwrap()];
+        assert_eq!(
+            newest_verifiable(&copies, &attestor(), LIST, &keys, &now()).unwrap(),
+            revoking
+        );
+        let copies = [future.to_bytes().unwrap()];
+        assert!(newest_verifiable(&copies, &attestor(), LIST, &keys, &now()).is_none());
+        let copies = [revoking.to_bytes().unwrap(), skewed.to_bytes().unwrap()];
+        assert_eq!(
+            newest_verifiable(&copies, &attestor(), LIST, &keys, &now()).unwrap(),
+            skewed
+        );
+    }
+
+    #[test]
+    fn oversize_and_excess_copies_are_ignored() {
+        let k = key(30);
+        let keys = [vk(&k)];
+        let good = sign_status_list(list_at("2026-08-20T00:00:00Z", &[]), &k).unwrap();
+        // A multi-megabyte blob is never decoded, however well it is signed.
+        let huge = sign_status_list(
+            {
+                let mut l = UnsignedStatusList::new(
+                    attestor(),
+                    LIST,
+                    Datetime::parse("2026-08-21T00:00:00Z").unwrap(),
+                    (MAX_STATUS_LIST_BYTES as u64 + 1) * 8,
+                );
+                l.bits.set(4127);
+                l
+            },
+            &k,
+        )
+        .unwrap();
+        let huge_bytes = huge.to_bytes().unwrap();
+        assert!(huge_bytes.len() > MAX_STATUS_LIST_BYTES);
+        let copies = [huge_bytes.clone(), good.to_bytes().unwrap()];
+        assert_eq!(
+            newest_verifiable(&copies, &attestor(), LIST, &keys, &now()).unwrap(),
+            good
+        );
+        assert!(newest_verifiable(&[huge_bytes], &attestor(), LIST, &keys, &now()).is_none());
+        // Copy number MAX+1 is not looked at, even if it is the newest.
+        let newest = sign_status_list(list_at("2026-08-22T00:00:00Z", &[4127]), &k).unwrap();
+        let mut copies = vec![good.to_bytes().unwrap(); MAX_STATUS_COPIES];
+        copies.push(newest.to_bytes().unwrap());
+        assert_eq!(
+            newest_verifiable(&copies, &attestor(), LIST, &keys, &now()).unwrap(),
+            good
         );
     }
 
@@ -295,9 +398,9 @@ mod tests {
         b_body.list = "https://attest.example/status/2".into();
         let b = sign_status_list(b_body, &k).unwrap();
         let copies = [b.to_bytes().unwrap()];
-        assert!(newest_verifiable(&copies, &attestor(), LIST, &[vk(&k)]).is_none());
+        assert!(newest_verifiable(&copies, &attestor(), LIST, &[vk(&k)], &now()).is_none());
         let copies = [a.to_bytes().unwrap(), b.to_bytes().unwrap()];
-        let w = newest_verifiable(&copies, &attestor(), LIST, &[vk(&k)]).unwrap();
+        let w = newest_verifiable(&copies, &attestor(), LIST, &[vk(&k)], &now()).unwrap();
         assert_eq!(w, a);
         assert_eq!(w.is_set(4127), Some(true));
     }
@@ -347,13 +450,13 @@ mod tests {
             .map(|l| l.to_bytes().unwrap())
             .chain(std::iter::once(b"garbage".to_vec()))
             .collect();
-        let winner = newest_verifiable(&copies, &attestor(), LIST, &keys).unwrap();
+        let winner = newest_verifiable(&copies, &attestor(), LIST, &keys, &now()).unwrap();
         assert_eq!(winner, new);
         assert_eq!(winner.is_set(4127), Some(true));
-        assert!(newest_verifiable(&[], &attestor(), LIST, &keys).is_none());
+        assert!(newest_verifiable(&[], &attestor(), LIST, &keys, &now()).is_none());
         // Keys decide: under the forger's key, the forger's copy is the one that verifies.
         assert_eq!(
-            newest_verifiable(&copies, &attestor(), LIST, &[vk(&forger)]).unwrap(),
+            newest_verifiable(&copies, &attestor(), LIST, &[vk(&forger)], &now()).unwrap(),
             forged
         );
     }

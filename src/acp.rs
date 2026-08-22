@@ -62,7 +62,7 @@ pub use sign::{
     verify_sig,
 };
 pub use status::{
-    BitString, StatusList, StatusListType, UnsignedStatusList, newest_verifiable, sign_status_list,
-    verify_status_list,
+    BitString, MAX_STATUS_COPIES, MAX_STATUS_LIST_BYTES, StatusList, StatusListType,
+    UnsignedStatusList, newest_verifiable, sign_status_list, verify_status_list,
 };
 pub use verify::{CLOCK_SKEW_SECS, Reason, Verdict, Verifier};

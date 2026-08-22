@@ -319,6 +319,24 @@ impl Datetime {
         }
         secs
     }
+
+    /// Nanoseconds since the Unix epoch — [`to_unix`](Self::to_unix) plus
+    /// the fractional second, so two instants inside one second order
+    /// correctly (the newest-status-list pick needs this: a revoking list
+    /// at `.900` must beat a clear one at `.100`). Digits past the ninth
+    /// are ignored.
+    pub fn to_unix_nanos(&self) -> i128 {
+        let b = self.0.as_bytes();
+        let mut nanos: i128 = 0;
+        if b.get(19) == Some(&b'.') {
+            let mut scale: i128 = 100_000_000;
+            for d in b[20..].iter().take_while(|d| d.is_ascii_digit()).take(9) {
+                nanos += i128::from(d - b'0') * scale;
+                scale /= 10;
+            }
+        }
+        i128::from(self.to_unix()) * 1_000_000_000 + nanos
+    }
 }
 
 impl<'de> Deserialize<'de> for Datetime {
@@ -1282,6 +1300,26 @@ mod tests {
         assert_eq!(u("2026-08-20T04:30:00-05:30"), u("2026-08-20T10:00:00Z"));
         assert_eq!(u("2026-08-20T10:00:00.999Z"), u("2026-08-20T10:00:00Z"));
         assert!(u("2026-09-19T10:00:00Z") > u("2026-08-20T10:00:00Z"));
+        // Full precision keeps the fraction; digits past nine are dropped.
+        let n = |s: &str| Datetime::parse(s).unwrap().to_unix_nanos();
+        assert_eq!(n("2026-08-20T10:00:00Z"), 1_787_220_000 * 1_000_000_000);
+        assert_eq!(
+            n("2026-08-20T10:00:00.5Z"),
+            n("2026-08-20T10:00:00Z") + 500_000_000
+        );
+        assert_eq!(
+            n("2026-08-20T10:00:00.000000001Z"),
+            n("2026-08-20T10:00:00Z") + 1
+        );
+        assert_eq!(
+            n("2026-08-20T10:00:00.0000000019Z"),
+            n("2026-08-20T10:00:00Z") + 1
+        );
+        assert!(n("2026-08-20T10:00:00.900Z") > n("2026-08-20T10:00:00.100Z"));
+        assert_eq!(
+            n("2026-08-20T12:00:00.25+02:00"),
+            n("2026-08-20T10:00:00.25Z")
+        );
     }
 
     #[test]

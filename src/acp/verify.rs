@@ -238,6 +238,7 @@ impl Verifier<'_> {
                 &att.body.attestor,
                 status.list.as_str(),
                 &keys.verification,
+                now,
             ) else {
                 not_in_force!(Reason::StatusUnverifiable);
             };
@@ -725,9 +726,40 @@ mod tests {
             reason(at(&w, "2026-08-20T09:00:00Z").await),
             Reason::NotYetValid
         );
+        // Inside the skew window. The fixture's list is published 10:12,
+        // so the verifier's clock has to be past that — a list from the
+        // future is skipped too (see `newest_verifiable`).
+        w.status.clear(STATUS_URL);
+        w.status.publish(
+            STATUS_URL,
+            sign_status_list(
+                UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-20T09:50:00Z"), 8192),
+                &w.attestor_key,
+            )
+            .unwrap()
+            .to_bytes()
+            .unwrap(),
+        );
         assert!(
             at(&w, "2026-08-20T09:56:00Z").await.is_in_force(),
             "inside skew"
+        );
+        // A status list ahead of the clock by more than the skew is not
+        // evidence: only the future copy reachable → not checkable.
+        w.status.clear(STATUS_URL);
+        w.status.publish(
+            STATUS_URL,
+            sign_status_list(
+                UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-20T10:12:00Z"), 8192),
+                &w.attestor_key,
+            )
+            .unwrap()
+            .to_bytes()
+            .unwrap(),
+        );
+        assert_eq!(
+            reason(at(&w, "2026-08-20T09:56:00Z").await),
+            Reason::StatusUnverifiable
         );
     }
 

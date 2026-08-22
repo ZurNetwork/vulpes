@@ -250,9 +250,14 @@ record net.got-paws.acp.statusList {
 There is no `$sig` repository binding: a status list is not a repo record,
 so there is no repository to bind to; its domain separation from an
 attestation pre-image is the `$type` inside the signed bytes. A verifier
-takes every copy it can reach, discards those that do not decode, do not
-name the expected attestor **and the expected `list`**, or do not verify
-under the attestor's current keys, and keeps the newest by `issuedAt`.
+takes every copy it can reach (bounded: at most 16 copies, none larger
+than 1 MiB — a mirror must not be able to make a verifier allocate
+without limit), discards those that do not decode, do not name the
+expected attestor **and the expected `list`**, are dated further ahead of
+the verifier's clock than its skew tolerance (a future-dated list must
+not outrank every genuine one until then), or do not verify under the
+attestor's current keys, and keeps the newest by `issuedAt` at full
+precision, ties broken on the canonical bytes.
 `list` is an identifier, not necessarily a fetch location: mirrors may serve
 a list from any address, but the identifier the attestor signed is the one
 an attestation must point at. Identity-over-location is what lets mirrors

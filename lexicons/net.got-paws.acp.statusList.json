@@ -23,7 +23,8 @@
         },
         "bits": {
           "type": "bytes",
-          "description": "One bit per issued attestation, LSB-first within each byte; bit status.index set = revoked."
+          "maxLength": 1048576,
+          "description": "One bit per issued attestation, LSB-first within each byte; bit status.index set = revoked. At most 1 MiB (eight million attestations); verifiers skip larger artifacts."
         },
         "sig": {
           "type": "bytes",
