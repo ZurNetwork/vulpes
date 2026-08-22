@@ -313,9 +313,13 @@ architecturally.
 
 To verify an attestation, a verifier:
 
-1. Fetches the `net.got-paws.acp.attestation` record from the subject's repo and
-   the referenced claim record; checks the claim's CID matches
-   `claim.cid`. If the claim is missing or rewritten → **not in force**.
+1. Fetches the `net.got-paws.acp.attestation` record from the subject's repo.
+   Before fetching the referenced claim, checks `claim.uri`'s authority
+   **is** the `subject` DID — the author wrote that address, and a
+   verifier sends no request to any authority the record does not name as
+   its subject (a handle authority is rejected: handles re-assign). Then
+   fetches the claim; checks its CID matches `claim.cid`. If the claim is
+   missing or rewritten → **not in force**.
 2. Checks `subject` matches the repo owner's DID, and that the claim was
    fetched from that same repo — a claim carries no subject field, so the
    repo it sits in is the only fact that says whose it is.

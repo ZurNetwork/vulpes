@@ -40,15 +40,23 @@ pub enum Reason {
     ClaimMissing,
     /// The referenced claim exists but its CID changed (rewritten) — step 1.
     ClaimRewritten,
-    /// The referenced claim lives in some other repo than the subject's —
-    /// step 2. A claim carries no subject field; *whose* claim it is comes
-    /// entirely from the repo it sits in, and a vouch must point at the
-    /// subject's own so the subject keeps the retraction switch.
+    /// The referenced claim was *read from* some other repo than the
+    /// subject's — step 2. A claim carries no subject field; *whose* claim
+    /// it is comes entirely from the repo it sits in, and a vouch must
+    /// point at the subject's own so the subject keeps the retraction
+    /// switch. [`ClaimUriNotSubject`](Self::ClaimUriNotSubject) catches
+    /// the address before the fetch; this catches a reader that resolved
+    /// it somewhere else anyway.
     ClaimNotInSubjectRepo,
     /// A record exists but does not decode as its type.
     Malformed(String),
     /// `subject` is not the owner of the repo the record came from — step 2.
     SubjectMismatch,
+    /// `claim.uri` does not point into the subject's repo — checked
+    /// *before* step 1 fetches it. The attestation's author chose that
+    /// address; the verifier will not send a request to an authority other
+    /// than the one the record itself names as subject.
+    ClaimUriNotSubject,
     /// The attestor's DID does not resolve — step 3.
     AttestorUnresolvable,
     /// The signature does not verify under the attestor's current keys, as
@@ -171,6 +179,13 @@ impl Verifier<'_> {
             Some(Err(reason)) => not_in_force!(reason),
             Some(Ok(pair)) => pair,
         };
+        // `claim.uri` is an address the record's author wrote. Before any
+        // request goes there, it must name the subject — the one authority
+        // this verification is about. (Step 2 re-checks the repo it was
+        // actually read from; this is the same fact, asked before the I/O.)
+        if att.body.claim.uri.authority() != att.body.subject.as_str() {
+            not_in_force!(Reason::ClaimUriNotSubject);
+        }
         let (claim_fetched, claim) = match self.fetch::<Claim>(&att.body.claim.uri).await? {
             None => not_in_force!(Reason::ClaimMissing),
             Some(Err(reason)) => not_in_force!(reason),
@@ -586,19 +601,41 @@ mod tests {
 
     #[tokio::test]
     async fn claim_in_another_repo_is_not_the_subjects() {
-        // The attestor vouches for a byte-identical claim sitting in
-        // Mallory's repo (same content, same CID — a Claim has no subject
-        // field). Kit could never retract it; it is not Kit's claim.
+        // The address names Kit, but the reader hands back a record it
+        // read from Mallory's repo (a re-assigned handle behind the
+        // resolver, say). Same content, same CID — a Claim has no subject
+        // field. Kit could never retract it; it is not Kit's claim.
         let w = World::new();
-        let bytes = w.repo.get(&w.claim_uri).unwrap().bytes;
-        let elsewhere = w
-            .repo
-            .put_bytes(&mallory(), CLAIM_TYPE, "3kx2vp5qmek2h", bytes);
-        let mut body = w.attestation().body;
-        body.claim.uri = elsewhere;
-        let att = sign(body, Repository(&kit()), &w.attestor_key).unwrap();
-        w.repo.replace(&w.att_uri, &att);
+        w.repo.misfile(&w.claim_uri, &mallory());
         assert_eq!(reason(w.verdict().await), Reason::ClaimNotInSubjectRepo);
+    }
+
+    #[tokio::test]
+    async fn claim_uri_outside_the_subject_is_never_fetched() {
+        // The attestation points its claim at some other authority — a
+        // handle that resolves wherever, an internal name. The verifier
+        // refuses before the repo port is asked for it.
+        let w = World::new();
+        for elsewhere in [
+            AtUri::record(&mallory(), CLAIM_TYPE, "3kx2vp5qmek2h"),
+            AtUri::parse("at://internal.svc:8080/net.got-paws.acp.claim/x").unwrap(),
+        ] {
+            let mut body = w.attestation().body;
+            body.claim.uri = elsewhere.clone();
+            let att = sign(body, Repository(&kit()), &w.attestor_key).unwrap();
+            w.repo.replace(&w.att_uri, &att);
+            let before = w.repo.read_count();
+            assert_eq!(
+                reason(w.verdict().await),
+                Reason::ClaimUriNotSubject,
+                "{elsewhere}"
+            );
+            assert_eq!(
+                w.repo.read_count(),
+                before + 1,
+                "{elsewhere}: only the attestation itself was read"
+            );
+        }
     }
 
     #[tokio::test]
@@ -610,11 +647,17 @@ mod tests {
 
     #[tokio::test]
     async fn subject_mismatch() {
-        // A vouch that names mallory as subject, but was signed for and
-        // lives in kit's repo: step 2 catches the lie before the signature.
+        // A vouch that names mallory as subject (and points at a claim of
+        // hers), but was signed for and lives in kit's repo: step 2 catches
+        // the lie before the signature.
         let w = World::new();
+        let claim_bytes = w.repo.get(&w.claim_uri).unwrap().bytes;
+        let mallory_claim = w
+            .repo
+            .put_bytes(&mallory(), CLAIM_TYPE, "3kx2vp5qmek2h", claim_bytes);
         let mut body = w.attestation().body;
         body.subject = mallory();
+        body.claim.uri = mallory_claim;
         let att = sign(body, Repository(&kit()), &w.attestor_key).unwrap();
         w.repo.replace(&w.att_uri, &att);
         assert_eq!(reason(w.verdict().await), Reason::SubjectMismatch);

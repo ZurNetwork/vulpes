@@ -27,6 +27,7 @@ use super::record::{AtUri, RecordCid, StatusUri, canonical_bytes};
 pub struct MemoryRepo {
     records: Mutex<BTreeMap<String, (Did, Vec<u8>)>>,
     dark: AtomicBool,
+    reads: AtomicUsize,
 }
 
 impl MemoryRepo {
@@ -106,12 +107,28 @@ impl MemoryRepo {
             .collect()
     }
 
+    /// Re-file a record under another repository DID without moving it —
+    /// what a `RepoReader` that resolved the address through a re-assigned
+    /// handle (or simply mis-set `repository`) would hand back.
+    pub fn misfile(&self, uri: &AtUri, repo: &Did) {
+        let mut records = self.records.lock().expect("repo lock");
+        if let Some((r, _)) = records.get_mut(uri.as_str()) {
+            *r = repo.clone();
+        }
+    }
+
     /// Every call from now on fails: the host is down.
     pub fn go_dark(&self) {
         self.dark.store(true, Ordering::SeqCst);
     }
 
+    /// How many port calls the verifier made — dark calls included.
+    pub fn read_count(&self) -> usize {
+        self.reads.load(Ordering::SeqCst)
+    }
+
     fn check(&self) -> Result<(), RepoError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         if self.dark.load(Ordering::SeqCst) {
             Err(RepoError::new("pds unreachable"))
         } else {
