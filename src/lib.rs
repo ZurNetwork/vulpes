@@ -32,6 +32,8 @@
 //! | `oauth` | [`oauth::Authenticator`] and the durable state bridge |
 //! | `postgres` | [`postgres`] — sqlx stores plus the migration SQL |
 //! | `axum` | [`axum`] — the handle-resolution route |
+//! | `acp` | [`acp`] — the Attested Claims Protocol: records, signing, status lists, the verifier |
+//! | `vc` | [`vc`] — the curated SpruceID credential stack, for the private lane |
 //!
 //! # Quickstart
 //!

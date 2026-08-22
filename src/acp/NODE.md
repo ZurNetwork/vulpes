@@ -9,7 +9,7 @@ fs:
     role: attestation pre-image, sign, verify — key signs the pre-image CID (F36); negatives incl. transplant
     node: false
   - name: verify.rs
-    role: verify_attestation — the spec's seven steps; mutual-claim verify; the kill_test
+    role: verify_attestation — the spec's seven steps; mutual-claim verify (senior-rotation-key rule); the kill_test
     node: false
   - name: ports.rs
     role: RepoReader / DidResolver / StatusSource async_trait ports (F40)
@@ -18,7 +18,7 @@ fs:
     role: net.got-paws.acp.statusList artifact, ACP-native DAG-CBOR (F39)
     node: false
   - name: policy.rs
-    role: TrustPolicy — step 7, the verifier's own judgment
+    role: TrustPolicy — step 6, the verifier's judgment, ahead of the status fetch it gates
     node: false
   - name: error.rs
     role: one closed enum per concern

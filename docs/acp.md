@@ -311,7 +311,9 @@ To verify an attestation, a verifier:
 1. Fetches the `net.got-paws.acp.attestation` record from the subject's repo and
    the referenced claim record; checks the claim's CID matches
    `claim.cid`. If the claim is missing or rewritten → **not in force**.
-2. Checks `subject` matches the repo owner's DID.
+2. Checks `subject` matches the repo owner's DID, and that the claim was
+   fetched from that same repo — a claim carries no subject field, so the
+   repo it sits in is the only fact that says whose it is.
 3. Resolves `attestor` to its DID document; obtains the verification key(s).
 4. Verifies `sig` over the pre-image: the canonical DAG-CBOR of the record
    minus `sig`, plus the injected `$sig` binding object whose `repository`
@@ -321,6 +323,9 @@ To verify an attestation, a verifier:
    Key rotation note: verification uses the *current* DID document; an
    attestor that rotates keys re-signs or re-issues attestations it wants to
    keep alive (as with did:plc, no historical-key verification is defined).
+   The stored bytes MUST be the canonical DAG-CBOR of the record they decode
+   to (re-encode and compare): nothing rides along outside the signature,
+   and the attestation's CID is a stable identifier for what was signed.
 5. Checks `expiresAt` is in the future.
 6. Applies local trust policy: is this `attestor`, using this `method`, at
    this age, sufficient for this decision? The protocol supplies signals;
@@ -334,6 +339,10 @@ To verify an attestation, a verifier:
    hosts, no IP literals) and SHOULD route the fetch through an egress
    guard. The trust decision precedes the fetch precisely so that an
    untrusted attestor cannot cause a verifier to make a request.
+   A list issued before the attestation's `issuedAt` cannot carry its bit
+   and is not evidence; verifiers with high stakes additionally bound the
+   list's age (§Stale-status attacks) — a stale copy is *not checkable*,
+   never "not revoked".
 
 To verify a mutual claim: fetch both halves from both repos, check each
 names the other as `counterpart` (and `counterpartRecord`, when present,

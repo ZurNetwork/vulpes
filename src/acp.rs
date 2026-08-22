@@ -1,12 +1,13 @@
 //! The **ACP (Attested Claims Protocol)** core — record types with canonical
 //! bytes, and the attestation signature.
 //!
-//! This module is the pure heart of the public lane: it knows how the three
-//! record types (`net.got-paws.acp.claim`, `.attestation`, `.relationship`)
-//! serialize, what an attestor signs, and how a verifier checks that
-//! signature. It performs **no I/O** — no repo fetches, no DID resolution, no
-//! status lists. Those are the orchestration layer's job
-//! (`verify_attestation`, a later roadmap line) and they plug in around this.
+//! This module is the reference verifier of the public lane: it knows how
+//! the three record types (`net.got-paws.acp.claim`, `.attestation`,
+//! `.relationship`) and the status-list artifact serialize, what an attestor
+//! signs, and runs the spec's seven verification steps. It performs no I/O
+//! **of its own** — every repo fetch, DID resolution and status-list read
+//! goes through the three [`ports`], which the caller implements (a PDS
+//! client, a directory client, a mirror fetch) and tests fake in memory.
 //!
 //! # Layout
 //!

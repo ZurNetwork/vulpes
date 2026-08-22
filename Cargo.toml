@@ -40,8 +40,10 @@ axum = ["dep:axum", "dep:http"]
 # protocol libraries ride along pinned-but-uncalled so CI proves the chosen
 # set stays buildable together (VUL-2's version-locking checkbox).
 vc = ["dep:ssi", "dep:openid4vp", "dep:oid4vci"]
-# The ACP core: the three record types with canonical DAG-CBOR bytes, and the
-# attestation pre-image / sign / verify heart. Pure — no I/O, no resolution.
+# The ACP reference verifier: the record types with canonical DAG-CBOR bytes,
+# the attestation pre-image / sign / verify heart, status lists, and the
+# seven-step verifier over three caller-implemented I/O ports. No transport
+# of its own; the PDS/directory/mirror clients arrive with "Talk to a PDS".
 acp = ["dep:atrium-crypto", "dep:serde_bytes"]
 
 [dependencies]

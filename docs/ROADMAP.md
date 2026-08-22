@@ -35,6 +35,14 @@ infrastructure down and every issued vouch still verifies.
       artifact (F39) and `TrustPolicy`. Contains the **`kill_test`** —
       passing against in-memory fakes; it re-runs against the Docker PDS
       when "Talk to a PDS" lands.
+      **Ship-gates review 2026-08-21** (security, code, critique) landed:
+      judgment before the status fetch + `StatusUri` (SSRF), signed `list`
+      identifier on status lists, senior-rotation-key ownership rule
+      (F40 amended — two residuals recorded there), claim-in-subject-repo,
+      canonical-bytes check at step 4, status-list age floor + policy
+      bound, `did:key` panic guard, calendar-checked `Datetime`,
+      order-independent counterpart search, `BasicPolicy::default()`
+      checks revocation.
 - [ ] **The first attestor** — email challenge → sign → deliver; Kit's story
       from the explainer running against the local PDS.
 - [ ] **Expiry & renewal** — per-kind lifetimes, the auto-renew loop
