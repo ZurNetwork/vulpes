@@ -23,8 +23,9 @@
         },
         "ttl": {
           "type": "integer",
-          "minimum": 1,
-          "description": "Optional. Seconds after issuedAt for which the attestor vouches for this version (Token Status List ttl). Past it a copy is not checkable, never 'not revoked'. Absent: no issuer bound — the newest verifiable copy stands until the attestations it covers expire."
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Optional. Seconds after issuedAt for which the attestor vouches for this version (Token Status List ttl); a copy is stale strictly past it (age > ttl). Past it a copy is not checkable, never 'not revoked'. Absent: no issuer bound — the newest verifiable copy stands until the attestations it covers expire. 0 = evidence only in the second it was issued."
         },
         "bits": {
           "type": "bytes",

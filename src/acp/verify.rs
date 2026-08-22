@@ -288,6 +288,8 @@ impl Verifier<'_> {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
             };
+            // Strictly past the bound: at `age == bound` the copy still
+            // counts (expiry, by contrast, is inclusive — `expires <= now`).
             if let Some(max) = bound
                 && list_age > max
             {
@@ -480,7 +482,8 @@ mod tests {
     use crate::acp::policy::BasicPolicy;
     use crate::acp::record::fixtures::{attestor, kit, mallory};
     use crate::acp::record::{
-        ATTESTATION_TYPE, CLAIM_TYPE, Claim, ClaimKind, StatusRef, StrongRef, UnsignedAttestation,
+        ATTESTATION_TYPE, CLAIM_TYPE, Claim, ClaimKind, MAX_SAFE_INTEGER, StatusRef, StrongRef,
+        UnsignedAttestation,
     };
     use crate::acp::sign::sign;
     use crate::acp::status::{UnsignedStatusList, sign_status_list};
@@ -1036,11 +1039,16 @@ mod tests {
         w.policy.max_status_age_secs = Some(365 * 86_400);
         publish(&w, 86_400);
         assert_eq!(reason(w.verdict().await), Reason::StatusStale);
-        // A ttl that does not fit i64 bounds nothing rather than panicking
-        // or rejecting — it is an attestor saying "effectively forever".
-        publish(&w, u64::MAX);
+        // A ttl at the data-model ceiling bounds nothing in practice — an
+        // attestor saying "effectively forever" (the builder clamps anything
+        // larger to it).
+        publish(&w, MAX_SAFE_INTEGER);
         w.policy.max_status_age_secs = None;
         assert!(w.verdict().await.is_in_force());
+        // A ttl of zero: evidence only in the second it was issued — stale
+        // the moment any time has passed.
+        publish(&w, 0);
+        assert_eq!(reason(w.verdict().await), Reason::StatusStale);
     }
 
     #[tokio::test]

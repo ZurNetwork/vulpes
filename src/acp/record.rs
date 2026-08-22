@@ -777,11 +777,16 @@ impl RelKind {
 
 // ─── the atproto data-model check for opaque values ─────────────────────────
 
+/// The largest integer the atproto data model allows (2⁵³ − 1): a record
+/// holding more is not a valid record, however the CBOR encodes it. Bounds
+/// `payload` / `scope` numbers and the status list's `ttl`.
+pub const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
 /// Reject what the atproto data model forbids inside a record: floats,
 /// `null`, and integers outside ±2⁵³. Applied to `payload` and `scope` on
 /// construction so a malformed value can never reach the signer.
 fn check_data_model(value: &serde_json::Value, path: &mut String) -> Result<(), CodecError> {
-    const MAX_SAFE: u64 = (1 << 53) - 1;
+    const MAX_SAFE: u64 = MAX_SAFE_INTEGER;
     let fail = |path: &str, detail: &'static str| CodecError::DisallowedValue {
         path: if path.is_empty() {
             "/".into()

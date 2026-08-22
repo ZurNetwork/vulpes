@@ -53,7 +53,7 @@ pub use ports::{
     StatusSource,
 };
 pub use record::{
-    ATTESTATION_TYPE, AtUri, Attestation, CLAIM_TYPE, Claim, ClaimKind, Datetime,
+    ATTESTATION_TYPE, AtUri, Attestation, CLAIM_TYPE, Claim, ClaimKind, Datetime, MAX_SAFE_INTEGER,
     RELATIONSHIP_TYPE, RecordCid, RelKind, Relationship, STATUS_LIST_TYPE, Sig, StatusRef,
     StatusUri, StrongRef, UnsignedAttestation, canonical_bytes, check_opaque, from_canonical_bytes,
 };

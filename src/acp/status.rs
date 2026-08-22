@@ -30,7 +30,8 @@ use crate::Did;
 
 use super::error::{SigError, SignError};
 use super::record::{
-    Datetime, RecordCid, STATUS_LIST_TYPE, Sig, canonical_bytes, from_canonical_bytes, type_marker,
+    Datetime, MAX_SAFE_INTEGER, RecordCid, STATUS_LIST_TYPE, Sig, canonical_bytes,
+    from_canonical_bytes, type_marker,
 };
 use super::sign::{Signer, VerifyingKey, verify_cid};
 
@@ -113,7 +114,11 @@ pub struct UnsignedStatusList {
     /// it covers expire — a dead attestor's last list ages out with them
     /// (the kill test). A verifier's own
     /// [`max_status_age_secs`](super::policy::TrustPolicy::max_status_age_secs)
-    /// applies on top; the tighter bound wins.
+    /// applies on top; the tighter bound wins. A copy is stale strictly
+    /// past the bound (`age > ttl`; at `age == ttl` it still counts) —
+    /// note expiry is the other way round (`expiresAt <= now` is expired).
+    /// At most [`MAX_SAFE_INTEGER`] (the atproto data-model ceiling):
+    /// [`with_ttl`](Self::with_ttl) clamps, decoding rejects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl: Option<u64>,
     /// One bit per attestation; set = revoked.
@@ -140,9 +145,11 @@ impl UnsignedStatusList {
     }
 
     /// Declare how long this version stays evidence (see
-    /// [`UnsignedStatusList::ttl`]).
+    /// [`UnsignedStatusList::ttl`]). Clamped to [`MAX_SAFE_INTEGER`] so the
+    /// artifact stays a valid atproto record; `0` means "this version is
+    /// evidence only in the second it was issued".
     pub fn with_ttl(mut self, secs: u64) -> Self {
-        self.ttl = Some(secs);
+        self.ttl = Some(secs.min(MAX_SAFE_INTEGER));
         self
     }
 
@@ -176,8 +183,17 @@ impl StatusList {
     }
 
     /// Parse an artifact. Does **not** verify — see [`verify_status_list`].
+    /// A `ttl` above [`MAX_SAFE_INTEGER`] is not a valid atproto integer
+    /// and is rejected here, before any signature is considered.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, super::error::CodecError> {
-        from_canonical_bytes(bytes)
+        let list: Self = from_canonical_bytes(bytes)?;
+        if list.body.ttl.is_some_and(|t| t > MAX_SAFE_INTEGER) {
+            return Err(super::error::CodecError::DisallowedValue {
+                path: "/ttl".into(),
+                detail: "integer exceeds 53 bits",
+            });
+        }
+        Ok(list)
     }
 }
 
@@ -340,6 +356,19 @@ mod tests {
         let mut forged = back.clone();
         forged.body.ttl = Some(365 * 86_400);
         assert!(verify_status_list(&forged, &[vk(&k)]).is_err());
+        // The data-model ceiling: the builder clamps, the decoder rejects a
+        // body that sidestepped the builder.
+        assert_eq!(
+            list_at("2026-08-20T10:12:00Z", &[]).with_ttl(u64::MAX).ttl,
+            Some(MAX_SAFE_INTEGER)
+        );
+        let mut oversize = list_at("2026-08-20T10:12:00Z", &[]);
+        oversize.ttl = Some(MAX_SAFE_INTEGER + 1);
+        let bytes = sign_status_list(oversize, &k).unwrap().to_bytes().unwrap();
+        assert!(matches!(
+            StatusList::from_bytes(&bytes),
+            Err(super::super::error::CodecError::DisallowedValue { .. })
+        ));
     }
 
     fn now() -> Datetime {
