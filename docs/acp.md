@@ -378,10 +378,13 @@ To verify an attestation, a verifier:
    attestor cannot cause a verifier to make a request. Syntactic validation
    is necessary, not sufficient: an HTTP fetcher MUST disable redirects,
    MUST resolve the host and refuse non-global addresses at connect time
-   (DNS rebinding), SHOULD sit behind an egress guard, and SHOULD cap the
-   response size (FORKS F42).
-   Past the list's own `ttl` (when it declares one) or the verifier's policy
-   bound, whichever is tighter, a copy is *not checkable*.
+   (DNS rebinding), SHOULD sit behind an egress guard, SHOULD cap the
+   response size, and SHOULD bound the number of copies it returns (the
+   reference verifier verifies at most a fixed number, newest first)
+   (FORKS F42).
+   Strictly past the list's own `ttl` (when it declares one; `age > ttl`)
+   or the verifier's policy bound, whichever is tighter, a copy is *not
+   checkable*.
    The newest verifiable copy wins however old it is — a list published
    before the attestation was issued is still the attestor's last word,
    and must stay checkable after the attestor dies (§The kill test).
@@ -424,8 +427,10 @@ Conformance is per role:
 - must not treat any attestor — including the reference instance — as
   privileged by protocol;
 - must decide trust before fetching a status list, and must not fetch an
-  unvalidated `status.list` (step 7): no redirects, resolved addresses
-  checked against non-global ranges, egress guarded where possible;
+  unvalidated `status.list` (step 7); its HTTP fetcher must disable
+  redirects and must refuse non-global resolved addresses at connect time,
+  and should sit behind an egress guard, cap the response size and bound
+  the number of copies it returns (FORKS F42);
 - must name the custodians whose rotation keys never count as an owner's
   before acting on an ownership-tier mutual claim (§Mutual claims).
 

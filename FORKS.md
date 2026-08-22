@@ -152,13 +152,18 @@ W3C Bitstring Status List has no SSRF text at all.
 
 **Ruled (Engineer, 2026-08-22): keep `fetchable()` in the pure lane — it
 costs nothing and removes the cheap cases without DNS — and pin the
-contract the HTTP implementation must meet when the PDS-client line lands:
-redirects disabled; A/AAAA resolved and non-global addresses refused at
-connect time (the only answer to rebinding); an injected egress-guarded
-client (`with_client`, as `HttpPlcDirectory`); response size capped at
-`MAX_STATUS_LIST_BYTES`.** The spec says "necessary, not sufficient" in so
-many words so that no conforming verifier mistakes the syntax check for the
-defense.
+contract the HTTP implementation must meet when the PDS-client line lands,
+at the strengths `StatusSource`'s doc and the spec carry: redirects
+disabled (**MUST**); A/AAAA resolved and non-global addresses refused at
+connect time, the only answer to rebinding (**MUST**); an injected
+egress-guarded client, `with_client` as `HttpPlcDirectory` (**SHOULD**);
+response size capped at `MAX_STATUS_LIST_BYTES` (**SHOULD**); at most
+`MAX_STATUS_COPIES` copies returned (**SHOULD** — the verifier bounds its
+verifications regardless).** The two SHOULDs are deployment-shaped (a
+guard the network supplies, a cap a client library may not expose); the
+two MUSTs are the defense. The spec says "necessary, not sufficient" in so
+many words so that no conforming verifier mistakes the syntax check for
+the defense.
 
 ### F41. `Datetime::to_unix` is hand-rolled
 
