@@ -91,6 +91,16 @@ pub trait TrustPolicy: Send + Sync {
     /// passes — including a host's operator key that sits on every account
     /// it hosts. Verifiers acting on ownership list the operators their
     /// subjects use (bsky.social publishes two; Zurfur's vault key is one).
+    ///
+    /// The set must be **complete**, not merely non-empty: an operator key
+    /// it does not name counts as personal *and* sets no seniority floor,
+    /// so a missing key that outranks the named ones reopens the
+    /// shared-host hole for that host with no signal — the verifier
+    /// believes it closed it, and cannot tell which key it lacks. Track every
+    /// operator among your subjects' hosts, and every key each publishes
+    /// (bsky.social's two are distinct keys). Entries are verbatim
+    /// `did:key:z…` strings; a mistyped or re-encoded entry matches nothing
+    /// and fails open the same way.
     fn custodian_keys(&self) -> &BTreeSet<String> {
         static NONE: BTreeSet<String> = BTreeSet::new();
         &NONE
@@ -164,9 +174,21 @@ impl BasicPolicy {
     }
 
     /// Name the custodians whose rotation keys must never count as an
-    /// owner's (see [`TrustPolicy::custodian_keys`]).
+    /// owner's (see [`TrustPolicy::custodian_keys`] — the set must be
+    /// complete for every host in play; one unnamed operator key fails
+    /// open for that host). Entries are verbatim `did:key:z…` strings as
+    /// the PLC directory lists them; anything else matches no rotation
+    /// entry and silently protects nothing, so debug builds assert the
+    /// shape.
     pub fn with_custodians(mut self, keys: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.custodian_keys.extend(keys.into_iter().map(Into::into));
+        for key in keys {
+            let key = key.into();
+            debug_assert!(
+                super::sign::is_did_key_shaped(&key),
+                "custodian entry {key:?} is not a did:key:z… string and will never match"
+            );
+            self.custodian_keys.insert(key);
+        }
         self
     }
 }
@@ -304,9 +326,11 @@ mod tests {
         }
         assert!(Bare.custodian_keys().is_empty());
         assert!(BasicPolicy::default().custodian_keys().is_empty());
-        let p = BasicPolicy::permissive().with_custodians(["did:key:zHost", "did:key:zVault"]);
+        const HOST: &str = "did:key:zQ3shhCGUqDKjStzuDxPkTxN6ujddP4RkEKJJouJGRRkaLGbg";
+        const VAULT: &str = "did:key:zQ3shpKnbdPx3g3CmPf5cRVTPe1HtSwVn5ish3wSnDPQCbLJK";
+        let p = BasicPolicy::permissive().with_custodians([HOST, VAULT]);
         assert_eq!(p.custodian_keys().len(), 2);
-        assert!(p.custodian_keys().contains("did:key:zVault"));
+        assert!(p.custodian_keys().contains(VAULT));
     }
 
     #[test]

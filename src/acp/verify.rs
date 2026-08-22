@@ -26,6 +26,7 @@ use super::ports::{DidResolver, FetchedRecord, KeyMaterial, RepoReader, StatusSo
 use super::record::{
     AtUri, Attestation, Claim, Datetime, RELATIONSHIP_TYPE, RelKind, Relationship, canonical_bytes,
 };
+use super::sign::is_did_key_shaped;
 use super::sign::{Repository, verify_sig};
 use super::status::newest_verifiable;
 
@@ -110,6 +111,11 @@ pub enum Reason {
     /// policy's [`custodian_keys`](super::policy::TrustPolicy::custodian_keys)
     /// — sits above every custodian key in the owned DID's rotation list.
     NoKeyControl,
+    /// One DID of an ownership-tier pair does not resolve (tombstoned, or
+    /// a `did:web` host gone), so key control cannot be read at all —
+    /// distinct from [`NoKeyControl`](Self::NoKeyControl), where both
+    /// resolved and the keys said no. Carries the DID that did not.
+    CounterpartUnresolvable(Did),
 }
 
 /// The outcome of verification.
@@ -399,8 +405,12 @@ impl Verifier<'_> {
             } else {
                 (&b_fetched.repository, &a_fetched.repository)
             };
-            let owned_keys = self.dids.keys(owned).await?.unwrap_or_default();
-            let owner_keys = self.dids.keys(owner).await?.unwrap_or_default();
+            let Some(owned_keys) = self.dids.keys(owned).await? else {
+                not_in_force!(Reason::CounterpartUnresolvable(owned.clone()));
+            };
+            let Some(owner_keys) = self.dids.keys(owner).await? else {
+                not_in_force!(Reason::CounterpartUnresolvable(owner.clone()));
+            };
             if !holds_senior_rotation_key(&owner_keys, &owned_keys, self.policy.custodian_keys()) {
                 not_in_force!(Reason::NoKeyControl);
             }
@@ -436,23 +446,26 @@ impl Verifier<'_> {
 /// custodian; two DIDs carrying nothing but custodian keys fail closed
 /// (nobody personal holds either); and with an **empty** custodian set the
 /// check degrades to "some key in both lists" — the permissive mode the
-/// policy documents. Verification keys never count: `did:plc` gives them no
-/// control over the identity. Both lists are the verbatim `did:key:`
-/// strings the directory holds, in its order; the port contract forbids
-/// re-encoding, so there is nothing to normalize, and an entry that is not
-/// a `did:key:` string is never a key.
+/// policy documents. The set must also be *complete* for the hosts in
+/// play: an operator key the policy does not name counts as personal and
+/// sets no floor, so an unnamed key senior to the named ones is the
+/// bsky.social hole reopened for that host. Verification keys never
+/// count: `did:plc` gives them no control
+/// over the identity. Both lists are the verbatim `did:key:` strings the
+/// directory holds, in its order; the port contract forbids re-encoding,
+/// so there is nothing to normalize, and an entry that is not shaped like
+/// a `did:key:z…` string ([`is_did_key_shaped`]) is never a key.
 fn holds_senior_rotation_key(
     owner: &KeyMaterial,
     owned: &KeyMaterial,
     custodians: &BTreeSet<String>,
 ) -> bool {
-    let is_key = |k: &str| k.starts_with("did:key:") && k.len() > 8;
     // The most senior custodian position in the owned list, if any.
     let custodian_floor = owned.rotation.iter().position(|k| custodians.contains(k));
     owner
         .rotation
         .iter()
-        .filter(|k| is_key(k) && !custodians.contains(*k))
+        .filter(|k| is_did_key_shaped(k) && !custodians.contains(*k))
         .filter_map(|k| owned.rotation.iter().position(|o| o == k))
         .any(|idx| custodian_floor.is_none_or(|floor| idx < floor))
 }
@@ -1574,6 +1587,8 @@ mod tests {
             "",
             "zQ3shhCGUqDKjStzuDxPkTxN6ujddP4RkEKJJouJGRRkaLGbg",
             "did:key:",
+            "did:key:unknown",
+            "did:key:zab",
         ] {
             let km = |_: &Did| KeyMaterial {
                 verification: vec![],
@@ -1587,6 +1602,55 @@ mod tests {
                 "{junk:?} passed as a rotation key"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn incomplete_custodian_set_fails_open_per_missing_key() {
+        // The hazard, pinned so nobody mistakes it for safety: a bsky-shaped
+        // pair with only ONE of the host's two operator keys named. The
+        // unnamed key counts as personal; when it is the *senior* one it
+        // sits above the floor the named key sets, and ownership "passes".
+        // (Naming only the senior key happens to hold — the floor is at
+        // index 0 — but a verifier cannot know which one it is missing.)
+        // Naming both closes it. The set must be complete for every host
+        // among the verifier's subjects.
+        let mut p = Pair::new();
+        let (bsky_a, bsky_b) = (key(60), key(61));
+        p.dids.rotate(&kit(), rotation(&[&bsky_a, &bsky_b]));
+        p.dids.rotate(&fox(), rotation(&[&bsky_a, &bsky_b]));
+        p.policy = BasicPolicy::permissive().with_custodians([bsky_b.did()]);
+        assert!(
+            p.verdict_from(&p.kit_half).await.is_in_force(),
+            "one key short is the bsky hole reopened — documented, not safe"
+        );
+        p.policy = BasicPolicy::permissive().with_custodians([bsky_a.did()]);
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::NoKeyControl
+        );
+        p.policy = BasicPolicy::permissive().with_custodians([bsky_a.did(), bsky_b.did()]);
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::NoKeyControl
+        );
+    }
+
+    #[tokio::test]
+    async fn unresolvable_did_in_an_ownership_pair_is_named() {
+        // A tombstoned owned DID (or owner) is not "no key control" — the
+        // keys were never read. The reason says which DID.
+        let p = Pair::new();
+        p.dids.remove(&fox());
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::CounterpartUnresolvable(fox())
+        );
+        p.dids.publish(&fox(), rotation(&[&key(50), &key(51)]));
+        p.dids.remove(&kit());
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::CounterpartUnresolvable(kit())
+        );
     }
 
     #[tokio::test]

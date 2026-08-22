@@ -192,12 +192,12 @@ impl VerifyingKey {
         // key string that decodes to fewer would panic the verifier on
         // public input (a DID document is anyone's to write). Four base58
         // characters after the `z` decode to at least three bytes.
-        let Some(body) = multikey.strip_prefix('z') else {
+        if !multikey.starts_with('z') {
             return Err(SigError::Malformed(
                 "expected a base58btc multikey (`z…`)".into(),
             ));
-        };
-        if body.len() < 4 || !body.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        }
+        if !is_multikey_shaped(multikey) {
             return Err(SigError::Malformed("multikey too short".into()));
         }
         let (alg, sec1) = atrium_crypto::did::parse_multikey(multikey)
@@ -212,6 +212,25 @@ impl VerifyingKey {
     pub fn alg(&self) -> SigAlg {
         self.alg
     }
+}
+
+/// Whether `multikey` has the shape of a base58btc multikey: `z` followed
+/// by at least four alphanumeric characters — enough to decode to the two
+/// prefix bytes `atrium-crypto` slices unchecked. Shape, not validity.
+pub(crate) fn is_multikey_shaped(multikey: &str) -> bool {
+    multikey
+        .strip_prefix('z')
+        .is_some_and(|body| body.len() >= 4 && body.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+
+/// Whether `s` has the shape of a `did:key:z…` string — the form every
+/// entry in a `did:plc` rotation list takes. Ownership-tier key control
+/// compares rotation entries as strings, so a placeholder that is not
+/// key-shaped (`""`, `did:key:`, `did:key:unknown`, a bare multikey) must
+/// never count as a key, or two resolvers emitting the same sentinel would
+/// make every pair own each other.
+pub(crate) fn is_did_key_shaped(s: &str) -> bool {
+    s.strip_prefix("did:key:").is_some_and(is_multikey_shaped)
 }
 
 /// Verify `att`'s signature as a record fetched from `repo`, against the

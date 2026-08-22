@@ -207,7 +207,10 @@ record net.got-paws.acp.relationship {
   sits on every account it hosts — so **the verifier names the custodians**
   in its trust policy; a key it has not named is presumed personal. With no
   custodian named, key control degrades to "a key shared by both DIDs",
-  and a verifier acting on ownership must not leave it there.
+  and a verifier acting on ownership must not leave it there. The set must
+  also be complete for every host in play: an operator key left unnamed
+  counts as personal and sets no floor, so one that outranks the named
+  keys reopens the shared-host hole for that host without any signal.
 - The full CCS semantics (transfer flows, the ~72h PLC-recovery-window
   finality rule, gallery consent) are specified in `docs/ccs.md`; this
   section defines the record shape and validity rule.
