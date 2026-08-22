@@ -161,20 +161,33 @@ macro_rules! not_in_force {
     };
 }
 
+/// What a record fetch came back with, once the port has answered.
+///
+/// A port *failure* is not one of these — it surfaces as [`VerifyError`]
+/// from [`Verifier::fetch`] itself, so the two kinds of "no record" never
+/// share a type.
+enum Fetched<T> {
+    /// The repo has no record at that address.
+    Absent,
+    /// The repo has bytes there, but they do not decode as `T`.
+    Malformed(Reason),
+    /// The record, with the bytes and repository it was read from.
+    Found(FetchedRecord, T),
+}
+
 impl Verifier<'_> {
-    /// Fetch and decode, mapping the three outcomes: absent → `None`,
-    /// undecodable → `Err(Reason::Malformed)`, port failure → `VerifyError`.
+    /// Fetch and decode one record through the [`RepoReader`] port.
     async fn fetch<T: serde::de::DeserializeOwned>(
         &self,
         uri: &AtUri,
-    ) -> Result<Option<Result<(FetchedRecord, T), Reason>>, VerifyError> {
+    ) -> Result<Fetched<T>, VerifyError> {
         let Some(fetched) = self.repo.get_record(uri).await? else {
-            return Ok(None);
+            return Ok(Fetched::Absent);
         };
-        Ok(Some(match fetched.decode::<T>() {
-            Ok(record) => Ok((fetched, record)),
-            Err(err) => Err(Reason::Malformed(format!("{uri}: {err}"))),
-        }))
+        Ok(match fetched.decode::<T>() {
+            Ok(record) => Fetched::Found(fetched, record),
+            Err(err) => Fetched::Malformed(Reason::Malformed(format!("{uri}: {err}"))),
+        })
     }
 
     /// The spec's seven steps (`docs/acp.md` §Verification), for the
@@ -186,9 +199,9 @@ impl Verifier<'_> {
     ) -> Result<Verdict, VerifyError> {
         // 1. The attestation and the exact claim it binds to.
         let (fetched, att) = match self.fetch::<Attestation>(uri).await? {
-            None => not_in_force!(Reason::AttestationMissing),
-            Some(Err(reason)) => not_in_force!(reason),
-            Some(Ok(pair)) => pair,
+            Fetched::Absent => not_in_force!(Reason::AttestationMissing),
+            Fetched::Malformed(reason) => not_in_force!(reason),
+            Fetched::Found(fetched, att) => (fetched, att),
         };
         // `claim.uri` is an address the record's author wrote. Before any
         // request goes there, it must name the subject — the one authority
@@ -198,9 +211,9 @@ impl Verifier<'_> {
             not_in_force!(Reason::ClaimUriNotSubject);
         }
         let (claim_fetched, claim) = match self.fetch::<Claim>(&att.body.claim.uri).await? {
-            None => not_in_force!(Reason::ClaimMissing),
-            Some(Err(reason)) => not_in_force!(reason),
-            Some(Ok(pair)) => pair,
+            Fetched::Absent => not_in_force!(Reason::ClaimMissing),
+            Fetched::Malformed(reason) => not_in_force!(reason),
+            Fetched::Found(fetched, claim) => (fetched, claim),
         };
         if claim_fetched.cid() != &att.body.claim.cid {
             not_in_force!(Reason::ClaimRewritten);
@@ -320,9 +333,9 @@ impl Verifier<'_> {
     /// and a mutual claim has none of those signals.
     pub async fn verify_relationship(&self, half: &AtUri) -> Result<Verdict, VerifyError> {
         let (a_fetched, a) = match self.fetch::<Relationship>(half).await? {
-            None => not_in_force!(Reason::HalfMissing),
-            Some(Err(reason)) => not_in_force!(reason),
-            Some(Ok(pair)) => pair,
+            Fetched::Absent => not_in_force!(Reason::HalfMissing),
+            Fetched::Malformed(reason) => not_in_force!(reason),
+            Fetched::Found(fetched, a) => (fetched, a),
         };
         let Some(expected_kind) = a.relationship.pair() else {
             not_in_force!(Reason::UnknownKind);
@@ -348,9 +361,9 @@ impl Verifier<'_> {
                     not_in_force!(Reason::CounterpartMismatch);
                 }
                 match self.fetch::<Relationship>(uri).await? {
-                    None => None,
-                    Some(Err(reason)) => not_in_force!(reason),
-                    Some(Ok(pair)) => Some(pair),
+                    Fetched::Absent => None,
+                    Fetched::Malformed(reason) => not_in_force!(reason),
+                    Fetched::Found(fetched, b) => Some((fetched, b)),
                 }
             }
             None => {

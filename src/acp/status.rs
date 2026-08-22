@@ -49,7 +49,9 @@ pub struct BitString(#[serde(with = "serde_bytes")] pub Vec<u8>);
 impl BitString {
     /// A bitstring with room for `bits` entries, all clear.
     pub fn with_capacity_bits(bits: u64) -> Self {
-        Self(vec![0; bits.div_ceil(8) as usize])
+        let bytes = usize::try_from(bits.div_ceil(8))
+            .expect("a status-list capacity that fits this target's address space");
+        Self(vec![0; bytes])
     }
 
     /// Number of addressable bits.

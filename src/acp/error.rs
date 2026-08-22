@@ -56,7 +56,7 @@ pub enum SignError {
     Crypto(#[from] SignerError),
 }
 
-/// An attestation signature did not verify.
+/// A signature — an attestation's or a status list's — did not verify.
 ///
 /// Every variant means **not in force**; the distinction is diagnostic only.
 /// A verifier must not treat any of them as "retry with a looser policy".
@@ -69,7 +69,7 @@ pub enum SigError {
     /// also what a transplanted record, a tampered field, a high-S signature
     /// and a wrong-curve key all produce — by design they are
     /// indistinguishable from "wrong key".
-    #[error("no supplied key verified the attestation signature")]
+    #[error("no supplied key verified the signature")]
     NoKeyVerified,
     /// A key was offered whose algorithm the atproto profile does not allow.
     #[error("unsupported signature algorithm: {0}")]
