@@ -72,7 +72,9 @@ pub enum Reason {
     KindsNotAPair,
     /// A kind this build does not know; ignored, not rejected wholesale.
     UnknownKind,
-    /// Ownership-tier pair without key control over the owned DID.
+    /// Ownership-tier pair without key control over the owned DID: the
+    /// owner's most senior rotation key is not the owned DID's most senior
+    /// rotation key.
     NoKeyControl,
 }
 
@@ -227,7 +229,7 @@ impl Verifier<'_> {
 
     /// A mutual claim, starting from either half: both halves exist, name
     /// each other, form a defined pair, and — for ownership-tier kinds — the
-    /// owner holds a rotation key of the owned DID.
+    /// owner's senior rotation key is the owned DID's senior rotation key.
     pub async fn verify_relationship(&self, half: &AtUri) -> Result<Verdict, VerifyError> {
         let (a_fetched, a) = match self.fetch::<Relationship>(half).await? {
             None => not_in_force!(Reason::HalfMissing),
@@ -291,7 +293,7 @@ impl Verifier<'_> {
             };
             let owned_keys = self.dids.keys(owned).await?.unwrap_or_default();
             let owner_keys = self.dids.keys(owner).await?.unwrap_or_default();
-            if !holds_rotation_key(&owner_keys, &owned_keys) {
+            if !holds_senior_rotation_key(&owner_keys, &owned_keys) {
                 not_in_force!(Reason::NoKeyControl);
             }
         }
@@ -304,25 +306,29 @@ impl Verifier<'_> {
     }
 }
 
-/// Key control, v0.1 rule: at least one of the owner's keys (rotation or
-/// verification) appears among the owned DID's rotation keys. The spec's
-/// "equal or senior to any custodian" refinement needs the custodian's
-/// identity, which no port supplies yet — recorded in FORKS F40.
-fn holds_rotation_key(owner: &KeyMaterial, owned: &KeyMaterial) -> bool {
-    if owned.rotation.is_empty() {
-        return false;
+/// Key control (FORKS F40, amended 2026-08-21): the owner's **most senior**
+/// rotation key is the owned DID's **most senior** rotation key.
+///
+/// Why this shape and not "some key in both lists": a custodian's rotation
+/// key sits in *both* lists whenever the two DIDs share a host (bsky.social
+/// puts one operator key on every account), so set intersection proved
+/// nothing and matched the very key the senior-key rule exists to exclude.
+/// The only position the verifier can read without knowing who the
+/// custodian is, is the top: under the senior-key custody rule
+/// (`docs/ccs.md`) the owner's own key is always above the custodian's in
+/// the owner's list, and an owner who controls the owned DID has that same
+/// key above every custodian in the owned DID's list. Verification keys do
+/// not count: `did:plc` gives them no control over the identity.
+///
+/// Residuals, stated plainly: a junior co-owner (key below another owner's)
+/// does not pass from this check alone; and two DIDs that are both *purely*
+/// custodied by the same operator (no owner key at all — a violation of the
+/// senior-key rule on both) are indistinguishable from public data.
+fn holds_senior_rotation_key(owner: &KeyMaterial, owned: &KeyMaterial) -> bool {
+    match (owner.rotation.first(), owned.rotation.first()) {
+        (Some(own), Some(top)) => own == top,
+        _ => false,
     }
-    let owned_keys: Vec<VerifyingKey> = owned
-        .rotation
-        .iter()
-        .filter_map(|k| VerifyingKey::from_did_key(k).ok())
-        .collect();
-    owner
-        .rotation
-        .iter()
-        .filter_map(|k| VerifyingKey::from_did_key(k).ok())
-        .chain(owner.verification.iter().cloned())
-        .any(|k| owned_keys.contains(&k))
 }
 
 #[cfg(test)]
@@ -346,10 +352,19 @@ mod tests {
     fn key(seed: u8) -> Secp256k1Keypair {
         Secp256k1Keypair::import(&[seed; 32]).unwrap()
     }
+    fn vk(k: &Secp256k1Keypair) -> VerifyingKey {
+        VerifyingKey::from_did_key(&k.did()).unwrap()
+    }
     fn keys_of(k: &Secp256k1Keypair) -> KeyMaterial {
         KeyMaterial {
-            verification: vec![VerifyingKey::from_did_key(&k.did()).unwrap()],
+            verification: vec![vk(k)],
             rotation: vec![],
+        }
+    }
+    fn rotation(keys: &[&Secp256k1Keypair]) -> KeyMaterial {
+        KeyMaterial {
+            verification: vec![],
+            rotation: keys.iter().map(|k| vk(k)).collect(),
         }
     }
     fn dt(s: &str) -> Datetime {
@@ -878,20 +893,10 @@ mod tests {
             let (kit_half, _) = repo.put(&kit(), RELATIONSHIP_TYPE, "cd34", &owns);
             let (fox_half, _) = repo.put(&fox(), RELATIONSHIP_TYPE, "ab12", &owned_by);
 
-            dids.publish(
-                &kit(),
-                KeyMaterial {
-                    verification: vec![],
-                    rotation: vec![kit_key.did()],
-                },
-            );
-            dids.publish(
-                &fox(),
-                KeyMaterial {
-                    verification: vec![],
-                    rotation: vec![kit_key.did(), host_key.did()],
-                },
-            );
+            // Kit's own account: her key senior to her host's (bsky, say).
+            // Fox, custodied by Zurfur: Kit's key senior to Zurfur's.
+            dids.publish(&kit(), rotation(&[&kit_key, &key(52)]));
+            dids.publish(&fox(), rotation(&[&kit_key, &host_key]));
             Self {
                 repo,
                 dids,
@@ -913,6 +918,108 @@ mod tests {
             .await
             .unwrap()
         }
+    }
+
+    #[tokio::test]
+    async fn shared_custodian_key_is_not_ownership() {
+        // Kit and Fox on the same host, which lists its one operator key on
+        // every account. Kit's key is senior on Fox; the host's sits below.
+        // Mallory — same host, no key of her own — writes both records
+        // (she cannot, but suppose she did): the host key is in both her
+        // list and Fox's, and that must prove nothing.
+        let p = Pair::new();
+        let host = key(51);
+        p.dids.publish(&mallory(), rotation(&[&host]));
+        let mut owns =
+            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
+        owns.counterpart_record = Some(p.fox_half.clone());
+        let (mallory_half, _) = p.repo.put(&mallory(), RELATIONSHIP_TYPE, "ef56", &owns);
+        let mut owned_by = Relationship::new(
+            RelKind::OwnedBy,
+            mallory(),
+            dt("2026-08-20T11:00:00Z"),
+            None,
+        )
+        .unwrap();
+        owned_by.counterpart_record = Some(mallory_half.clone());
+        p.repo.replace(&p.fox_half, &owned_by);
+        assert_eq!(
+            reason(p.verdict_from(&mallory_half).await),
+            Reason::NoKeyControl
+        );
+        // Same with a different owner key on top of Fox: as long as Fox
+        // honours the senior-key rule, no co-hosted stranger passes. (Two
+        // DIDs *both* purely custodied by one operator are the documented
+        // residual — nothing in public data tells them apart.)
+        p.dids.rotate(&fox(), rotation(&[&key(55), &host]));
+        assert_eq!(
+            reason(p.verdict_from(&mallory_half).await),
+            Reason::NoKeyControl
+        );
+    }
+
+    #[tokio::test]
+    async fn custodian_senior_is_not_ownership() {
+        // Fox lists the host above Kit: Kit's key is present but junior. The
+        // senior-key rule is violated and the verifier says so.
+        let p = Pair::new();
+        p.dids.rotate(&fox(), rotation(&[&key(51), &key(50)]));
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::NoKeyControl
+        );
+        assert_eq!(
+            reason(p.verdict_from(&p.fox_half).await),
+            Reason::NoKeyControl
+        );
+    }
+
+    #[tokio::test]
+    async fn verification_keys_do_not_confer_control() {
+        // Kit's signing key is Fox's senior *rotation* key (someone
+        // misconfigured it); Kit's rotation list does not contain it.
+        let p = Pair::new();
+        let signing = key(53);
+        p.dids.rotate(
+            &kit(),
+            KeyMaterial {
+                verification: vec![vk(&signing)],
+                rotation: vec![vk(&key(50))],
+            },
+        );
+        p.dids.rotate(&fox(), rotation(&[&signing, &key(51)]));
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::NoKeyControl
+        );
+    }
+
+    #[tokio::test]
+    async fn co_owner_ordering() {
+        // Two owners, priority-ordered on Fox: [kit, bo, host]. The senior
+        // co-owner passes; the junior one does not from this check alone
+        // (documented residual — key priority implies seniority).
+        let p = Pair::new();
+        let (kit_key, bo_key, host) = (key(50), key(54), key(51));
+        let bo = Did::new("did:plc:bo12345678901234567890ab");
+        p.dids.rotate(&fox(), rotation(&[&kit_key, &bo_key, &host]));
+        p.dids.publish(&bo, rotation(&[&bo_key, &key(52)]));
+        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
+
+        let mut owns =
+            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
+        owns.counterpart_record = Some(p.fox_half.clone());
+        let (bo_half, _) = p.repo.put(&bo, RELATIONSHIP_TYPE, "gh78", &owns);
+        let mut owned_by = Relationship::new(
+            RelKind::OwnedBy,
+            bo.clone(),
+            dt("2026-08-20T11:00:00Z"),
+            None,
+        )
+        .unwrap();
+        owned_by.counterpart_record = Some(bo_half.clone());
+        p.repo.replace(&p.fox_half, &owned_by);
+        assert_eq!(reason(p.verdict_from(&bo_half).await), Reason::NoKeyControl);
     }
 
     #[tokio::test]
@@ -1001,13 +1108,7 @@ mod tests {
     async fn ownership_requires_key_control() {
         let p = Pair::new();
         // The host rotates Kit out: two records, no key control, no ownership.
-        p.dids.rotate(
-            &fox(),
-            KeyMaterial {
-                verification: vec![],
-                rotation: vec![key(51).did()],
-            },
-        );
+        p.dids.rotate(&fox(), rotation(&[&key(51)]));
         assert_eq!(
             reason(p.verdict_from(&p.kit_half).await),
             Reason::NoKeyControl

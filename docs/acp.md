@@ -238,6 +238,9 @@ each byte), set = revoked.
 record net.got-paws.acp.statusList {
   attestor: did       // whose attestations this covers; its DID document
                       // holds the signing key
+  list:     string    // this list's identifier — MUST equal the `status.list`
+                      // of every attestation it covers (a signed copy of one
+                      // list cannot stand in for another)
   issuedAt: datetime  // newest verifiable copy wins
   bits:     bytes     // one bit per issued attestation
   sig:      bytes     // signature over the CIDv1 of the record minus `sig`
@@ -248,8 +251,12 @@ There is no `$sig` repository binding: a status list is not a repo record,
 so there is no repository to bind to; its domain separation from an
 attestation pre-image is the `$type` inside the signed bytes. A verifier
 takes every copy it can reach, discards those that do not decode, do not
-name the expected attestor, or do not verify under the attestor's current
-keys, and keeps the newest by `issuedAt`. An index beyond the bitstring is
+name the expected attestor **and the expected `list`**, or do not verify
+under the attestor's current keys, and keeps the newest by `issuedAt`.
+`list` is an identifier, not necessarily a fetch location: mirrors may serve
+a list from any address, but the identifier the attestor signed is the one
+an attestation must point at. Identity-over-location is what lets mirrors
+outlive the attestor's domain (the kill test). An index beyond the bitstring is
 **not checkable** (treated as not in force when freshness is demanded),
 never "not revoked". Reference: `src/acp/status.rs`.
 
@@ -315,12 +322,18 @@ To verify an attestation, a verifier:
    attestor that rotates keys re-signs or re-issues attestations it wants to
    keep alive (as with did:plc, no historical-key verification is defined).
 5. Checks `expiresAt` is in the future.
-6. If `status` is present and the verifier's policy demands freshness:
+6. Applies local trust policy: is this `attestor`, using this `method`, at
+   this age, sufficient for this decision? The protocol supplies signals;
+   the verifier supplies judgment. A verifier that would reject here
+   performs no further I/O on the attestation's behalf.
+7. If `status` is present and the verifier's policy demands freshness:
    fetches the status artifact (any mirror), verifies its signature against
    the attestor's DID document, checks the bit at `index` is not set.
-7. Applies local trust policy: is this `attestor`, using this `method`, at
-   this age, sufficient for this decision? The protocol supplies signals;
-   the verifier supplies judgment.
+   `status.list` is attacker-influenced input: verifiers MUST validate it
+   before fetching (scheme, no loopback or link-local or private-range
+   hosts, no IP literals) and SHOULD route the fetch through an egress
+   guard. The trust decision precedes the fetch precisely so that an
+   untrusted attestor cannot cause a verifier to make a request.
 
 To verify a mutual claim: fetch both halves from both repos, check each
 names the other as `counterpart` (and `counterpartRecord`, when present,
@@ -468,6 +481,14 @@ private layer exists to prevent.
   the CIDv1 of the pre-image; `$sig.$type` fixed as
   `net.got-paws.acp.sigBinding`; strongRef `cid` confirmed a text string on
   the wire (§Signing; FORKS F36–F38; reference `src/acp/`).
+- **2026-08-21** — ship-gates review rulings: the trust decision moves
+  ahead of the status fetch (steps 6/7 swapped) and `status.list` must be
+  validated before any request — an untrusted attestor must not be able to
+  make a verifier perform I/O (§Verification; FORKS F29 precedent). Ownership
+  key control re-specified as *senior to every key the owner does not hold*
+  (FORKS F40, amended). The status-list body gains a signed `list`
+  identifier so one attestor's lists are not interchangeable
+  (§Status lists; FORKS F39, amended).
 
 ## References
 

@@ -51,6 +51,13 @@ mirrorable, newest-verifiable-wins). No `$sig` binding — not a repo record;
 `$type` inside the signed bytes is the domain separator. The JWT/CWT
 envelope can be added for the private lane where JOSE already exists.
 
+**Amended 2026-08-21 (ship-gates review, ruled by the Engineer):** the signed
+body gains `list`, the identifier every covering attestation's `status.list`
+must equal. Without it a validly-signed copy of *any* of an attestor's lists
+satisfied *any* pointer — the status-list analogue of the transplant the
+`$sig` binding closes for attestations. `list` is an identifier, not a fetch
+URL, so mirrors stay free to serve it from anywhere (kill test intact).
+
 ### F40. The verifier's I/O is three vulpes-owned `#[async_trait]` ports, and the attestor is not one of them
 
 **Where:** `src/acp/ports.rs`, `src/acp/verify.rs`.
@@ -75,10 +82,31 @@ implementations arrive with the PDS-client line and wrap, exactly as
   `Verdict::NotInForce` (the vouch is bad); the verifier never converts one
   into the other.
 
-Key control for ownership-tier pairs is checked as "at least one of the
-owner's keys is among the owned DID's rotation keys". The spec's *senior to
-any custodian* refinement needs the custodian's identity, which no port
-supplies yet; it is the PDS-client line's to add.
+Key control for ownership-tier pairs was first checked as "at least one of
+the owner's keys is among the owned DID's rotation keys". **Superseded
+2026-08-21 (ship-gates review, ruled by the Engineer):** that check is a
+no-op wherever a PDS lists one operator rotation key on every account
+(bsky.social does — and refuses PLC operations that omit it), because the
+*custodian's* key then sits in both lists and any two co-hosted accounts
+pass. Ruled fix (a), position-aware: **the owner's most senior rotation key
+must be the owned DID's most senior rotation key.** The top position is the
+only one readable without knowing who the custodian is — under the
+senior-key custody rule (`docs/ccs.md`) the owner's own key is above the
+custodian's in the owner's list, and control of the owned DID means that
+same key is above every custodian there too. Only rotation keys count; the
+owner's verification (signing) keys are not control keys per did:plc and
+are no longer admitted. `KeyMaterial::rotation` is parsed at the port
+boundary (a key that does not parse is a port `Err`, never a silent skip),
+and `DidResolver::keys` sources rotation keys from the PLC directory's
+`/data` (or the audit log), never from the DID document, which does not
+carry them.
+
+Two residuals, stated rather than hidden: a junior co-owner (key below
+another owner's on the owned DID) does not pass from this check alone —
+co-ownership verification is an open line; and two DIDs *both* purely
+custodied by the same operator, with no owner key at all, cannot be told
+apart from public data — that is a violation of the senior-key rule on both
+sides, and the rule is what makes the check meaningful.
 
 ### F41. `Datetime::to_unix` is hand-rolled
 

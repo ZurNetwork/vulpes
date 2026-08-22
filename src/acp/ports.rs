@@ -116,26 +116,35 @@ pub trait RepoReader: Send + Sync {
     ) -> Result<Vec<FetchedRecord>, RepoError>;
 }
 
-/// The key material of a DID's **current** document.
+/// A DID's **current** key material: the signing keys from its document and,
+/// for `did:plc`, the rotation keys from the directory.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct KeyMaterial {
     /// Every `verificationMethod` key the document publishes (an attestor may
     /// sign with any of them; the verifier tries each).
     pub verification: Vec<VerifyingKey>,
-    /// The `did:plc` rotation keys, most senior first, as `did:key` strings.
+    /// The `did:plc` rotation keys, **most senior first**, parsed at the port
+    /// boundary so the verifier never parses and never silently drops one.
     /// Empty for methods without rotation keys (`did:web`). Used only for
     /// ownership-tier key control.
-    pub rotation: Vec<String>,
+    ///
+    /// These are **not** in the DID document — `did:plc` deliberately omits
+    /// them. Read `https://plc.directory/<did>/data` (`rotationKeys`) or the
+    /// audit log's last operation. An implementation that reads the document
+    /// alone will leave this empty and every ownership pair will fail closed.
+    pub rotation: Vec<VerifyingKey>,
 }
 
-/// Resolve a DID to the keys in its current document.
+/// Resolve a DID to its current keys.
 ///
-/// Verification uses the *current* document by design: an attestor that
-/// rotates keys re-signs what it wants to keep alive (no historical-key
-/// verification, as with `did:plc` itself).
+/// Verification uses the *current* keys by design: an attestor that rotates
+/// keys re-signs what it wants to keep alive (no historical-key verification,
+/// as with `did:plc` itself). See [`KeyMaterial::rotation`] for where the
+/// rotation keys come from.
 #[async_trait]
 pub trait DidResolver: Send + Sync {
-    /// `Ok(None)` when the DID does not resolve (unknown, tombstoned).
+    /// `Ok(None)` when the DID does not resolve (unknown, tombstoned). A key
+    /// the port cannot parse is a port failure (`Err`), not a missing key.
     async fn keys(&self, did: &Did) -> Result<Option<KeyMaterial>, ResolveError>;
 }
 
