@@ -137,6 +137,12 @@ pub struct KeyMaterial {
     /// audit log's last operation, and preserve the order. An
     /// implementation that reads the document alone will leave this empty
     /// and every ownership pair will fail closed.
+    ///
+    /// **Verbatim.** Each entry is the `did:key:…` string exactly as the
+    /// directory holds it — no re-encoding, no case change, no stripping
+    /// the prefix. The senior-key check is a string equality across two
+    /// DIDs; any normalization an implementation applied to one and not
+    /// the other would turn a real owner into `NoKeyControl`.
     pub rotation: Vec<String>,
 }
 

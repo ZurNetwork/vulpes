@@ -310,11 +310,21 @@ impl Verifier<'_> {
         // *declared* address is held to "exists ⇒ decodes". Listing the
         // counterpart's repo is inherent: the other half lives there.
         let other = match &a.counterpart_record {
-            Some(uri) => match self.fetch::<Relationship>(uri).await? {
-                None => None,
-                Some(Err(reason)) => not_in_force!(reason),
-                Some(Ok(pair)) => Some(pair),
-            },
+            Some(uri) => {
+                // The declared address is written by this half's author. It
+                // must sit in the counterpart's repo — decided *before* the
+                // read, so a half naming `at://internal.svc/…` never makes
+                // the verifier fetch there. The post-fetch repository check
+                // below stays as defense in depth.
+                if uri.authority() != a.counterpart.as_str() {
+                    not_in_force!(Reason::CounterpartMismatch);
+                }
+                match self.fetch::<Relationship>(uri).await? {
+                    None => None,
+                    Some(Err(reason)) => not_in_force!(reason),
+                    Some(Ok(pair)) => Some(pair),
+                }
+            }
             None => {
                 let mut found = None;
                 let mut near_miss = false;
@@ -400,13 +410,19 @@ impl Verifier<'_> {
 /// comparison is on the `did:key` strings as the directory lists them —
 /// the port's contract is to preserve that order.
 ///
+/// Both sides must be the verbatim `did:key:` strings the directory holds;
+/// the port contract forbids re-encoding, so there is nothing to normalize.
+///
 /// Residuals, stated plainly: a junior co-owner (key below another owner's)
 /// does not pass from this check alone; and two DIDs that are both *purely*
 /// custodied by the same operator (no owner key at all — a violation of the
 /// senior-key rule on both) are indistinguishable from public data.
 fn holds_senior_rotation_key(owner: &KeyMaterial, owned: &KeyMaterial) -> bool {
     match (owner.rotation.first(), owned.rotation.first()) {
-        (Some(own), Some(top)) => own == top,
+        // Equality on verbatim `did:key:` strings. Anything else on top —
+        // empty, a placeholder, an unprefixed multikey — is not a key the
+        // directory would hold, and two equal non-keys must not pass.
+        (Some(own), Some(top)) => own == top && own.starts_with("did:key:") && own.len() > 8,
         _ => false,
     }
 }
@@ -867,6 +883,51 @@ mod tests {
         .unwrap();
         w.status.publish(STATUS_URL, older.to_bytes().unwrap());
         assert!(w.verdict().await.is_in_force());
+    }
+
+    #[tokio::test]
+    async fn dead_attestor_with_a_pre_issuance_list_still_counts() {
+        // Both halves of the kill-test shape at once: the list predates the
+        // attestation *and* the attestor is gone. The pre-allocated list is
+        // the last word; the vouch verifies until it expires.
+        let w = World::new();
+        w.status.clear(STATUS_URL);
+        let older = sign_status_list(
+            UnsignedStatusList::new(attestor(), STATUS_URL, dt("2026-08-19T00:00:00Z"), 8192),
+            &w.attestor_key,
+        )
+        .unwrap();
+        w.status.publish(STATUS_URL, older.to_bytes().unwrap());
+        let World {
+            repo,
+            dids,
+            status,
+            policy,
+            attestor_key,
+            att_uri,
+            ..
+        } = w;
+        drop(attestor_key);
+        let v = Verifier {
+            repo: &repo,
+            dids: &dids,
+            status: &status,
+            policy: &policy,
+        };
+        assert!(
+            v.verify_attestation(&att_uri, &dt(NOW))
+                .await
+                .unwrap()
+                .is_in_force()
+        );
+        assert_eq!(
+            reason(
+                v.verify_attestation(&att_uri, &dt("2026-09-19T10:00:00Z"))
+                    .await
+                    .unwrap()
+            ),
+            Reason::Expired
+        );
     }
 
     #[tokio::test]
@@ -1362,6 +1423,59 @@ mod tests {
         owned_by.counterpart_record = Some(bo_half.clone());
         p.repo.replace(&p.fox_half, &owned_by);
         assert_eq!(reason(p.verdict_from(&bo_half).await), Reason::NoKeyControl);
+    }
+
+    #[tokio::test]
+    async fn placeholder_rotation_entries_are_not_keys() {
+        // A resolver that answers with an empty or non-did:key top entry for
+        // both DIDs produces two *equal* strings — which is not key control.
+        let p = Pair::new();
+        for junk in [
+            "",
+            "zQ3shhCGUqDKjStzuDxPkTxN6ujddP4RkEKJJouJGRRkaLGbg",
+            "did:key:",
+        ] {
+            let km = |_: &Did| KeyMaterial {
+                verification: vec![],
+                rotation: vec![junk.to_string()],
+            };
+            p.dids.rotate(&kit(), km(&kit()));
+            p.dids.rotate(&fox(), km(&fox()));
+            assert_eq!(
+                reason(p.verdict_from(&p.kit_half).await),
+                Reason::NoKeyControl,
+                "{junk:?} passed as a rotation key"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn declared_counterpart_outside_the_counterpart_repo_is_not_fetched() {
+        // Kit's half names a counterpartRecord in some other authority — a
+        // handle, an internal host, Mallory's repo. The verifier decides
+        // CounterpartMismatch without reading it.
+        let p = Pair::new();
+        for foreign in [
+            AtUri::record(&mallory(), RELATIONSHIP_TYPE, "ab12"),
+            AtUri::parse("at://internal.svc:8080/net.got-paws.acp.relationship/x").unwrap(),
+            AtUri::parse("at://fox.got-paws.net/net.got-paws.acp.relationship/ab12").unwrap(),
+        ] {
+            let mut owns =
+                Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
+            owns.counterpart_record = Some(foreign.clone());
+            p.repo.replace(&p.kit_half, &owns);
+            let before = p.repo.read_count();
+            assert_eq!(
+                reason(p.verdict_from(&p.kit_half).await),
+                Reason::CounterpartMismatch,
+                "{foreign}"
+            );
+            assert_eq!(
+                p.repo.read_count(),
+                before + 1,
+                "only Kit's own half was read for {foreign}"
+            );
+        }
     }
 
     #[tokio::test]
