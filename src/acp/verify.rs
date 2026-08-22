@@ -288,8 +288,12 @@ impl Verifier<'_> {
         // The other half: by its declared address, else by search. The
         // search accepts the first half that matches *completely* (kind,
         // counterpart, and — when it declares one — counterpart record);
-        // a half that merely points elsewhere does not end the search, so
-        // the verdict never depends on the order a PDS lists records in.
+        // a half that merely points elsewhere does not end the search, and
+        // a record that does not decode is skipped rather than vetoing the
+        // search — so the verdict never depends on the order a PDS lists
+        // records in, nor on junk sitting in the same collection. Only the
+        // *declared* address is held to "exists ⇒ decodes". Listing the
+        // counterpart's repo is inherent: the other half lives there.
         let other = match &a.counterpart_record {
             Some(uri) => match self.fetch::<Relationship>(uri).await? {
                 None => None,
@@ -304,11 +308,8 @@ impl Verifier<'_> {
                     .list_records(&a.counterpart, RELATIONSHIP_TYPE)
                     .await?
                 {
-                    let r = match fetched.decode::<Relationship>() {
-                        Ok(r) => r,
-                        Err(err) => {
-                            not_in_force!(Reason::Malformed(format!("{}: {err}", fetched.uri)))
-                        }
+                    let Ok(r) = fetched.decode::<Relationship>() else {
+                        continue;
                     };
                     if r.relationship != expected_kind || r.counterpart != a_fetched.repository {
                         continue;
@@ -1364,11 +1365,37 @@ mod tests {
             reason(p.verdict_from(&p.kit_half).await),
             Reason::CounterpartMismatch
         );
-        // A half that does not decode is malformed, on either path.
-        p.repo.replace_bytes(
-            &AtUri::record(&fox(), RELATIONSHIP_TYPE, "aa00"),
-            b"\xa0".to_vec(),
+    }
+
+    #[tokio::test]
+    async fn junk_in_the_collection_does_not_veto_the_search() {
+        // Fox's repo holds an undecodable relationship record (old schema,
+        // corruption) that lists *before* the live half. The search skips
+        // it; swapping rkeys must not change the verdict.
+        let p = Pair::new();
+        let owns =
+            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
+        p.repo.replace(&p.kit_half, &owns); // no counterpartRecord → search
+        let owned_by =
+            Relationship::new(RelKind::OwnedBy, kit(), dt("2026-08-20T11:00:00Z"), None).unwrap();
+        p.repo.replace(&p.fox_half, &owned_by);
+        p.repo
+            .put_bytes(&fox(), RELATIONSHIP_TYPE, "aa00", b"\xa0".to_vec()); // sorts first
+        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
+        p.repo
+            .put_bytes(&fox(), RELATIONSHIP_TYPE, "zz99", b"\xa0".to_vec()); // sorts last
+        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
+        // With no live half at all, junk alone is "missing", not malformed.
+        p.repo.delete(&p.fox_half);
+        assert_eq!(
+            reason(p.verdict_from(&p.kit_half).await),
+            Reason::HalfMissing
         );
+        // The *declared* address is held to a higher bar: exists ⇒ decodes.
+        let mut declared =
+            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
+        declared.counterpart_record = Some(AtUri::record(&fox(), RELATIONSHIP_TYPE, "aa00"));
+        p.repo.replace(&p.kit_half, &declared);
         assert!(matches!(
             reason(p.verdict_from(&p.kit_half).await),
             Reason::Malformed(_)
