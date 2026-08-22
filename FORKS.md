@@ -8,7 +8,7 @@ actively wrong for a public library, in which case the reasoning is spelled out.
 
 Nothing here changes protocol behaviour. The one place where a behavioural fork
 appeared is **F8**, which the Engineer has ruled **strict** (see "Ruled by the
-Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13, F32 —
+Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13, F32, F36–F41 —
 is now ruled; no decision is left open.
 
 Source: `zurfur/backend/crates/{adapter-atproto,adapter-pg,domain,api}`.
@@ -35,6 +35,193 @@ instead. Called out here rather than assumed.
 ---
 
 ## Ruled by the Engineer
+
+### F39. The status-list artifact is ACP-native DAG-CBOR, not a Token Status List JWT
+
+**Where:** `src/acp/status.rs`, `docs/acp.md` §Status lists.
+
+The spec asks for "Token Status List *semantics*". The IETF wire format is a
+JWT/CWT around a DEFLATE-compressed bitstring — JOSE lives only behind `vc`,
+and zlib would be a new dependency in the pure lane, for a second signature
+path to review. **Ruled (Engineer, 2026-08-21): ACP-native envelope.**
+`net.got-paws.acp.statusList { attestor, issuedAt, bits, sig }`, canonical
+DAG-CBOR, signed CID-first with the very same `verify_cid` primitive as
+attestations. TSL semantics kept in full (bit index, signed, timestamped,
+mirrorable, newest-verifiable-wins). No `$sig` binding — not a repo record;
+`$type` inside the signed bytes is the domain separator. The JWT/CWT
+envelope can be added for the private lane where JOSE already exists.
+
+**Amended 2026-08-21 (ship-gates review, ruled by the Engineer):** the signed
+body gains `list`, the identifier every covering attestation's `status.list`
+must equal. Without it a validly-signed copy of *any* of an attestor's lists
+satisfied *any* pointer — the status-list analogue of the transplant the
+`$sig` binding closes for attestations. `list` is an identifier, not a fetch
+URL, so mirrors stay free to serve it from anywhere (kill test intact).
+
+**Amended again 2026-08-22 (ruled by the Engineer after sourced research):**
+the IETF Token Status List draft (draft-ietf-oauth-status-list) is the
+direct precedent for both amendments and the shape now matches it: its
+Status List Token `sub` "MUST specify the URI of the Status List Token" and
+"MUST be equal to that of the `uri` claim" in the referenced token — our
+`list`; and it carries `iat` (REQUIRED) with `exp`/`ttl` (RECOMMENDED) so
+the *issuer* states how long a copy is evidence. The signed body gains
+`ttl: Option<u64>` seconds after `issuedAt`. The verifier applies the
+tighter of `ttl` and its policy's `max_status_age_secs`; a list with
+neither stands until the attestations it covers expire, so a dead
+attestor's last list still ages out rather than failing closed (kill
+test). W3C Bitstring Status List makes the `id`/`statusListCredential`
+match only a MAY — the gap the first amendment closed.
+
+### F40. The verifier's I/O is three vulpes-owned `#[async_trait]` ports, and the attestor is not one of them
+
+**Where:** `src/acp/ports.rs`, `src/acp/verify.rs`.
+
+jacquard 0.12 (already in the graph via `oauth`) has resolution
+(`IdentityResolver`), XRPC (`XrpcClient`) and the record types — but every
+one of its traits returns `impl Future` with generic method parameters, so
+none can be an `Arc<dyn _>`; the whole vulpes storage/directory seam is
+`#[async_trait]` + `Arc<dyn _>`. **Ruled: own the ports** (`RepoReader`,
+`DidResolver`, `StatusSource`), each with an opaque error per F1, each
+honouring "absent is `Ok(None)`/empty; broken is `Err`"; jacquard-backed
+implementations arrive with the PDS-client line and wrap, exactly as
+`HttpPlcDirectory` wraps reqwest. Two consequences worth the ink:
+
+- A `FetchedRecord` carries the **canonical DAG-CBOR bytes** and the
+  repository DID it was read from. Bytes, not JSON — `sig` is a byte string
+  and the CID must be computed over what the repo holds; the JSON→bytes step
+  (`$bytes` handling) is the client's job at the boundary.
+- **There is no attestor port.** The verifier cannot call one even by
+  mistake, which is how `kill_test` passes by construction rather than by
+  discipline. `VerifyError` (a port failed) is distinct from
+  `Verdict::NotInForce` (the vouch is bad); the verifier never converts one
+  into the other.
+
+Key control for ownership-tier pairs was first checked as "at least one of
+the owner's keys is among the owned DID's rotation keys". Superseded
+2026-08-21 by "the owner's most senior rotation key is the owned DID's most
+senior rotation key" — and that, too, **superseded 2026-08-22 (ruled by the
+Engineer after sourced research):**
+
+- The did:plc spec orders `rotationKeys` by descending authority, caps them
+  at five, keeps them out of the DID document (`/data`, `/log/audit`), and
+  **explicitly allows one key to be reused across many DIDs**. Seniority buys
+  one thing — a 72-hour window in which a higher key can nullify a lower
+  key's operation.
+- bsky.social puts the same two operator keys on every account and refuses
+  operations that drop its own; so "some key in both lists" passed any two
+  co-hosted accounts. "Top equals top" fixed that only where the owner's
+  personal key sits first on *both* DIDs — Bluesky's signup `unshift`s a
+  user recovery key to the front, but `goat add-rotation-key` appends one
+  last, a junior co-owner is never first, and two accounts carrying *only*
+  the operator's keys have equal tops and passed anyway. A rule over the
+  lists alone cannot work: **public data never says who holds a key.**
+- **Ruled:** the verifier names the custodians. `TrustPolicy::custodian_keys`
+  (the same shape as `trusted_attestors`) lists operator rotation keys —
+  bsky.social's two, Zurfur's vault key, whatever a deployment's subjects
+  use. Ownership holds iff some owner rotation key that is *not* a
+  custodian key appears in the owned DID's list above every custodian key
+  there (or no custodian key is there). That is `docs/ccs.md`'s senior-key
+  rule checked literally. Junior co-owners pass while above the custodian;
+  pure-custody pairs fail closed; an **empty** custodian set is the
+  documented permissive mode ("some key in both lists" — the verifier has
+  opted out of the distinction).
+- Only rotation keys count; verification (signing) keys confer no control
+  per did:plc. `KeyMaterial::rotation` carries the `did:key` strings
+  verbatim, in directory order, unparsed: the check is set membership and
+  position, needs no key material, and parsing at the port would let one
+  rotation key on an unsupported curve fail the whole `keys()` call —
+  breaking plain-signature verification for an attestor whose rotation keys
+  the verifier never uses. `DidResolver::keys` sources them from the PLC
+  directory's `/data` (or the audit log), never from the DID document.
+
+### F42. A status-list fetcher is a network policy, not a URL parser
+
+**Where:** `src/acp/ports.rs` (`StatusSource`), `src/acp/record.rs`
+(`StatusUri::fetchable`), `docs/acp.md` §Verification step 7, §Conformance.
+
+The 2026-08-21 SSRF fix put the trust decision ahead of the status fetch
+and added `StatusUri::fetchable` — a syntactic denylist (scheme, IP
+literals in every WHATWG spelling, special-use names, label count). The
+re-verification found bypasses on the first pass (`localhost.localdomain`,
+bare names, hex IPv4) and would keep finding them: OWASP's SSRF cheat sheet
+is blunt that deny-lists are bypass-prone and "URLs are difficult to
+validate and the parser can be abused", and the JWT `jku`/`x5u` history
+(a decade of IMDS pivots, still producing CVEs in 2026) says the same.
+IETF Token Status List orders "validate the referenced token, then fetch";
+W3C Bitstring Status List has no SSRF text at all.
+
+**Ruled (Engineer, 2026-08-22): keep `fetchable()` in the pure lane — it
+costs nothing and removes the cheap cases without DNS — and pin the
+contract the HTTP implementation must meet when the PDS-client line lands,
+at the strengths `StatusSource`'s doc and the spec carry: redirects
+disabled (**MUST**); A/AAAA resolved and non-global addresses refused at
+connect time, the only answer to rebinding (**MUST**); an injected
+egress-guarded client, `with_client` as `HttpPlcDirectory` (**SHOULD**);
+response size capped at `MAX_STATUS_LIST_BYTES` (**SHOULD**); at most
+`MAX_STATUS_COPIES` copies returned (**SHOULD** — the verifier bounds its
+verifications regardless).** The two SHOULDs are deployment-shaped (a
+guard the network supplies, a cap a client library may not expose); the
+two MUSTs are the defense. The spec says "necessary, not sufficient" in so
+many words so that no conforming verifier mistakes the syntax check for
+the defense.
+
+### F41. `Datetime::to_unix` is hand-rolled
+
+**Where:** `src/acp/record.rs`.
+
+Expiry (step 5) needs a comparison; the pure lane has no `chrono`. Forty
+lines of days-from-civil plus the RFC 3339 offset, pinned against known
+epochs including a leap day and both offset signs. Fractional seconds
+truncate. It compares; it never renders.
+
+### F36. The attestation key signs the **CID** of the pre-image, not its bytes
+
+**Where:** `src/acp/sign.rs`, `docs/acp.md` §Signing.
+
+`acp.md` v0.1 said "computed over a pre-image, serialized as canonical
+DAG-CBOR" and left the `$sig.$type` marker to be "aligned with the ecosystem
+construction". The construction turned out to be Gerakines' CID-First
+Attestation spec (badge.blue / the `atproto-attestation` crates), which
+signs the **CIDv1** (dag-cbor, sha2-256, 36 raw bytes) of the pre-image and
+leaves `$type` caller-minted — no fixed value exists anywhere.
+
+**Ruled (Engineer, 2026-08-20): sign the CID bytes; `$type =
+"net.got-paws.acp.sigBinding"`.** One extra hash buys a construction that
+independent tooling reproduces (the vectors were cross-checked with python
+`cbor2` canonical mode rather than the CLI, which needs Rust 1.90 — see F37).
+Our stored shape still differs from that spec (a single `sig` bytes field,
+not a `signatures` array), so this is byte-alignment of the *pre-image*, not
+wire interop.
+
+### F37. The ACP codec is hand-rolled on the IPLD crates; `atproto-record` is reference only
+
+**Where:** `Cargo.toml` (`acp` feature), `src/acp/record.rs`.
+
+The roadmap's open decision. `atproto-record` / `atproto-attestation` 0.14
+do exactly this job but need Rust 1.90 (we are pinned at 1.88, F32), pull a
+second `sha2` (0.11), and are one maintainer with near-zero downloads.
+`serde_ipld_dagcbor` was already a direct, ungated dependency and already
+proven canonical against a published PLC vector. **Ruled: hand-roll.** The
+only new direct dependency is `serde_bytes` (so `sig` is a CBOR byte string,
+not an array of integers). The CID is built by hand as in `plc::cid`, and a
+test pins the two equal. Consequence recorded while building: a strongRef's
+`cid` is a **text string** on the wire (`com.atproto.repo.strongRef` says
+`format: cid` string), never a tag-42 link — "fixing" it changes every byte.
+
+### F38. Opaque `payload` / `scope` are `serde_json::Value`, data-model-checked on construction
+
+**Where:** `src/acp/record.rs` (`check_opaque`).
+
+The lexicons type them `unknown`. Holding them as `Ipld` would add
+`ipld-core` as a direct dependency for no wire difference; holding them as
+`serde_json::Value` risks a float or `null` reaching the signer (forbidden by
+the atproto data model, and `serde_ipld_dagcbor` would happily encode an
+f64). **Ruled: `serde_json::Value`, rejected at `Claim::new` /
+`Relationship::new` if it contains a float, a `null`, or an integer beyond
+±2⁵³.** `serde_json`'s `preserve_order` (on globally since F35) is harmless
+here — the DAG-CBOR encoder re-sorts — and a test pins that. Known limit: a
+`$bytes` value inside a payload will not round-trip through `Value`; no v0.1
+kind carries one.
 
 ### F32. RUSTSEC-2026-0009 (`time`) — **fixed, MSRV raised to 1.88**
 
