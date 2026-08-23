@@ -325,6 +325,9 @@ that verifies under the attestor's current keys. The bound is on
 **signature verifications** (at most 16), never on arrival position: a
 mirror cannot bury the genuine newest copy under junk, and it cannot make
 a verifier do unbounded work either.
+Attestors SHOULD set `ttl` to their republish cadence; the reference
+verifier's default policy treats a copy older than 30 days as not checkable
+(FORKS F43), and a tighter `ttl` wins over it.
 `list` is an identifier, not necessarily a fetch location: mirrors may serve
 a list from any address, but the identifier the attestor signed is the one
 an attestation must point at. Identity-over-location is what lets mirrors
@@ -555,9 +558,12 @@ private layer exists to prevent.
   test**: copy a valid attestation into a second repo and verification must
   fail.
 - **Stale-status attacks.** A verifier relying on an old mirrored status
-  artifact may miss a recent revocation. Verifiers with high stakes must
-  bound acceptable status age; the artifact's issuance timestamp exists for
-  this.
+  artifact may miss a recent revocation. Bounding acceptable status age is
+  what closes this, and the artifact's issuance timestamp exists for it: the
+  reference verifier's default policy bounds it at 30 days (FORKS F43) and
+  takes the attestor's signed `ttl` when that is tighter. Verifiers with
+  high stakes lower the bound; the verifier that sets no bound at all
+  accepts that a withheld republish pins an all-clear indefinitely.
 - **De-anonymization via history.** As with did:plc audit logs, deleted
   records may persist in caches, mirrors, and repo history. Deletion is
   prospective severance, not retroactive erasure; the CCS finality rules

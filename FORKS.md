@@ -240,6 +240,21 @@ Engineer after sourced research):**
   the verifier never uses. `DidResolver::keys` sources them from the PLC
   directory's `/data` (or the audit log), never from the DID document.
 
+### F43. `BasicPolicy::default()` bounds status-list age at 30 days
+
+**Where:** `src/acp/policy.rs` (`DEFAULT_MAX_STATUS_AGE_SECS`).
+
+With no bound, the newest verifiable copy wins however old it is, so an
+adversary who can withhold fresh copies pins a stale all-clear for the
+attestation's whole lifetime — failing open against the one attacker the
+status list exists to beat. With a short bound, an attestor's death becomes
+a cliff a day later, which the spec's "age out at expiry" forbids.
+**Ruled (Engineer, 2026-08-22): `Some(30 days)` by default;**
+`permissive()` is the explicit `None`. Thirty days is longer than any sane
+republish cadence and shorter than a human vouch's lifetime; the issuer's
+signed `ttl` (F39) is the precise instrument and wins when tighter, so
+attestors that know their cadence are unaffected by the default.
+
 ### F42. A status-list fetcher is a network policy, not a URL parser
 
 **Where:** `src/acp/ports.rs` (`StatusSource`), `src/acp/record.rs`
