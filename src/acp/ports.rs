@@ -93,25 +93,16 @@ impl FetchedRecord {
 
 /// Read records from subjects' repositories.
 ///
-/// Implemented over `com.atproto.repo.getRecord` / `listRecords` (or a CAR
-/// export, or a mirror). The implementation must set
-/// [`FetchedRecord::repository`] to the repository it **actually read from**,
-/// and **must verify the repo's commit signature** against that DID's
-/// signing key before returning anything: for relationship halves — which
-/// carry no signature of their own — the commit signature is the only
-/// cryptographic assertion that the repo owner said it, and the verifier
-/// relies on this port for it.
+/// Implemented over `com.atproto.repo.getRecord` (or a CAR export, or a
+/// mirror). The implementation must set [`FetchedRecord::repository`] to the
+/// repository it **actually read from**, and **must verify the repo's commit
+/// signature** against that DID's signing key before returning anything —
+/// a claim carries no signature of its own, so the commit signature is the
+/// only cryptographic assertion that the repo owner said it.
 #[async_trait]
 pub trait RepoReader: Send + Sync {
     /// One record by address. `Ok(None)` when the record does not exist.
     async fn get_record(&self, uri: &AtUri) -> Result<Option<FetchedRecord>, RepoError>;
-
-    /// Every record of `collection` in `repo`. Empty when there are none.
-    async fn list_records(
-        &self,
-        repo: &Did,
-        collection: &str,
-    ) -> Result<Vec<FetchedRecord>, RepoError>;
 }
 
 /// A DID's **current** key material: the signing keys from its document and,
@@ -123,8 +114,8 @@ pub struct KeyMaterial {
     pub verification: Vec<VerifyingKey>,
     /// The `did:plc` rotation keys as `did:key` strings, in **directory
     /// order — most senior first**, exactly as the directory lists them.
-    /// Empty for methods without rotation keys (`did:web`). Used only for
-    /// ownership-tier key control.
+    /// Empty for methods without rotation keys (`did:web`). Verification
+    /// never reads them; the custody helpers (FORKS F45) do.
     ///
     /// Strings, not parsed keys, on purpose: the senior-key check is an
     /// equality on the top entry and never needs the key material, and
@@ -136,7 +127,7 @@ pub struct KeyMaterial {
     /// them. Read `https://plc.directory/<did>/data` (`rotationKeys`) or the
     /// audit log's last operation, and preserve the order. An
     /// implementation that reads the document alone will leave this empty
-    /// and every ownership pair will fail closed.
+    /// and every seniority check will fail closed.
     ///
     /// **Verbatim.** Each entry is the `did:key:…` string exactly as the
     /// directory holds it — no re-encoding, no case change, no stripping

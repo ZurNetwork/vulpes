@@ -54,7 +54,7 @@ infrastructure down and every issued vouch still verifies.
       strand-on-attestor-death test.
 - [ ] **CCS as attestations** (FORKS F45, ruled 2026-08-22) — delete the
       relationship path (`Relationship`, `RelKind`, `verify_relationship`,
-      the counterpart search, the `relationship` lexicon); move the seniority
+      the counterpart search, the `relationship` lexicon) — **done**; move the seniority
       check and custodian discovery into pure `acp::custody` helpers and drop
       `TrustPolicy::custodian_keys`; `ClaimKind::parse` for five-segment NSIDs
       and the two v0.1 categories (`identity`, `relationship` — `consent`

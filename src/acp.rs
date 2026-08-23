@@ -2,9 +2,9 @@
 //! bytes, and the attestation signature.
 //!
 //! This module is the reference verifier of the public lane: it knows how
-//! the three record types (`net.got-paws.acp.claim`, `.attestation`,
-//! `.relationship`) and the status-list artifact serialize, what an attestor
-//! signs, and runs the spec's seven verification steps. It performs no I/O
+//! the two record types (`net.got-paws.acp.claim`, `.attestation`) and the
+//! status-list artifact serialize, what an attestor signs, and runs the
+//! spec's seven verification steps. It performs no I/O
 //! **of its own** — every repo fetch, DID resolution and status-list read
 //! goes through the three [`ports`], which the caller implements (a PDS
 //! client, a directory client, a mirror fetch) and tests fake in memory.
@@ -19,8 +19,9 @@
 //! - [`status`] — the signed, mirrorable status-list artifact.
 //! - [`policy`] — [`TrustPolicy`], the verifier's own judgment (step 6,
 //!   ahead of the status fetch it gates).
-//! - [`verify`] — [`Verifier::verify_attestation`] (the spec's seven steps)
-//!   and [`Verifier::verify_relationship`].
+//! - [`verify`] — [`Verifier::verify_attestation`], the spec's seven steps.
+//!   Relationships are attestations whose attestor is the counterpart
+//!   (FORKS F45); there is no second path.
 //! - [`error`] — one closed error enum per concern.
 //!
 //! # The binding, in one paragraph
@@ -54,8 +55,8 @@ pub use ports::{
 };
 pub use record::{
     ATTESTATION_TYPE, AtUri, Attestation, CLAIM_TYPE, Claim, ClaimKind, Datetime, MAX_SAFE_INTEGER,
-    RELATIONSHIP_TYPE, RecordCid, RelKind, Relationship, STATUS_LIST_TYPE, Sig, StatusRef,
-    StatusUri, StrongRef, UnsignedAttestation, canonical_bytes, check_opaque, from_canonical_bytes,
+    RecordCid, STATUS_LIST_TYPE, Sig, StatusRef, StatusUri, StrongRef, UnsignedAttestation,
+    canonical_bytes, check_opaque, from_canonical_bytes,
 };
 pub use sign::{
     Repository, SIG_BINDING_TYPE, SigAlg, Signer, VerifyingKey, preimage, preimage_cid, sign,
