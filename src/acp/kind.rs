@@ -4,16 +4,17 @@
 //! (`docs/acp.md` §Claim kinds; FORKS F45): the first two segments are the
 //! authority that owns the meaning, the third names the protocol, the fourth
 //! is ACP's closed category list, the fifth is the kind itself. Each segment
-//! is an enum with the values this build knows **and an `Other(String)`**,
-//! so a kind minted by anyone else parses, round-trips byte-for-byte, and can
-//! be built dynamically. Only *syntax* can fail here (wrong segment count, a
-//! bad label); a *value* never does — the spec's "unrecognised kinds are
-//! ignored, never rejected".
+//! is an enum with the values this build knows **and an `Other`** holding the
+//! syntax-checked segment, so a kind minted by anyone else parses, round-trips
+//! byte-for-byte, and can be built dynamically. Only *syntax* can fail here
+//! (wrong segment count, a bad label), and only at the newtype doors
+//! ([`ClaimAuthority`], [`ClaimLabel`], [`ClaimName`]); a *value* never does —
+//! the spec's "unrecognised kinds are ignored, never rejected".
 //!
 //! Meaning lives in the spec and the kind's own definition record, not
 //! here: `Category::Relationship` says nothing in code about who attests.
 
-use std::fmt;
+use std::fmt::{self, Display};
 use std::str::FromStr;
 
 use serde::de::{self, Deserializer};
@@ -31,19 +32,22 @@ const SEGMENTS: usize = 5;
 
 // ─── one macro for the four segment enums ───────────────────────────────────
 
-/// A closed set of wire strings plus `Other(String)` for everything else.
+/// A closed set of wire strings plus `Other` holding the checked segment.
 ///
-/// `From<&str>` never fails (an unknown word becomes `Other`), `Display`
-/// renders the wire string, and `as_str` is the only hand-rolled accessor.
+/// `$checked` is the segment's syntax-checked newtype ([`ClaimAuthority`],
+/// [`ClaimLabel`] or [`ClaimName`]); `From<$checked>` is the **only**
+/// constructor besides the known variants, so an `Other` can never carry a
+/// value the parser would refuse. An unknown word becomes `Other`, never an
+/// error; `Display` renders the wire string.
 macro_rules! string_enum {
-    ($(#[$doc:meta])* $name:ident { $($(#[$vdoc:meta])* $variant:ident = $s:expr),+ $(,)? }) => {
+    ($(#[$doc:meta])* $name:ident : $checked:ty { $($(#[$vdoc:meta])* $variant:ident = $s:expr),+ $(,)? }) => {
         $(#[$doc])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum $name {
             $($(#[$vdoc])* $variant,)+
-            /// A value this build does not know. Carried verbatim, rendered
-            /// verbatim; never a reason to reject a record.
-            Other(String),
+            /// A value this build does not know. Syntax-checked, carried
+            /// verbatim, rendered verbatim; never a reason to reject a record.
+            Other($checked),
         }
 
         impl $name {
@@ -51,16 +55,18 @@ macro_rules! string_enum {
             pub fn as_str(&self) -> &str {
                 match self {
                     $(Self::$variant => $s,)+
-                    Self::Other(s) => s,
+                    Self::Other(checked) => checked.as_str(),
                 }
             }
         }
 
-        impl From<&str> for $name {
-            fn from(s: &str) -> Self {
-                match s {
+        impl From<$checked> for $name {
+            /// A known word becomes its variant; anything else is `Other`,
+            /// moved in as-is.
+            fn from(checked: $checked) -> Self {
+                match checked.as_str() {
                     $($s => Self::$variant,)+
-                    other => Self::Other(other.to_string()),
+                    _ => Self::Other(checked),
                 }
             }
         }
@@ -75,7 +81,7 @@ macro_rules! string_enum {
 
 string_enum!(
     /// Segments 1–2: the reversed domain that owns the kind's meaning.
-    Authority {
+    Authority: ClaimAuthority {
         /// `net.got-paws` — this spec's own kinds.
         GotPaws = "net.got-paws",
         /// `app.zurfur` — Zurfur's kinds; not this spec's.
@@ -85,7 +91,7 @@ string_enum!(
 
 string_enum!(
     /// Segment 3: the protocol the kind belongs to.
-    Protocol {
+    Protocol: ClaimLabel {
         /// `acp` — every ACP kind, under any authority.
         Acp = "acp",
     }
@@ -95,7 +101,7 @@ string_enum!(
     /// Segment 4: ACP's closed category list — what every authority agrees
     /// on. What a category *means* (who claims, who attests, what the
     /// payload carries) is `docs/acp.md` §Claim kinds, not this enum.
-    Category {
+    Category: ClaimLabel {
         /// A fact about the subject.
         Identity = "identity",
         /// The subject and another DID.
@@ -105,7 +111,7 @@ string_enum!(
 
 string_enum!(
     /// Segment 5: the kind itself, camelCase, defined by its authority.
-    Name {
+    Name: ClaimName {
         /// Control of an email address.
         Email = "email",
         /// An account on another service.
@@ -124,7 +130,7 @@ string_enum!(
 /// A claim kind: `<tld>.<domain>.<protocol>.<category>.<name>`.
 ///
 /// Built from typed segments ([`ClaimKind::new`]) or parsed from the wire
-/// ([`FromStr`], [`TryFrom`], `Deserialize` — one parser). Rendered by
+/// ([`FromStr`], `Deserialize` — one parser). Rendered by
 /// [`fmt::Display`] — the one place the segments become a string; `Serialize`
 /// goes through it. The seeds are consts: [`ClaimKind::EMAIL`] and friends.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -172,10 +178,10 @@ impl ClaimKind {
         Name::Character,
     );
 
-    /// Assemble a kind from typed segments. Infallible: the known variants
-    /// always render a valid NSID. An `Other` carrying bad syntax renders a
-    /// string the parser would refuse — build those through
-    /// [`FromStr`] instead, which checks.
+    /// Assemble a kind from typed segments. Infallible, and the result always
+    /// renders an NSID the parser accepts: the known variants are valid by
+    /// construction and an `Other` can only hold a segment that already
+    /// passed its newtype's syntax check.
     pub const fn new(
         authority: Authority,
         protocol: Protocol,
@@ -222,6 +228,7 @@ impl ClaimKind {
     }
 }
 
+/// A `kind` syntax error: [`CodecError::InvalidField`] on field `"kind"`.
 fn invalid(detail: impl Into<String>) -> CodecError {
     CodecError::InvalidField {
         field: "kind",
@@ -229,55 +236,154 @@ fn invalid(detail: impl Into<String>) -> CodecError {
     }
 }
 
-/// An NSID authority label: lowercase ASCII letters, digits and hyphens, no
-/// hyphen at either edge, 1..=[`LABEL_MAX_LEN`] characters.
-fn check_label(label: &str, position: usize) -> Result<(), CodecError> {
-    if label.is_empty() {
-        return Err(invalid(format!("segment {position} is empty")));
+/// One checked label of segments 1–4: non-empty, at most [`LABEL_MAX_LEN`]
+/// chars, lowercase ASCII letters, digits and interior hyphens only — the
+/// atproto NSID domain-authority rules.
+///
+/// It is the door into [`Protocol`] and [`Category`]: `From<ClaimLabel>`
+/// turns a checked label into its variant, or into `Other` when this build
+/// does not know the word. Built through [`FromStr`], which is where the
+/// syntax is judged; the value never is.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClaimLabel(String);
+
+impl ClaimLabel {
+    /// The label verbatim.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
-    if label.len() > LABEL_MAX_LEN {
-        return Err(invalid(format!(
-            "segment {position} is {} chars; the max is {LABEL_MAX_LEN}",
-            label.len()
-        )));
-    }
-    if label.starts_with('-') || label.ends_with('-') {
-        return Err(invalid(format!(
-            "segment {position} starts or ends with a hyphen"
-        )));
-    }
-    if let Some(bad) = label
-        .chars()
-        .find(|&c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
-    {
-        return Err(invalid(format!(
-            "segment {position} contains {bad:?}; lowercase letters, digits and hyphens only"
-        )));
-    }
-    Ok(())
 }
 
-/// An NSID name segment: ASCII letters and digits, first character a
-/// letter, 1..=[`LABEL_MAX_LEN`] characters.
-fn check_name(name: &str) -> Result<(), CodecError> {
-    if name.is_empty() {
-        return Err(invalid("name segment is empty"));
+impl Display for ClaimLabel {
+    /// The label verbatim — what was checked is what is rendered.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
-    if name.len() > LABEL_MAX_LEN {
-        return Err(invalid(format!(
-            "name segment is {} chars; the max is {LABEL_MAX_LEN}",
-            name.len()
-        )));
+}
+impl FromStr for ClaimLabel {
+    type Err = CodecError;
+
+    /// Check one label's syntax. Fails only on shape — length, case, an
+    /// illegal character, a leading or trailing hyphen.
+    fn from_str(label: &str) -> Result<Self, Self::Err> {
+        if label.is_empty() {
+            return Err(invalid("Segment is empty"));
+        }
+        if label.len() > LABEL_MAX_LEN {
+            return Err(invalid(format!(
+                "segment is {} chars; the max is {LABEL_MAX_LEN}",
+                label.len()
+            )));
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(invalid("segment starts or ends with a hyphen"));
+        }
+        if let Some(bad) = label
+            .chars()
+            .find(|&c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+        {
+            return Err(invalid(format!(
+                "segment contains {bad:?}; lowercase letters, digits and hyphens only"
+            )));
+        }
+
+        Ok(Self(label.into()))
     }
-    if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
-        return Err(invalid("name segment must start with a letter"));
+}
+
+/// The checked fifth segment: non-empty, at most [`LABEL_MAX_LEN`] chars,
+/// ASCII alphanumeric and starting with a letter — the atproto NSID name
+/// rules, which camelCase satisfies and a hyphen does not.
+///
+/// Feeds [`Name`] through `From<ClaimName>`; a word this build does not
+/// know becomes [`Name::Other`]. Built through [`FromStr`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClaimName(String);
+
+impl ClaimName {
+    /// The name verbatim.
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
-    if let Some(bad) = name.chars().find(|c| !c.is_ascii_alphanumeric()) {
-        return Err(invalid(format!(
-            "name segment contains {bad:?}; ASCII letters and digits only"
-        )));
+}
+
+impl Display for ClaimName {
+    /// The name verbatim — what was checked is what is rendered.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
-    Ok(())
+}
+
+impl FromStr for ClaimName {
+    type Err = CodecError;
+    /// Check the name segment's syntax. Shape only; any well-formed name is
+    /// accepted, known or not.
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        if name.is_empty() {
+            return Err(invalid("name segment is empty"));
+        }
+        if name.len() > LABEL_MAX_LEN {
+            return Err(invalid(format!(
+                "name segment is {} chars; the max is {LABEL_MAX_LEN}",
+                name.len()
+            )));
+        }
+        if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            return Err(invalid("name segment must start with a letter"));
+        }
+        if let Some(bad) = name.chars().find(|c| !c.is_ascii_alphanumeric()) {
+            return Err(invalid(format!(
+                "name segment contains {bad:?}; ASCII letters and digits only"
+            )));
+        }
+        Ok(Self(name.into()))
+    }
+}
+
+/// The checked authority — segments 1–2, `<tld>.<domain>`: exactly two
+/// [`ClaimLabel`]s joined by a dot, the reversed domain that owns a kind's
+/// meaning.
+///
+/// Feeds [`Authority`] through `From<ClaimAuthority>`; a domain this build
+/// does not know becomes [`Authority::Other`]. Built through [`FromStr`],
+/// or by the kind parser from two labels it has already checked.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClaimAuthority(String);
+
+impl ClaimAuthority {
+    /// The `<tld>.<domain>` string verbatim.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Join two labels the parser has already checked; no re-check.
+    fn from_labels(tld: ClaimLabel, domain: ClaimLabel) -> Self {
+        Self(format!("{tld}.{domain}"))
+    }
+}
+
+impl Display for ClaimAuthority {
+    /// The authority verbatim — what was checked is what is rendered.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl FromStr for ClaimAuthority {
+    type Err = CodecError;
+
+    /// Exactly two dot-separated labels, each checked as a [`ClaimLabel`].
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let (tld, domain) = raw
+            .split_once('.')
+            .ok_or_else(|| invalid("authority needs two segments (tld.domain)"))?;
+        if domain.contains('.') {
+            return Err(invalid(
+                "authority has more than two segments; expected tld.domain",
+            ));
+        }
+        Ok(Self::from_labels(tld.parse()?, domain.parse()?))
+    }
 }
 
 impl FromStr for ClaimKind {
@@ -292,38 +398,38 @@ impl FromStr for ClaimKind {
                 raw.len()
             )));
         }
-        let segments: Vec<&str> = raw.split('.').collect();
+        let mut segments: Vec<&str> = raw.split('.').collect();
         if segments.len() != SEGMENTS {
             return Err(invalid(format!(
                 "expected {SEGMENTS} segments (tld.domain.protocol.category.name), found {}",
                 segments.len()
             )));
         }
-        for (i, label) in segments[..SEGMENTS - 1].iter().enumerate() {
-            check_label(label, i + 1)?;
-        }
-        check_name(segments[SEGMENTS - 1])?;
-        let authority = format!("{}.{}", segments[0], segments[1]);
+        let claim_name = segments
+            .pop()
+            // A NONE here means empty string. Already impossible with the previous check
+            .ok_or(CodecError::NonCanonical)?
+            .parse::<ClaimName>()?;
+
+        let segments = segments
+            .into_iter()
+            .enumerate()
+            .map(|(i, label)| {
+                label
+                    .parse::<ClaimLabel>()
+                    .map_err(|err| invalid(format!("segment {i}: {err}")))
+            })
+            .collect::<Result<Vec<ClaimLabel>, CodecError>>()?;
+        // Four labels remain after the name was popped; the count was
+        // checked above, so this cannot fail.
+        let [tld, domain, protocol, category]: [ClaimLabel; SEGMENTS - 1] =
+            segments.try_into().map_err(|_| CodecError::NonCanonical)?;
         Ok(Self {
-            authority: Authority::from(authority.as_str()),
-            protocol: Protocol::from(segments[2]),
-            category: Category::from(segments[3]),
-            name: Name::from(segments[4]),
+            authority: Authority::from(ClaimAuthority::from_labels(tld, domain)),
+            protocol: Protocol::from(protocol),
+            category: Category::from(category),
+            name: Name::from(claim_name),
         })
-    }
-}
-
-impl TryFrom<&str> for ClaimKind {
-    type Error = CodecError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        s.parse()
-    }
-}
-
-impl TryFrom<String> for ClaimKind {
-    type Error = CodecError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        s.parse()
     }
 }
 
@@ -339,18 +445,25 @@ impl fmt::Display for ClaimKind {
 }
 
 impl fmt::Debug for ClaimKind {
+    /// `ClaimKind(<wire form>)` — a kind reads better whole than as four
+    /// derived fields.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ClaimKind({self})")
     }
 }
 
 impl Serialize for ClaimKind {
+    /// One text string — the [`fmt::Display`] wire form, so DAG-CBOR
+    /// carries exactly the bytes that were parsed.
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.collect_str(self)
     }
 }
 
 impl<'de> Deserialize<'de> for ClaimKind {
+    /// A text string through the [`FromStr`] parser — decode is guarded by
+    /// the same syntax check as [`ClaimKind::parse`], and an unknown value
+    /// still decodes.
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         String::deserialize(d)?.parse().map_err(de::Error::custom)
     }
@@ -383,8 +496,6 @@ mod tests {
             assert_eq!(kind.to_string(), wire);
             assert_eq!(&ClaimKind::parse(wire).unwrap(), kind, "{wire}");
             assert_eq!(&wire.parse::<ClaimKind>().unwrap(), kind);
-            assert_eq!(&ClaimKind::try_from(wire).unwrap(), kind);
-            assert_eq!(&ClaimKind::try_from(wire.to_string()).unwrap(), kind);
             assert!(kind.is_acp());
             // No `Other` anywhere in a seed.
             assert!(!matches!(kind.authority(), Authority::Other(_)));
@@ -417,23 +528,23 @@ mod tests {
         type Check = fn(&ClaimKind) -> bool;
         let cases: [(&str, Check); 5] = [
             ("com.example.acp.identity.foo", |k: &ClaimKind| {
-                matches!(k.authority(), Authority::Other(a) if a == "com.example")
+                matches!(k.authority(), Authority::Other(a) if a.as_str() == "com.example")
                     && k.is_acp()
                     && k.category() == &Category::Identity
-                    && matches!(k.name(), Name::Other(n) if n == "foo")
+                    && matches!(k.name(), Name::Other(n) if n.as_str() == "foo")
             }),
             ("net.got-paws.acp.consent.artwork", |k: &ClaimKind| {
                 k.authority() == &Authority::GotPaws
-                    && matches!(k.category(), Category::Other(c) if c == "consent")
+                    && matches!(k.category(), Category::Other(c) if c.as_str() == "consent")
             }),
             ("net.got-paws.xyz.identity.email", |k: &ClaimKind| {
                 !k.is_acp()
-                    && matches!(k.protocol(), Protocol::Other(p) if p == "xyz")
+                    && matches!(k.protocol(), Protocol::Other(p) if p.as_str() == "xyz")
                     && k.name() == &Name::Email
             }),
             (
                 "net.got-paws.acp.identity.newThing",
-                |k: &ClaimKind| matches!(k.name(), Name::Other(n) if n == "newThing"),
+                |k: &ClaimKind| matches!(k.name(), Name::Other(n) if n.as_str() == "newThing"),
             ),
             ("com.example.foo.bar.baz", |k: &ClaimKind| {
                 matches!(k.authority(), Authority::Other(_))
@@ -452,10 +563,10 @@ mod tests {
         }
         // Dynamic construction renders the same wire form.
         let dynamic = ClaimKind::new(
-            Authority::Other("com.example".into()),
+            Authority::from("com.example".parse::<ClaimAuthority>().unwrap()),
             Protocol::Acp,
             Category::Identity,
-            Name::Other("foo".into()),
+            Name::from("foo".parse::<ClaimName>().unwrap()),
         );
         assert_eq!(dynamic.to_string(), "com.example.acp.identity.foo");
         assert_eq!(ClaimKind::parse(&dynamic.to_string()).unwrap(), dynamic);
@@ -463,15 +574,31 @@ mod tests {
 
     #[test]
     fn segment_enums_speak_the_wire() {
-        assert_eq!(Authority::from("net.got-paws"), Authority::GotPaws);
-        assert_eq!(Authority::from("org.other").as_str(), "org.other");
-        assert_eq!(Protocol::from("acp"), Protocol::Acp);
-        assert_eq!(Category::from("relationship").to_string(), "relationship");
-        assert_eq!(Name::from("externalAccount"), Name::ExternalAccount);
+        let authority = |s: &str| s.parse::<ClaimAuthority>().unwrap();
+        let label = |s: &str| s.parse::<ClaimLabel>().unwrap();
+        let name = |s: &str| s.parse::<ClaimName>().unwrap();
         assert_eq!(
-            Name::from("external-account"),
-            Name::Other("external-account".into())
+            Authority::from(authority("net.got-paws")),
+            Authority::GotPaws
         );
+        assert_eq!(
+            Authority::from(authority("org.other")).as_str(),
+            "org.other"
+        );
+        assert_eq!(Protocol::from(label("acp")), Protocol::Acp);
+        assert_eq!(
+            Category::from(label("relationship")).to_string(),
+            "relationship"
+        );
+        assert_eq!(Name::from(name("externalAccount")), Name::ExternalAccount);
+        assert_eq!(Name::from(name("other")), Name::Other(name("other")));
+        // The unchecked string never reaches an enum: bad syntax fails at
+        // the newtype door, so an `Other` is always a parseable segment.
+        assert!("external-account".parse::<ClaimName>().is_err());
+        assert!("com".parse::<ClaimAuthority>().is_err());
+        assert!("com.example.extra".parse::<ClaimAuthority>().is_err());
+        assert!("com..".parse::<ClaimAuthority>().is_err());
+        assert!("Com.example".parse::<ClaimAuthority>().is_err());
     }
 
     #[test]

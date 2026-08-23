@@ -271,8 +271,9 @@ Seeds:
 
 The reference implementation's `ClaimKind` parses the shape — exactly five
 well-formed segments — and exposes authority, protocol, category and name as
-typed values: the two categories and the seeded names it knows, and
-`Other(String)` for everything else, carried verbatim. Shape, not meaning.
+typed values: the two categories and the seeded names it knows, and an
+`Other` holding the syntax-checked segment for everything else, carried
+verbatim. Shape, not meaning.
 
 ## Status lists
 

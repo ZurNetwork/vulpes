@@ -51,7 +51,10 @@ pub mod verify;
 pub(crate) mod memory;
 
 pub use error::{CodecError, SigError, SignError, SignerError, VerifyError};
-pub use kind::{Authority, Category, ClaimKind, NSID_MAX_LEN, Name, Protocol};
+pub use kind::{
+    Authority, Category, ClaimAuthority, ClaimKind, ClaimLabel, ClaimName, NSID_MAX_LEN, Name,
+    Protocol,
+};
 pub use policy::{BasicPolicy, Decision, PolicyContext, TrustPolicy};
 pub use ports::{
     DidResolver, FetchedRecord, KeyMaterial, RepoError, RepoReader, ResolveError, StatusFetchError,

@@ -1022,17 +1022,28 @@ mod tests {
         c.kind = ClaimKind::parse("net.got-paws.acp.identity.phone").unwrap();
         let back: Claim = from_canonical_bytes(&canonical_bytes(&c).unwrap()).unwrap();
         assert_eq!(back.kind, c.kind);
-        assert_eq!(
+        assert!(matches!(
             back.kind.name(),
-            &super::super::kind::Name::Other("phone".into())
-        );
-        // A malformed kind is not a claim.
+            super::super::kind::Name::Other(n) if n.as_str() == "phone"
+        ));
+        // A malformed kind is not a claim. Locate the *whole* kind string so
+        // the corruption cannot land on `$type` (which shares the
+        // `net.got-paws` prefix) and pass for the wrong reason.
         let mut bytes = canonical_bytes(&claim()).unwrap();
+        let wire = ClaimKind::EMAIL.to_string();
         let pos = bytes
-            .windows(12)
-            .position(|w| w == b"net.got-paws")
+            .windows(wire.len())
+            .position(|w| w == wire.as_bytes())
             .unwrap();
-        bytes[pos..pos + 12].copy_from_slice(b"NET.got-paws");
+        assert_eq!(
+            bytes
+                .windows(wire.len())
+                .filter(|w| *w == wire.as_bytes())
+                .count(),
+            1,
+            "the kind's wire form must be unique in the record bytes"
+        );
+        bytes[pos..pos + 3].copy_from_slice(b"NET");
         assert!(from_canonical_bytes::<Claim>(&bytes).is_err());
     }
 
