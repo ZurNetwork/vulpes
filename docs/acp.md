@@ -234,7 +234,12 @@ The categories, with the invariant each carries:
 |---|---|---|---|
 | `identity` | the fact | the subject | a verifier of the fact — anyone; trust policy decides who counts |
 | `relationship` | `did` — the counterpart; `role` — this side's role | either party | **the DID named in `did`** (the CCS rule, `docs/ccs.md`) |
-| `consent` | `ref` — a strongRef to the object | the consenting party | the object's author |
+
+A third category, `consent` — a DID agreeing to a specific *record* (`ref`,
+a strongRef) attested by that record's author — is **deferred** (§Possible
+future changes): v0.1's consumers handle object-level permission through
+takedown requests, and a category earns its place only when its attestor
+rule is distinct and needed.
 
 **One kind per relationship.** Both sides use the *same* kind and say which
 side they are in `role` — `net.got-paws.acp.relationship.ownership` with
@@ -262,7 +267,6 @@ Seeds:
 | `net.got-paws.acp.identity.externalAccount` | — | the subject | whoever verified the account |
 | `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | the owner, naming the owned DID | the owned DID — ownership-class |
 | `net.got-paws.acp.relationship.membership` | `member` / `account` | the member, naming the account; the account, naming the member, with its `grant` | the account; the member |
-| `net.got-paws.acp.consent.artwork` | — | the featured party, `ref` = the piece | the artist |
 | `app.zurfur.acp.identity.character` | — | the character | Zurfur's kind, not this spec's |
 
 The reference implementation's `ClaimKind` parses the shape — five segments,
@@ -565,6 +569,11 @@ private layer exists to prevent.
 
 ## Possible future changes
 
+- **The `consent` category**: a DID agreeing to a specific record — an
+  artwork featuring a character, a document, a list — with `ref` a
+  strongRef (the CID pins the version consented to) and the record's author
+  as attestor. Deferred 2026-08-22: takedown requests cover the need for
+  now; the category slot is reserved so it lands additively.
 - **Kind equivalence**: a kind's definition record may declare
   `equivalentTo` another kind, so a consumer resolving an unfamiliar
   authority-specific kind learns it may treat it as a generic one

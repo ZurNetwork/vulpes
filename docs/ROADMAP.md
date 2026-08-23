@@ -56,8 +56,10 @@ infrastructure down and every issued vouch still verifies.
       relationship path (`Relationship`, `RelKind`, `verify_relationship`,
       the counterpart search, the `relationship` lexicon); move the seniority
       check and custodian discovery into pure `acp::custody` helpers and drop
-      `TrustPolicy::custodian_keys`; define the `owns` / `memberOf` /
-      `hasMember` / `consentsTo` kinds (who claims, who attests); show the
+      `TrustPolicy::custodian_keys`; `ClaimKind::parse` for five-segment NSIDs
+      and the two v0.1 categories (`identity`, `relationship` — `consent`
+      deferred); define `relationship.ownership` and
+      `relationship.membership` (roles, who claims, who attests); show the
       consumer pattern — verify, then check seniority — in the explainer.
       The "unanswered half" fork is dissolved: an unattested claim is a claim.
 - [ ] **Mint layout D** (FORKS F46) — `MintPolicy` mints

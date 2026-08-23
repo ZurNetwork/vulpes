@@ -121,29 +121,17 @@ by deleting its own claim, or by revoking / not renewing its attestation of
 the other's; a verifier reads the grant only from the account's claim. Org membership/roles
 become portable — verifiable without asking Zurfur.
 
-## The gallery as CCS
+## The gallery — deferred (ruled 2026-08-22)
 
-A displayed piece is a mutual assertion:
-
-- artist's repo: the artwork record ("this piece, featuring did:character"),
-- character's repo: a `consent.artwork` claim
-  (`net.got-paws.acp.consent.artwork`) pointing at the artwork's
-  **strongRef (at-uri + CID)**, attested by the artist.
-
-A CCS-respecting gallery renders the intersection — pieces where both sides
-assert. Removal is standard severance: the character deletes their consent
-claim and the piece leaves every compliant gallery; the artist's own record
-(their speech, their repo) persists but the consensual claim no longer
-exists. The artist withdraws by revoking or not renewing their attestation.
-
-**Multi-character pieces**: one canonical strongRef, N consent claims from N
-PDSes. The strongRef IS the dedup key (and the CID makes it tamper-evident) —
-no de-duplicator service needed.
-
-**OPEN (parked until gallery work): partial consent.** Piece features three
-characters, one revokes. (a) leaves only the revoker's surfaces, or (b)
-all-must-consent for shared/global surfaces. The records support both;
-AppView-policy decision, deliberately left open.
+Gallery permission was to be a `consent` claim — the character's repo
+consenting to the artwork's **strongRef (at-uri + CID)**, attested by the
+artist — so that removal is severance (delete the claim, the piece leaves
+every compliant gallery) and multi-character pieces are N consents with the
+strongRef as the dedup key. **Deferred**: takedown requests cover the need
+for now, and the `consent` category stays reserved in `docs/acp.md`
+§Possible future changes so it lands additively when gallery work starts.
+The partial-consent question (one of three featured characters revokes)
+is parked with it.
 
 ## Kill tests
 

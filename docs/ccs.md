@@ -91,7 +91,6 @@ differ only in `role`. The seeds:
 |---|---|---|---|---|
 | `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | the owner (role `owner`, `did` = the owned DID) | the owned DID | **seniority** — ownership-class. The `owned`-role claim is optional: the attestation is the owned DID's consent. |
 | `net.got-paws.acp.relationship.membership` | `member` / `account` | the member (role `member`, `did` = the account); the account (role `account`, `did` = the member, `grant` = what it granted) | the account; the member | none. A consumer reads the grant only from the account's claim. |
-| `net.got-paws.acp.consent.artwork` | — | the featured character (`ref` = the piece's strongRef, at-uri + CID) | the artist | none. See `docs/characters-atproto.md`. |
 | `app.zurfur.acp.identity.character` | — | the character DID | Zurfur | Zurfur's kind, not ACP's: "this DID is a character". |
 
 The identity kinds (`net.got-paws.acp.identity.email`, `….externalAccount`)

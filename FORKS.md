@@ -130,7 +130,8 @@ counts. Consequences:
 - **Kinds (ruled the same day):** a claim `kind` is a five-segment NSID,
   `<tld>.<domain>.acp.<category>.<name>` — the authority owns the name and
   publishes its definition (atproto lexicon resolution), the category is a
-  closed ACP list (`identity`, `relationship`, `consent`) that fixes who
+  closed ACP list (`identity`, `relationship`; `consent` reserved, deferred
+  behind takedown requests) that fixes who
   claims, who attests and the payload's mandatory fields, and the verifier
   checks the shape only. **One kind per relationship**, both sides using it
   and differing by a `role` in the payload
