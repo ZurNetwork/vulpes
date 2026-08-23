@@ -33,7 +33,19 @@ Open, from the review — Zuri's calls, none blocking:
 - Features matrix prints dead-code warnings for `src/memory.rs` fakes under
   some combos (`cargo check` only).
 
-Next roadmap line: **Talk to a PDS** — jacquard-backed ports, the `$bytes`
+**Same day, later (PR #16, `4268ab1`): the boundary ruling.** Vulpes
+issues and verifies attestations and never decides what a claim means
+(FORKS F45). CCS is claims + counterpart attestations; the relationship
+record/verifier path is retired in code PRs that follow; ownership =
+attestation + consumer-checked seniority (`acp::custody` helpers to come);
+claim kinds are five-segment NSIDs with two v0.1 categories (`identity`,
+`relationship`; `consent` deferred behind takedown requests); rotation
+layout D `[user, vulpes, zurfur]` is the minted default, user key
+client-generated (F46). Code PRs in order: drop relationships →
+`acp::custody` → `ClaimKind::parse` + lexicon `format: nsid` → mint
+layout D.
+
+Next roadmap line after those: **Talk to a PDS** — jacquard-backed ports, the `$bytes`
 boundary, the Docker PDS, and the kill test re-run against it. The HTTP
 `StatusSource` checklist is on the roadmap line (F42).
 
