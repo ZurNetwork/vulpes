@@ -107,20 +107,6 @@ impl FromStr for RecordCid {
     }
 }
 
-impl TryFrom<&str> for RecordCid {
-    type Error = CodecError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::parse(s)
-    }
-}
-
-impl TryFrom<String> for RecordCid {
-    type Error = CodecError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::parse(&s)
-    }
-}
-
 impl Serialize for RecordCid {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.collect_str(self)
@@ -347,20 +333,6 @@ impl FromStr for Datetime {
     }
 }
 
-impl TryFrom<&str> for Datetime {
-    type Error = CodecError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::parse(s)
-    }
-}
-
-impl TryFrom<String> for Datetime {
-    type Error = CodecError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::parse(&s)
-    }
-}
-
 impl fmt::Display for Datetime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -436,20 +408,6 @@ impl FromStr for AtUri {
     type Err = CodecError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
-    }
-}
-
-impl TryFrom<&str> for AtUri {
-    type Error = CodecError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::parse(s)
-    }
-}
-
-impl TryFrom<String> for AtUri {
-    type Error = CodecError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::parse(&s)
     }
 }
 
@@ -641,20 +599,6 @@ impl FromStr for StatusUri {
     type Err = CodecError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
-    }
-}
-
-impl TryFrom<&str> for StatusUri {
-    type Error = CodecError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::parse(s)
-    }
-}
-
-impl TryFrom<String> for StatusUri {
-    type Error = CodecError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::parse(&s)
     }
 }
 
@@ -1036,7 +980,6 @@ mod tests {
         let cid = RecordCid::of(b"x");
         let text = cid.to_string();
         assert_eq!(text.parse::<RecordCid>().unwrap(), cid);
-        assert_eq!(RecordCid::try_from(text.as_str()).unwrap(), cid);
         for bad in [
             "",
             "z",
@@ -1055,7 +998,7 @@ mod tests {
         assert!(RecordCid::parse(&other).is_err());
         // Datetime and AtUri speak the same std vocabulary.
         assert!("2026-08-20T09:00:00Z".parse::<Datetime>().is_ok());
-        assert!(AtUri::try_from("at://did:plc:abc/c/r".to_string()).is_ok());
+        assert!("at://did:plc:abc/c/r".parse::<AtUri>().is_ok());
     }
 
     #[test]
