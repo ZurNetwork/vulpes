@@ -136,6 +136,61 @@ to Zurfur (the net cannot recover) or Vulpes senior to the user (the
 reference instance becomes the landlord). The user's key is **generated
 client-side and never transits Zurfur or Vulpes**.
 
+### Slots, order, and who can change it
+
+- **Five keys, hard cap** (did:plc). Layout D spends three, so two slots are
+  free: a backup cold key (layout E) and co-owners, in any mix. Every owner
+  key sits above every custodian key; among owners, order is the tiebreak.
+- **Any listed key can rewrite the whole list** — insert, remove, reorder,
+  at any position. Seniority never restricts *signing* an operation; it
+  restricts *undoing* one: the directory accepts a nullification only from a
+  key more senior than the one that signed the operation being undone,
+  judged against the list *before* that operation, and only within 72 h.
+  So yes: the user inserts a key between themselves and Vulpes by signing one
+  operation with their own key, and the list becomes
+  `[user, new, vulpes, zurfur]`.
+- **The same rule is the threat.** Zurfur's operational key can sign an
+  operation that puts itself first. For 72 h the user (senior in the list
+  that operation replaced) can nullify it; after that it stands. The layout
+  is only as stable as the user's ability to notice — which is what the
+  PLC-log watcher is for.
+
+### Transfer and co-ownership
+
+A transfer of Fox from Kit to Sam is a rotation-key change plus a claim
+swap, in this order:
+
+1. An operation adds Sam's cold key **senior to Kit's**:
+   `[sam, kit, vulpes, zurfur]`.
+2. Sam writes `owns: did:fox`; Fox attests it. Kit deletes their `owns`.
+3. An operation removes Kit's key: `[sam, vulpes, zurfur]`.
+
+Who signs step 1 decides finality. Signed by Zurfur's operational key (the
+normal client flow), Kit — senior to it in the list it replaced — can
+nullify for 72 h: the seller's undo, which is why a sale settles only after
+the window. Signed by Kit's own key, nothing outranks the signer and the
+transfer is final at once. Either is legitimate; the client must say which
+it did.
+
+What an insecure transfer looks like, and what catches it:
+
+- **Sam added junior to Kit** — Kit can still fire Sam. Not a transfer; the
+  consumer's seniority check sees Kit above Sam.
+- **Kit's key left in the list** — Kit retains control. The buyer's client
+  reads the final list; the seniority check against *all* non-custodian
+  keys shows two owners where one was promised.
+- **Attestation only, no rotation** — Fox attests `sam owns fox` but the
+  keys never moved. Custodian-grade proof at best; the seniority check fails
+  it outright.
+- **Paid before the window closed** — the only hazard no check catches; it
+  is a timing rule for the client, not a protocol fact.
+
+How many owners can a character have: the five slots minus the custodians
+(Vulpes and Zurfur) leave **three** owner positions — three co-owners with
+no backup key, or two plus a backup. Co-owners are ordered: the first is
+the tiebreak, and a senior co-owner can remove a junior one, so equal
+partners should decide who holds index 0 before minting.
+
 The 72-hour nullification window is did:plc's, enforced by the directory;
 it protects only against a stolen *junior* key, and a longer one would delay
 every transfer's finality by the same amount. The lever that matters is

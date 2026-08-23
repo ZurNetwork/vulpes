@@ -207,8 +207,6 @@ signature counts.
 - **Lifetime**: ownership-kind attestations may carry a far-future
   `expiresAt`; the permanent mode stays deferred and additive (§Possible
   future changes).
-- `net.got-paws.acp.relationship` is **deprecated**: implementations must
-  ignore it, and the reference implementation removes it.
 
 ### Claim kinds
 
