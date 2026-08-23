@@ -32,8 +32,8 @@ kind of repo Bluesky posts live in):
 
 ```json
 {
-  "$type": "net.zur.acp.claim",
-  "kind": "email",
+  "$type": "net.got-paws.acp.claim",
+  "kind": "net.got-paws.acp.identity.email",
   "payload": { "address": "kit@example.com" },
   "createdAt": "2026-08-11T20:00:00.000Z"
 }
@@ -42,7 +42,7 @@ kind of repo Bluesky posts live in):
 This record now has an address and a content hash:
 
 ```
-uri: at://did:plc:kit123.../net.zur.acp.claim/3kx2vp5qmek2h
+uri: at://did:plc:kit123.../net.got-paws.acp.claim/3kx2vp5qmek2h
 cid: bafyreib2wqx5dpztluczpdxkkzgcp3xa4e3xolvqmyc5zaq
 ```
 
@@ -58,10 +58,10 @@ now signs a vouch **bound to Kit's exact claim record by content hash**:
 
 ```json
 {
-  "$type": "net.zur.acp.attestation",
+  "$type": "net.got-paws.acp.attestation",
   "subject": "did:plc:kit123...",
   "claim": {
-    "uri": "at://did:plc:kit123.../net.zur.acp.claim/3kx2vp5qmek2h",
+    "uri": "at://did:plc:kit123.../net.got-paws.acp.claim/3kx2vp5qmek2h",
     "cid": "bafyreib2wqx5dpztluczpdxkkzgcp3xa4e3xolvqmyc5zaq"
   },
   "attestor": "did:plc:attestor456...",
@@ -86,7 +86,7 @@ stored fact.
 
 The marketplace's verifier, given Kit's DID:
 
-1. Lists `net.zur.acp.attestation` records in Kit's repo (one standard
+1. Lists `net.got-paws.acp.attestation` records in Kit's repo (one standard
    `com.atproto.repo.listRecords` call — the subject's repo is the index of
    everything they've accepted).
 2. Fetches the referenced claim; checks its CID matches. (If Kit had edited
@@ -122,10 +122,11 @@ into your identity — not "+18", not "great engineer", not anything — because
 they can't write to your repo. What someone says about you in *their* repo
 is their speech (ATProto already has that: follows, labels); ACP just never
 confuses it with *your* record. And for claims that inherently bind two
-parties — ownership, membership — ACP uses **mutual claims**: one record in
-each repo, each naming the other, valid only while *both* exist. Either side
-deletes theirs and the relationship is over, unilaterally, without touching
-the other's repo.
+parties — ownership, membership — nothing new is needed: you claim the
+relationship in your repo (one kind for both sides; your payload says which
+side you are), and the *other* party is the one who vouches for it. No vouch, no relationship. You end it by deleting your claim; they end
+it by withdrawing their vouch — each unilaterally, neither touching the
+other's repo.
 
 ## How this differs from what you know
 

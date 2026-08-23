@@ -36,6 +36,109 @@ instead. Called out here rather than assumed.
 
 ## Ruled by the Engineer
 
+### F46. Rotation-key layout D is the minted default, and the user's key is client-generated
+
+**Where:** `MintPolicy` (`src/policy.rs`), `docs/ccs.md` §Rotation-key layout.
+
+A did:plc carries up to five rotation keys in order of seniority; holding
+one is not exclusive, and the only question that matters is *who outranks
+whom*. The layouts considered (senior → junior), with what each failure
+does to the character:
+
+| layout | Zurfur dies | Vulpes dies | user loses key | Zurfur breached | Vulpes breached | sovereign |
+|---|---|---|---|---|---|---|
+| A `[zurfur]` | gone | — | — | gone | — | Zurfur |
+| B `[vulpes, zurfur]` | ok | → A | — | ok | gone | Vulpes |
+| C `[user, zurfur]` | ok | — | → A | ok | — | user |
+| **D `[user, vulpes, zurfur]`** | ok | ok | → B | ok | ok | user |
+| E `[user, user_backup, vulpes, zurfur]` | ok | ok | → D | ok | ok | user |
+| F `[user, zurfur, vulpes]` | ok | ok | → Zurfur sovereign | Vulpes cannot revert | ok | user |
+| G `[vulpes, user, zurfur]` | ok | ok | ok | ok | user cannot revert | Vulpes |
+
+**Ruled (Engineer, 2026-08-22): D is minted by default; E is offered by
+the client; F and G are never minted** (same keys, wrong order — F leaves
+the recovery custodian unable to recover, G makes the reference instance
+the landlord). B is the floor for a user who has not yet made a cold key,
+and the client nags them into D. Every single failure in D lands on a
+layout that is still recoverable; it takes two independent failures to
+reach A, which is where an account without a recovery key lives every day.
+
+The user's key is **generated client-side and never transits Zurfur or
+Vulpes** — a server that has displayed the deed has held it, and that is D
+in name only.
+
+The 72-hour nullification window is did:plc's constant, enforced by the
+directory, not ours to tune: a longer window would delay every transfer's
+finality by the same amount it widened recovery, and it protects only
+against a stolen *junior* key regardless of length. The lever is
+detection — a watcher on the PLC log that alerts the user to any
+operation on their DID they did not initiate. That is a Zurfur feature,
+recorded on the roadmap beside this ruling.
+
+### F45. Vulpes only does attestations — CCS is claims plus counterpart attestations
+
+**Where:** `docs/ccs.md`, `docs/acp.md` §Record types, §Verification,
+§Conformance; `src/acp/verify.rs` (the relationship path, to be removed).
+
+The 2026-08-11 CCS shape was a second record type (`relationship`) with its
+own verification rule: two halves, one in each repo, each naming the
+other, plus an ownership tier that checked rotation-key control inside the
+verifier. Reviewing it surfaced a fork the shape could not answer (the
+public "unanswered half") and a verdict it could not refuse (self-loops),
+and every property already proven for attestations — kill test, transplant
+defense, revocation, expiry, the SSRF posture — had to be proven again for
+pairs.
+
+**Ruled (Engineer, 2026-08-22): vulpes issues and verifies attestations,
+and never decides what a claim means.** A relationship is not a second
+system: it is a claim by one party, in that party's repo, **attested by
+the counterpart** — the attestation signed with the counterpart's key and
+stored where every attestation is stored, in the claimant's repo. Third
+parties may attest the same claim; trust policy chooses whose signature
+counts. Consequences:
+
+- **Retired:** `net.got-paws.acp.relationship`, the `Relationship` type,
+  `RelKind` and the pairing catalog, `verify_relationship`, the counterpart
+  search, and the ownership tier *inside verification*. The relationship
+  lexicon is deprecated in the spec and removed with the code.
+- **F40 amended:** key control leaves the verifier. The seniority check
+  (an owner's non-custodian key above every custodian key on the owned
+  DID) and custodian discovery (the rotation keys common to two or more
+  unrelated accounts on a host — F44's helper, landing as a custody helper
+  rather than a policy field) stay in vulpes as pure functions in a
+  future `acp::custody` module, never wired into a verdict.
+  `TrustPolicy::custodian_keys` goes with them. Vulpes minted the layout
+  (`MintPolicy`); reading it back is the same knowledge — *mechanism*,
+  not meaning. Whether `owns` requires it is the consumer's rule; Zurfur,
+  the reference consumer, calls it after an `owns` attestation verifies.
+- **Ownership** = the owner's `owns` claim + the character's attestation
+  of it + the owner senior on the character's rotation list, the third
+  fact checked by the consumer. Consent is the signature (forgeable by
+  whoever holds the pen); control is the deed (forgeable by no one).
+- **Severance is asymmetric**, and the spec says so: the claimant deletes
+  the claim and every attestation of it stops resolving; the counterpart
+  cannot delete a record in another repo, so it revokes (status list) or
+  declines to renew. A human counterpart without infrastructure uses a
+  short expiry and silence. The old rule 3 ("delete your record and it
+  dies") holds for the claimant only.
+- **Lifetime:** ownership-kind attestations may carry a far-future
+  `expiresAt`; the deferred permanent mode stays deferred and additive.
+- **Dissolved:** the roadmap's ⚠ "unanswered half" fork (an unattested
+  claim is just a claim — already the design) and the self-ownership
+  question (`attestor == subject`, ruled 2026-08-12 as valid and adding no
+  trust; policy decides).
+- **Kinds (ruled the same day):** a claim `kind` is a five-segment NSID,
+  `<tld>.<domain>.acp.<category>.<name>` — the authority owns the name and
+  publishes its definition (atproto lexicon resolution), the category is a
+  closed ACP list (`identity`, `relationship`; `consent` reserved, deferred
+  behind takedown requests) that fixes who
+  claims, who attests and the payload's mandatory fields, and the verifier
+  checks the shape only. **One kind per relationship**, both sides using it
+  and differing by a `role` in the payload
+  (`…relationship.ownership` with `owner`/`owned`; never an
+  `owns`/`ownedBy` pair) — the least contamination between sides.
+  `docs/acp.md` §Claim kinds.
+
 ### F39. The status-list artifact is ACP-native DAG-CBOR, not a Token Status List JWT
 
 **Where:** `src/acp/status.rs`, `docs/acp.md` §Status lists.
