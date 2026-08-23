@@ -92,8 +92,8 @@ repeated in the record.
 
 ```
 record net.got-paws.acp.claim {
-  kind:      string   // claim kind from the published catalog, e.g. "email",
-                      // "external-account", "character" (see Claim kinds)
+  kind:      string   // a five-segment NSID naming the claim kind, e.g.
+                      // net.got-paws.acp.identity.email (see Claim kinds)
   payload:   object   // kind-defined content, e.g. { "address": "a@b.c" }
   createdAt: datetime
 }
@@ -178,24 +178,28 @@ without.
 
 A relationship between two DIDs is **not a separate record type**
 (ruled 2026-08-22, FORKS F45). The party asserting it writes an ordinary
-self-claim — `kind` from the catalog (`owns`, `memberOf`, `consentsTo`, …),
-the counterpart's DID in the payload — and the counterpart signs an
+self-claim — a `relationship`-category `kind`
+(`net.got-paws.acp.relationship.ownership`, …), the counterpart's DID and
+this side's `role` in the payload — and the counterpart signs an
 ordinary attestation of it, stored in the claimant's repo like every
 attestation. A verifier checks it exactly as it checks any attestation.
 Third parties may attest the same claim; trust policy decides whose
 signature counts.
 
-- **Authority partitioning**: each kind names who claims and who attests.
-  The attestor's signature over the claim's CID is agreement to exactly
-  that content; where the counterpart has something of its own to assert
-  (a role), the kind defines a reciprocal claim in the counterpart's repo,
-  attested by the first party.
+- **One kind, two roles**: both sides use the same kind and differ only
+  in the payload's `role`; each side's claim carries only what that side is
+  authoritative for, and the attestor's signature over the claim's CID is
+  agreement to exactly that content. Where the counterpart has something of
+  its own to assert (an account's grant to a member), it writes its own
+  claim of the same kind — its role, its content — attested by the first
+  party.
 - **Severance is asymmetric.** The claimant deletes the claim and every
   attestation of it stops resolving (§Self-claim). The counterpart cannot
   delete a record in another repo: it revokes (§Status lists) or declines
   to renew. A human counterpart without infrastructure uses a short
   `expiresAt` and silence.
-- **Ownership kinds** require a third fact the protocol does not check:
+- **Ownership-class kinds** (`net.got-paws.acp.relationship.ownership`)
+  require a third fact the protocol does not check:
   the owner holds a rotation key on the owned DID senior to every
   custodian's. The attestation proves consent (the owned DID's signing
   key agreed — whoever operates that DID holds that key); seniority proves
@@ -210,16 +214,56 @@ signature counts.
 
 ### Claim kinds
 
-The set of claim `kind`s is a **published, versioned catalog**, not a
-free-form string space. New kinds are added by specification change
-(additive only). v0.1 seeds: `email`, `external-account`, `character`, and
-the relationship kinds `owns` (claimed by the owner, attested by the owned
-DID), `memberOf` (claimed by the member, attested by the account),
-`hasMember` (claimed by the account with the role, attested by the member),
-`consentsTo` (claimed by the consenting character, attested by the artist).
-Implementations must ignore records whose kind they do not recognize
-(forward compatibility), never reject the whole repo. What a kind *means* —
-which consumer-side checks it carries — is the consumer's, per `docs/ccs.md`.
+A `kind` is an **NSID** of exactly five segments, read general → specific:
+
+```
+<tld> . <domain> . acp . <category> . <name>
+ net    got-paws   acp   relationship   ownership
+```
+
+| segment | set by | rule |
+|---|---|---|
+| `<tld>.<domain>` | DNS | the **authority**. Whoever controls the domain owns every kind under it; two authorities cannot mint the same name, so collisions are impossible by construction. |
+| `acp` | this spec | always `acp` for an ACP kind, under any authority. |
+| `<category>` | this spec, **closed list** | fixes who claims, who attests and what the payload must carry — the same under every authority. Extended only by specification change. |
+| `<name>` | the authority | camelCase; the kind itself, defined and published by its authority. |
+
+The categories, with the invariant each carries:
+
+| category | payload must carry | claimed by | attested by |
+|---|---|---|---|
+| `identity` | the fact | the subject | a verifier of the fact — anyone; trust policy decides who counts |
+| `relationship` | `did` — the counterpart; `role` — this side's role | either party | **the DID named in `did`** (the CCS rule, `docs/ccs.md`) |
+| `consent` | `ref` — a strongRef to the object | the consenting party | the object's author |
+
+**One kind per relationship.** Both sides use the *same* kind and say which
+side they are in `role` — `net.got-paws.acp.relationship.ownership` with
+`owner` or `owned`, never an `owns`/`ownedBy` pair. What a side may carry
+beyond `did` and `role` is for the kind's definition to state.
+
+**Resolution.** A kind resolves like any lexicon: `_lexicon.<category>.acp.<domain>`
+TXT → the authority's DID → the `com.atproto.lexicon.schema` record keyed by
+the NSID in that repo. That record *is* the kind's definition — payload
+schema, the roles, whether the kind is ownership-class (carries the
+consumer's seniority check), its default lifetime. A verifier validates the
+five-segment shape and treats the kind as opaque; a consumer acts on the
+kinds it defines or trusts. Records of an unrecognised kind are ignored,
+never rejected (forward compatibility).
+
+Seeds:
+
+| kind | roles | claimed by | attested by |
+|---|---|---|---|
+| `net.got-paws.acp.identity.email` | — | the subject | whoever verified the address |
+| `net.got-paws.acp.identity.externalAccount` | — | the subject | whoever verified the account |
+| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | the owner, naming the owned DID | the owned DID — ownership-class |
+| `net.got-paws.acp.relationship.membership` | `member` / `account` | the member, naming the account; the account, naming the member, with its `grant` | the account; the member |
+| `net.got-paws.acp.consent.artwork` | — | the featured party, `ref` = the piece | the artist |
+| `app.zurfur.acp.identity.character` | — | the character | Zurfur's kind, not this spec's |
+
+The reference implementation's `ClaimKind` parses the shape — five segments,
+`acp` third, a known category fourth — and exposes authority, category and
+name. Shape, not meaning.
 
 ## Status lists
 
@@ -581,7 +625,10 @@ private layer exists to prevent.
   Severance is asymmetric and stated. The rotation-key layout
   `[user, vulpes, zurfur]` is the minted default and the user's key is
   client-generated (FORKS F46; `docs/ccs.md`). Dissolved: the "unanswered
-  half" fork and the self-ownership question.
+  half" fork and the self-ownership question. Claim kinds are five-segment
+  NSIDs, `<tld>.<domain>.acp.<category>.<name>`, under a closed category
+  list; one kind per relationship, both sides differing by `role` in the
+  payload (§Claim kinds).
 
 ## References
 
