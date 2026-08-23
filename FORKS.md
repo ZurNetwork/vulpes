@@ -127,6 +127,16 @@ counts. Consequences:
   claim is just a claim — already the design) and the self-ownership
   question (`attestor == subject`, ruled 2026-08-12 as valid and adding no
   trust; policy decides).
+- **Kinds (ruled the same day):** a claim `kind` is a five-segment NSID,
+  `<tld>.<domain>.acp.<category>.<name>` — the authority owns the name and
+  publishes its definition (atproto lexicon resolution), the category is a
+  closed ACP list (`identity`, `relationship`, `consent`) that fixes who
+  claims, who attests and the payload's mandatory fields, and the verifier
+  checks the shape only. **One kind per relationship**, both sides using it
+  and differing by a `role` in the payload
+  (`…relationship.ownership` with `owner`/`owned`; never an
+  `owns`/`ownedBy` pair) — the least contamination between sides.
+  `docs/acp.md` §Claim kinds.
 
 ### F39. The status-list artifact is ACP-native DAG-CBOR, not a Token Status List JWT
 
