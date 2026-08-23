@@ -558,9 +558,12 @@ private layer exists to prevent.
   test**: copy a valid attestation into a second repo and verification must
   fail.
 - **Stale-status attacks.** A verifier relying on an old mirrored status
-  artifact may miss a recent revocation. Verifiers with high stakes must
-  bound acceptable status age; the artifact's issuance timestamp exists for
-  this.
+  artifact may miss a recent revocation. Bounding acceptable status age is
+  what closes this, and the artifact's issuance timestamp exists for it: the
+  reference verifier's default policy bounds it at 30 days (FORKS F43) and
+  takes the attestor's signed `ttl` when that is tighter. Verifiers with
+  high stakes lower the bound; the verifier that sets no bound at all
+  accepts that a withheld republish pins an all-clear indefinitely.
 - **De-anonymization via history.** As with did:plc audit logs, deleted
   records may persist in caches, mirrors, and repo history. Deletion is
   prospective severance, not retroactive erasure; the CCS finality rules

@@ -44,9 +44,11 @@ infrastructure down and every issued vouch still verifies.
       identifier on status lists, ownership key control against a
       policy-named custodian set (F40, ruled 2026-08-22 after research —
       co-ownership falls out of it), claim-in-subject-repo,
-      canonical-bytes check at step 4, policy-set status-age bound, `did:key` panic guard, calendar-checked `Datetime`,
+      canonical-bytes check at step 4, policy-set status-age bound,
+      `did:key` panic guard, calendar-checked `Datetime`,
       order-independent counterpart search, `BasicPolicy::default()`
-      checks revocation.
+      checks revocation — and bounds that status age at 30 days
+      (F43, ruled 2026-08-22), which retires the soft/hard freshness dial.
 - [ ] **The first attestor** — email challenge → sign → deliver; Kit's story
       from the explainer running against the local PDS.
 - [ ] **Expiry & renewal** — per-kind lifetimes, the auto-renew loop
@@ -101,6 +103,5 @@ infrastructure down and every issued vouch still verifies.
   scaffolding re-scopes here.
 - **Active + permanent vouch modes** — additive; taxonomy parked on The
   Claims Model page.
-- **Soft/hard freshness dial** — verifier-chosen max status age; parked.
 - **Announcement** — the manifesto ships publicly once the reference
   implementation demos Kit's story.
