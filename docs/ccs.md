@@ -191,6 +191,12 @@ no backup key, or two plus a backup. Co-owners are ordered: the first is
 the tiebreak, and a senior co-owner can remove a junior one, so equal
 partners should decide who holds index 0 before minting.
 
+Multi-owner characters are the exception, and the intended shape for them
+is **account-owned**: an Account DID at index 0, the sharing expressed as
+that account's membership (`memberOf` / `hasMember`), not as extra keys on
+the character. Co-owner keys on a character are allowed — they are just not
+the path the client leads with.
+
 The 72-hour nullification window is did:plc's, enforced by the directory;
 it protects only against a stolen *junior* key, and a longer one would delay
 every transfer's finality by the same amount. The lever that matters is
