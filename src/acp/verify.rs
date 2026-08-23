@@ -300,6 +300,7 @@ impl Verifier<'_> {
 mod tests {
     use atrium_crypto::keypair::{Did as _, Secp256k1Keypair};
 
+    use super::super::kind::ClaimKind;
     use super::*;
     use crate::acp::VerifyingKey;
     use crate::acp::memory::{MemoryRepo, MemoryResolver, MemoryStatus};
@@ -307,7 +308,7 @@ mod tests {
     use crate::acp::ports::KeyMaterial;
     use crate::acp::record::fixtures::{attestor, kit, mallory};
     use crate::acp::record::{
-        ATTESTATION_TYPE, CLAIM_TYPE, Claim, ClaimKind, MAX_SAFE_INTEGER, StatusRef, StrongRef,
+        ATTESTATION_TYPE, CLAIM_TYPE, Claim, MAX_SAFE_INTEGER, StatusRef, StrongRef,
         UnsignedAttestation,
     };
     use crate::acp::sign::sign;
@@ -354,7 +355,7 @@ mod tests {
             let attestor_key = key(40);
 
             let claim = Claim::new(
-                ClaimKind::Email,
+                ClaimKind::EMAIL,
                 serde_json::json!({ "address": "kit@example.com" }),
                 dt("2026-08-20T09:00:00Z"),
             )
@@ -471,7 +472,7 @@ mod tests {
     async fn claim_rewritten() {
         let w = World::new();
         let edited = Claim::new(
-            ClaimKind::Email,
+            ClaimKind::EMAIL,
             serde_json::json!({ "address": "kit@other.example" }),
             dt("2026-08-20T09:00:00Z"),
         )
@@ -942,7 +943,7 @@ mod tests {
         let mallory_key = key(43);
         w.dids.publish(&mallory(), keys_of(&mallory_key));
         let claim = Claim::new(
-            ClaimKind::Email,
+            ClaimKind::EMAIL,
             serde_json::json!({ "address": "mallory@example.com" }),
             dt("2026-08-20T09:00:00Z"),
         )

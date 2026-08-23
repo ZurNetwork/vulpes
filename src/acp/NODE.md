@@ -5,6 +5,9 @@ fs:
   - name: record.rs
     role: Claim / Attestation + canonical DAG-CBOR, pinned byte fixtures (F37, F38)
     node: false
+  - name: kind.rs
+    role: ClaimKind — the five-segment NSID, typed per segment with Other(String) (F45)
+    node: false
   - name: sign.rs
     role: attestation pre-image, sign, verify — key signs the pre-image CID (F36); negatives incl. transplant
     node: false
