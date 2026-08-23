@@ -278,7 +278,9 @@ mod mac_message_tests {
 
     fn record(operation_json: &str) -> PlcOperationRecord {
         PlcOperationRecord {
-            did: Did::parse("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa").expect("a valid did"),
+            did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"
+                .parse::<Did>()
+                .expect("a valid did"),
             cid: "bafyexample".into(),
             op_type: "plc_operation".into(),
             prev: None,

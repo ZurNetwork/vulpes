@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 
 use crate::Did;
 
-use super::record::ClaimKind;
+use super::kind::ClaimKind;
 
 /// What step 6 concluded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,14 +204,14 @@ mod tests {
     fn permissive_accepts_anyone() {
         let p = BasicPolicy::permissive();
         assert!(p.demands_freshness());
-        let (a, k) = (mallory(), ClaimKind::Email);
+        let (a, k) = (mallory(), ClaimKind::EMAIL);
         assert_eq!(p.decide(&ctx(&a, None, &k)), Decision::Accept);
     }
 
     #[test]
     fn untrusted_attestor_is_rejected() {
         let p = BasicPolicy::trusting([attestor()]);
-        let k = ClaimKind::Email;
+        let k = ClaimKind::EMAIL;
         assert_eq!(p.decide(&ctx(&attestor(), None, &k)), Decision::Accept);
         assert!(matches!(
             p.decide(&ctx(&mallory(), None, &k)),
@@ -225,7 +225,7 @@ mod tests {
             accepted_methods: Some(["email-challenge".to_string()].into()),
             ..BasicPolicy::permissive()
         };
-        let (a, k) = (attestor(), ClaimKind::Email);
+        let (a, k) = (attestor(), ClaimKind::EMAIL);
         assert_eq!(
             p.decide(&ctx(&a, Some("email-challenge"), &k)),
             Decision::Accept
@@ -243,7 +243,7 @@ mod tests {
             require_status: true,
             ..BasicPolicy::permissive()
         };
-        let (a, k) = (attestor(), ClaimKind::Email);
+        let (a, k) = (attestor(), ClaimKind::EMAIL);
         let mut c = ctx(&a, None, &k);
         assert_eq!(p.decide(&c), Decision::Accept);
         c.has_status = false;
@@ -258,7 +258,7 @@ mod tests {
             max_age_secs: Some(86_400),
             ..BasicPolicy::permissive()
         };
-        let (a, k) = (attestor(), ClaimKind::Email);
+        let (a, k) = (attestor(), ClaimKind::EMAIL);
         let mut c = ctx(&a, None, &k);
         assert!(matches!(p.decide(&c), Decision::Reject(_)));
         c.age_secs = 3_600;

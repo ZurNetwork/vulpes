@@ -26,10 +26,9 @@ const PLC_METHOD: &str = "plc";
 ///   your own store, or handed over by a PDS at sign-in. No validation, because
 ///   re-validating a value the network already accepted can only reject data
 ///   that legitimately exists.
-/// - [`FromStr`] / [`TryFrom`] / [`Deserialize`] **parse** untrusted input
-///   against the W3C DID syntax (`did:<method-name>:<method-specific-id>`), and
-///   are what you want at any boundary where a user or a remote peer supplies
-///   the string.
+/// - [`FromStr`] / [`Deserialize`] **parse** untrusted input against the W3C DID
+///   syntax (`did:<method-name>:<method-specific-id>`), and are what you want at
+///   any boundary where a user or a remote peer supplies the string.
 ///
 /// ```
 /// use vulpes::Did;
@@ -66,11 +65,11 @@ pub struct Did(String);
 impl<'de> Deserialize<'de> for Did {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = String::deserialize(deserializer)?;
-        Self::parse(&raw).map_err(serde::de::Error::custom)
+        raw.parse::<Self>().map_err(serde::de::Error::custom)
     }
 }
 
-/// Why a string was rejected as a [`Did`] by [`FromStr`]/[`TryFrom`].
+/// Why a string was rejected as a [`Did`] by [`FromStr`].
 ///
 /// The grammar checked is the W3C DID Core ABNF:
 ///
@@ -102,7 +101,7 @@ pub enum DidError {
 impl Did {
     /// Wrap a DID the caller already trusts — read back from your own store, or
     /// handed over by a PDS at sign-in. Performs **no** validation; use
-    /// [`FromStr`] or [`TryFrom`] for untrusted input.
+    /// [`FromStr`] for untrusted input.
     pub fn new(did: impl Into<String>) -> Self {
         Self(did.into())
     }
@@ -124,10 +123,11 @@ impl Did {
     pub fn is_plc(&self) -> bool {
         self.method() == Some(PLC_METHOD)
     }
+}
 
-    /// Parse and validate against the W3C DID syntax. The inherent twin of
-    /// [`FromStr::from_str`]; both share this one implementation.
-    pub fn parse(raw: &str) -> Result<Self, DidError> {
+impl FromStr for Did {
+    type Err = DidError;
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
         let rest = raw
             .strip_prefix(DID_SCHEME)
             .ok_or(DidError::MissingScheme)?;
@@ -182,30 +182,6 @@ fn group_is_idchars(group: &str) -> bool {
     true
 }
 
-impl FromStr for Did {
-    type Err = DidError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        Self::parse(raw)
-    }
-}
-
-impl TryFrom<&str> for Did {
-    type Error = DidError;
-
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
-        Self::parse(raw)
-    }
-}
-
-impl TryFrom<String> for Did {
-    type Error = DidError;
-
-    fn try_from(raw: String) -> Result<Self, Self::Error> {
-        Self::parse(&raw)
-    }
-}
-
 impl fmt::Display for Did {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -236,7 +212,7 @@ mod tests {
 
     #[test]
     fn parses_a_plc_did() {
-        let did = Did::parse("did:plc:ewvi7nxzyoun6zhxrhs64oiz").unwrap();
+        let did = "did:plc:ewvi7nxzyoun6zhxrhs64oiz".parse::<Did>().unwrap();
         assert_eq!(did.method(), Some("plc"));
         assert!(did.is_plc());
         assert_eq!(did.as_str(), "did:plc:ewvi7nxzyoun6zhxrhs64oiz");
@@ -246,7 +222,9 @@ mod tests {
     fn parses_a_web_did_with_colons_and_pct_encoding() {
         // `did:web` puts a percent-encoded host:port in the id, and the ABNF
         // allows interior colons — both must survive.
-        let did = Did::parse("did:web:example.com%3A8443:user:alice").unwrap();
+        let did = "did:web:example.com%3A8443:user:alice"
+            .parse::<Did>()
+            .unwrap();
         assert_eq!(did.method(), Some("web"));
         assert!(!did.is_plc());
     }
@@ -254,11 +232,11 @@ mod tests {
     #[test]
     fn rejects_a_non_did() {
         assert_eq!(
-            Did::parse("https://example.com"),
+            "https://example.com".parse::<Did>(),
             Err(DidError::MissingScheme)
         );
         assert_eq!(
-            Did::parse("did:plc"),
+            "did:plc".parse::<Did>(),
             Err(DidError::MissingMethodSpecificId)
         );
     }
@@ -267,11 +245,11 @@ mod tests {
     fn rejects_a_bad_method_name() {
         // method-char is %x61-7A / DIGIT — uppercase and punctuation are out.
         assert_eq!(
-            Did::parse("did:PLC:abc"),
+            "did:PLC:abc".parse::<Did>(),
             Err(DidError::InvalidMethodName("PLC".into()))
         );
         assert_eq!(
-            Did::parse("did:pl-c:abc"),
+            "did:pl-c:abc".parse::<Did>(),
             Err(DidError::InvalidMethodName("pl-c".into()))
         );
     }
@@ -280,23 +258,23 @@ mod tests {
     fn rejects_a_bad_method_specific_id() {
         // Empty, trailing-colon, out-of-charset, and truncated pct-encoding.
         assert!(matches!(
-            Did::parse("did:plc:"),
+            "did:plc:".parse::<Did>(),
             Err(DidError::InvalidMethodSpecificId(_))
         ));
         assert!(matches!(
-            Did::parse("did:plc:abc:"),
+            "did:plc:abc:".parse::<Did>(),
             Err(DidError::InvalidMethodSpecificId(_))
         ));
         assert!(matches!(
-            Did::parse("did:plc:a b"),
+            "did:plc:a b".parse::<Did>(),
             Err(DidError::InvalidMethodSpecificId(_))
         ));
         assert!(matches!(
-            Did::parse("did:plc:a%zz"),
+            "did:plc:a%zz".parse::<Did>(),
             Err(DidError::InvalidMethodSpecificId(_))
         ));
         assert!(matches!(
-            Did::parse("did:plc:a%4"),
+            "did:plc:a%4".parse::<Did>(),
             Err(DidError::InvalidMethodSpecificId(_))
         ));
     }
@@ -317,7 +295,6 @@ mod tests {
         assert_eq!(did.to_string(), "did:plc:abc");
         assert_eq!(AsRef::<str>::as_ref(&did), "did:plc:abc");
         assert_eq!(String::from(did.clone()), "did:plc:abc");
-        assert_eq!(Did::try_from("did:plc:abc".to_string()).unwrap(), did);
     }
 
     // The newtype serializes as the bare string (`#[serde(transparent)]`), so a

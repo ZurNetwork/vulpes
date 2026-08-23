@@ -12,6 +12,8 @@
 //! # Layout
 //!
 //! - [`record`] — the record structs, [`canonical_bytes`] and [`RecordCid`].
+//! - [`kind`] — [`ClaimKind`], the five-segment NSID a claim's `kind` is,
+//!   typed per segment with `Other` for what this build does not know.
 //! - [`sign`](mod@sign) — the pre-image with its injected `$sig` binding,
 //!   [`sign`](fn@sign) and [`verify_sig`].
 //! - [`ports`] — the I/O seams a verifier needs ([`RepoReader`],
@@ -37,6 +39,7 @@
 //! `docs/acp.md` §Signing for the normative text.
 
 pub mod error;
+pub mod kind;
 pub mod policy;
 pub mod ports;
 pub mod record;
@@ -48,15 +51,19 @@ pub mod verify;
 pub(crate) mod memory;
 
 pub use error::{CodecError, SigError, SignError, SignerError, VerifyError};
+pub use kind::{
+    Authority, Category, ClaimAuthority, ClaimKind, ClaimLabel, ClaimName, NSID_MAX_LEN, Name,
+    Protocol,
+};
 pub use policy::{BasicPolicy, Decision, PolicyContext, TrustPolicy};
 pub use ports::{
     DidResolver, FetchedRecord, KeyMaterial, RepoError, RepoReader, ResolveError, StatusFetchError,
     StatusSource,
 };
 pub use record::{
-    ATTESTATION_TYPE, AtUri, Attestation, CLAIM_TYPE, Claim, ClaimKind, Datetime, MAX_SAFE_INTEGER,
-    RecordCid, STATUS_LIST_TYPE, Sig, StatusRef, StatusUri, StrongRef, UnsignedAttestation,
-    canonical_bytes, check_opaque, from_canonical_bytes,
+    ATTESTATION_TYPE, AtUri, Attestation, CLAIM_TYPE, Claim, Datetime, MAX_SAFE_INTEGER, RecordCid,
+    STATUS_LIST_TYPE, Sig, StatusRef, StatusUri, StrongRef, UnsignedAttestation, canonical_bytes,
+    check_opaque, from_canonical_bytes,
 };
 pub use sign::{
     Repository, SIG_BINDING_TYPE, SigAlg, Signer, VerifyingKey, preimage, preimage_cid, sign,

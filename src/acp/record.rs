@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::Did;
 
 use super::error::CodecError;
+use super::kind::ClaimKind;
 
 /// NSID of the self-claim record.
 pub const CLAIM_TYPE: &str = "net.got-paws.acp.claim";
@@ -103,20 +104,6 @@ impl FromStr for RecordCid {
     type Err = CodecError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
-    }
-}
-
-impl TryFrom<&str> for RecordCid {
-    type Error = CodecError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::parse(s)
-    }
-}
-
-impl TryFrom<String> for RecordCid {
-    type Error = CodecError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::parse(&s)
     }
 }
 
@@ -346,20 +333,6 @@ impl FromStr for Datetime {
     }
 }
 
-impl TryFrom<&str> for Datetime {
-    type Error = CodecError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::parse(s)
-    }
-}
-
-impl TryFrom<String> for Datetime {
-    type Error = CodecError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::parse(&s)
-    }
-}
-
 impl fmt::Display for Datetime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -435,20 +408,6 @@ impl FromStr for AtUri {
     type Err = CodecError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
-    }
-}
-
-impl TryFrom<&str> for AtUri {
-    type Error = CodecError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::parse(s)
-    }
-}
-
-impl TryFrom<String> for AtUri {
-    type Error = CodecError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::parse(&s)
     }
 }
 
@@ -643,20 +602,6 @@ impl FromStr for StatusUri {
     }
 }
 
-impl TryFrom<&str> for StatusUri {
-    type Error = CodecError;
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        Self::parse(s)
-    }
-}
-
-impl TryFrom<String> for StatusUri {
-    type Error = CodecError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::parse(&s)
-    }
-}
-
 /// Where an attestation's revocation bit lives.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StatusRef {
@@ -666,71 +611,6 @@ pub struct StatusRef {
     /// Bit index of this attestation in that list.
     pub index: u64,
 }
-
-// ─── kinds ──────────────────────────────────────────────────────────────────
-
-macro_rules! string_enum {
-    ($(#[$doc:meta])* $name:ident { $($(#[$vdoc:meta])* $variant:ident = $s:expr),+ $(,)? }) => {
-        $(#[$doc])*
-        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-        pub enum $name {
-            $($(#[$vdoc])* $variant,)+
-            /// A kind this build does not know. Round-trips untouched; a
-            /// verifier ignores records of unknown kind rather than rejecting
-            /// the repo (forward compatibility).
-            Unknown(String),
-        }
-
-        impl $name {
-            /// The wire string.
-            pub fn as_str(&self) -> &str {
-                match self {
-                    $(Self::$variant => $s,)+
-                    Self::Unknown(s) => s,
-                }
-            }
-        }
-
-        impl From<&str> for $name {
-            fn from(s: &str) -> Self {
-                match s {
-                    $($s => Self::$variant,)+
-                    other => Self::Unknown(other.to_string()),
-                }
-            }
-        }
-
-        impl Serialize for $name {
-            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-                s.serialize_str(self.as_str())
-            }
-        }
-
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-                Ok(Self::from(String::deserialize(d)?.as_str()))
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(self.as_str())
-            }
-        }
-    };
-}
-
-string_enum!(
-    /// A self-claim's kind, from the published catalog (v0.1 seeds).
-    ClaimKind {
-        /// Control of an email address; `payload.address`.
-        Email = "email",
-        /// An account on another service.
-        ExternalAccount = "external-account",
-        /// A character the subject presents.
-        Character = "character",
-    }
-);
 
 // ─── the atproto data-model check for opaque values ─────────────────────────
 
@@ -922,7 +802,7 @@ pub(crate) mod fixtures {
     }
     pub fn claim() -> Claim {
         Claim::new(
-            ClaimKind::Email,
+            ClaimKind::EMAIL,
             serde_json::json!({ "address": "kit@example.com" }),
             Datetime::parse("2026-08-20T09:00:00Z").unwrap(),
         )
@@ -1024,12 +904,15 @@ mod tests {
     /// `cbor2` 6.1.4 with `canonical=True` (RFC 8949 §4.2.1 length-first key
     /// order) reproduces every string below byte-for-byte, and the CIDs via
     /// `sha256` + the hand-built CIDv1 prefix. The
-    /// inputs are exactly `fixtures::*`.
+    /// inputs are exactly `fixtures::*`. Re-pinned 2026-08-23 when `kind`
+    /// became the five-segment NSID (F45): `CLAIM` and `CLAIM_CID`
+    /// re-derived with `cbor2` 6.1.4 the same way, byte-for-byte; the
+    /// attestation vectors follow from the new claim CID in `claim.cid`.
     pub(super) mod vectors {
-        pub const CLAIM: &str = "a4646b696e6465656d61696c652474797065766e65742e676f742d706177732e6163702e636c61696d677061796c6f6164a167616464726573736f6b6974406578616d706c652e636f6d6963726561746564417474323032362d30382d32305430393a30303a30305a";
-        pub const CLAIM_CID: &str = "bafyreihuihzqug57iwailciamsvfctyrz76w4bf5mjxsfl4y5seje5ziya";
-        pub const ATTESTATION_MIN: &str = "a7637369675840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab652474797065781c6e65742e676f742d706177732e6163702e6174746573746174696f6e65636c61696da263636964783b62616679726569687569687a7175673537697761696c6369616d737666637479727a373677346266356d6a7873666c34793573656a65357a69796163757269784b61743a2f2f6469643a706c633a6b6974313233343536373839306162636465666768696a6b6c2f6e65742e676f742d706177732e6163702e636c61696d2f336b7832767035716d656b3268677375626a65637478216469643a706c633a6b6974313233343536373839306162636465666768696a6b6c686174746573746f72766469643a7765623a6174746573742e6578616d706c6568697373756564417474323032362d30382d32305431303a30303a30305a6965787069726573417474323032362d30392d31395431303a30303a30305a";
-        pub const ATTESTATION_FULL: &str = "a9637369675840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab652474797065781c6e65742e676f742d706177732e6163702e6174746573746174696f6e65636c61696da263636964783b62616679726569687569687a7175673537697761696c6369616d737666637479727a373677346266356d6a7873666c34793573656a65357a69796163757269784b61743a2f2f6469643a706c633a6b6974313233343536373839306162636465666768696a6b6c2f6e65742e676f742d706177732e6163702e636c61696d2f336b7832767035716d656b3268666d6574686f646f656d61696c2d6368616c6c656e676566737461747573a2646c697374781f68747470733a2f2f6174746573742e6578616d706c652f7374617475732f3165696e64657819101f677375626a65637478216469643a706c633a6b6974313233343536373839306162636465666768696a6b6c686174746573746f72766469643a7765623a6174746573742e6578616d706c6568697373756564417474323032362d30382d32305431303a30303a30305a6965787069726573417474323032362d30392d31395431303a30303a30305a";
+        pub const CLAIM: &str = "a4646b696e64781f6e65742e676f742d706177732e6163702e6964656e746974792e656d61696c652474797065766e65742e676f742d706177732e6163702e636c61696d677061796c6f6164a167616464726573736f6b6974406578616d706c652e636f6d6963726561746564417474323032362d30382d32305430393a30303a30305a";
+        pub const CLAIM_CID: &str = "bafyreifxywq3tvog35ndihsogjjgzkta3732ui5ogltaxhco5wq6a2mvwe";
+        pub const ATTESTATION_MIN: &str = "a7637369675840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab652474797065781c6e65742e676f742d706177732e6163702e6174746573746174696f6e65636c61696da263636964783b6261667972656966787977713374766f6733356e646968736f676a6a677a6b7461333733327569356f676c74617868636f3577713661326d76776563757269784b61743a2f2f6469643a706c633a6b6974313233343536373839306162636465666768696a6b6c2f6e65742e676f742d706177732e6163702e636c61696d2f336b7832767035716d656b3268677375626a65637478216469643a706c633a6b6974313233343536373839306162636465666768696a6b6c686174746573746f72766469643a7765623a6174746573742e6578616d706c6568697373756564417474323032362d30382d32305431303a30303a30305a6965787069726573417474323032362d30392d31395431303a30303a30305a";
+        pub const ATTESTATION_FULL: &str = "a9637369675840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab652474797065781c6e65742e676f742d706177732e6163702e6174746573746174696f6e65636c61696da263636964783b6261667972656966787977713374766f6733356e646968736f676a6a677a6b7461333733327569356f676c74617868636f3577713661326d76776563757269784b61743a2f2f6469643a706c633a6b6974313233343536373839306162636465666768696a6b6c2f6e65742e676f742d706177732e6163702e636c61696d2f336b7832767035716d656b3268666d6574686f646f656d61696c2d6368616c6c656e676566737461747573a2646c697374781f68747470733a2f2f6174746573742e6578616d706c652f7374617475732f3165696e64657819101f677375626a65637478216469643a706c633a6b6974313233343536373839306162636465666768696a6b6c686174746573746f72766469643a7765623a6174746573742e6578616d706c6568697373756564417474323032362d30382d32305431303a30303a30305a6965787069726573417474323032362d30392d31395431303a30303a30305a";
     }
 
     // ── structural guarantees ───────────────────────────────────────────────
@@ -1097,7 +980,6 @@ mod tests {
         let cid = RecordCid::of(b"x");
         let text = cid.to_string();
         assert_eq!(text.parse::<RecordCid>().unwrap(), cid);
-        assert_eq!(RecordCid::try_from(text.as_str()).unwrap(), cid);
         for bad in [
             "",
             "z",
@@ -1116,7 +998,7 @@ mod tests {
         assert!(RecordCid::parse(&other).is_err());
         // Datetime and AtUri speak the same std vocabulary.
         assert!("2026-08-20T09:00:00Z".parse::<Datetime>().is_ok());
-        assert!(AtUri::try_from("at://did:plc:abc/c/r".to_string()).is_ok());
+        assert!("at://did:plc:abc/c/r".parse::<AtUri>().is_ok());
     }
 
     #[test]
@@ -1134,10 +1016,35 @@ mod tests {
 
     #[test]
     fn unknown_kind_round_trips() {
+        // A kind this build has never heard of is still a claim (F45:
+        // ignored, never rejected); only its name lands in `Other`.
         let mut c = claim();
-        c.kind = ClaimKind::from("phone");
+        c.kind = ClaimKind::parse("net.got-paws.acp.identity.phone").unwrap();
         let back: Claim = from_canonical_bytes(&canonical_bytes(&c).unwrap()).unwrap();
-        assert_eq!(back.kind, ClaimKind::Unknown("phone".into()));
+        assert_eq!(back.kind, c.kind);
+        assert!(matches!(
+            back.kind.name(),
+            super::super::kind::Name::Other(n) if n.as_str() == "phone"
+        ));
+        // A malformed kind is not a claim. Locate the *whole* kind string so
+        // the corruption cannot land on `$type` (which shares the
+        // `net.got-paws` prefix) and pass for the wrong reason.
+        let mut bytes = canonical_bytes(&claim()).unwrap();
+        let wire = ClaimKind::EMAIL.to_string();
+        let pos = bytes
+            .windows(wire.len())
+            .position(|w| w == wire.as_bytes())
+            .unwrap();
+        assert_eq!(
+            bytes
+                .windows(wire.len())
+                .filter(|w| *w == wire.as_bytes())
+                .count(),
+            1,
+            "the kind's wire form must be unique in the record bytes"
+        );
+        bytes[pos..pos + 3].copy_from_slice(b"NET");
+        assert!(from_canonical_bytes::<Claim>(&bytes).is_err());
     }
 
     #[test]
@@ -1157,7 +1064,7 @@ mod tests {
     fn payload_rejects_float_null_and_wide_ints() {
         let at = |v: serde_json::Value| {
             Claim::new(
-                ClaimKind::Email,
+                ClaimKind::EMAIL,
                 v,
                 Datetime::parse("2026-01-01T00:00:00Z").unwrap(),
             )
@@ -1180,8 +1087,8 @@ mod tests {
         let b = serde_json::json!({ "alpha": 2, "zeta": 1 });
         let dt = Datetime::parse("2026-01-01T00:00:00Z").unwrap();
         assert_eq!(
-            canonical_bytes(&Claim::new(ClaimKind::Email, a, dt.clone()).unwrap()).unwrap(),
-            canonical_bytes(&Claim::new(ClaimKind::Email, b, dt).unwrap()).unwrap()
+            canonical_bytes(&Claim::new(ClaimKind::EMAIL, a, dt.clone()).unwrap()).unwrap(),
+            canonical_bytes(&Claim::new(ClaimKind::EMAIL, b, dt).unwrap()).unwrap()
         );
     }
 

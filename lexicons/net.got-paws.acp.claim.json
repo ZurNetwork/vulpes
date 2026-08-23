@@ -8,12 +8,22 @@
       "key": "tid",
       "record": {
         "type": "object",
-        "required": ["kind", "payload", "createdAt"],
+        "required": [
+          "kind",
+          "payload",
+          "createdAt"
+        ],
         "properties": {
           "kind": {
             "type": "string",
-            "description": "Claim kind from the published catalog. Advisory (knownValues): unknown kinds must validate and be ignored, never rejected.",
-            "knownValues": ["email", "external-account", "character"]
+            "format": "nsid",
+            "description": "Claim kind: an NSID of exactly five segments, <tld>.<domain>.acp.<category>.<name> (ACP spec, Claim kinds). The authority owns the meaning; the category is ACP's closed list; unknown kinds must validate and be ignored, never rejected.",
+            "knownValues": [
+              "net.got-paws.acp.identity.email",
+              "net.got-paws.acp.identity.externalAccount",
+              "net.got-paws.acp.relationship.ownership",
+              "net.got-paws.acp.relationship.membership"
+            ]
           },
           "payload": {
             "type": "unknown",

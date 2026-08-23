@@ -443,8 +443,19 @@ domain type (`did.push_str(…)` compiles). Replaced with `as_str`, `Display`,
 
 `Did::new` is kept unchecked, for values from trusted sources — re-validating
 what the network already accepted can only reject data that legitimately exists.
-`FromStr` / `TryFrom<&str>` / `TryFrom<String>` were **added**, validating the
-W3C DID Core ABNF, for untrusted input.
+`FromStr` was **added**, validating the W3C DID Core ABNF, for untrusted input.
+
+**Amended (Engineer, 2026-08-22): the `TryFrom` pair is withdrawn.** `TryFrom<&str>`
+and `TryFrom<String>` were originally added alongside `FromStr` as a batch — "the
+std conversions" — when `Deref` was dropped. Nothing ever called them: across
+`Did`, `Handle`, `RecordCid`, `Datetime`, `AtUri` and `StatusUri` every use was in
+the round-trip test that existed to test them, no `#[serde(try_from = …)]` exists
+in the crate, and the one consumer (`wolven`) takes `Did` as a type only. The
+ownership argument for `TryFrom<String>` was void in every impl: they each either
+borrowed (`Self::parse(&raw)`) or funnelled into `Handle::try_new`, whose
+`to_lowercase()` allocates regardless. Twelve impls removed; `FromStr` is the
+single validating door, reached as `s.parse()`. `TryFrom<i32> for CustodyEnvelope`
+is unaffected — that one has real call sites.
 
 Consumption impact: a handful of `.as_str()` insertions where `Deref` was doing
 the work.
@@ -782,4 +793,4 @@ Recorded because the extraction turned three of them into enforced checks:
 | DID = `base32(sha256(dag-cbor(signed op)))[..24]` | did:plc spec v0.1 — pinned to a published vector |
 | signature = ECDSA-SHA256, low-S, 64-byte r‖s, base64url no-pad | did:plc spec v0.1 — asserted in the minter tests |
 | `plc_tombstone` carries only `type`, `prev`, `sig` | did:plc spec v0.1 — pinned by `tombstone_shape_and_signing_bytes` |
-| DID syntax ABNF (`method-name`, `method-specific-id`, `idchar`) | W3C DID Core — implemented in `Did::parse` |
+| DID syntax ABNF (`method-name`, `method-specific-id`, `idchar`) | W3C DID Core — implemented in `<Did as FromStr>::from_str` |

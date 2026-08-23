@@ -61,7 +61,7 @@ infrastructure down and every issued vouch still verifies.
             attestation verifies. Until it lands no seniority check exists
             in the crate; the previous check and its adversarial tests are
             recoverable from `7045189^`.
-      - [ ] `ClaimKind::parse` for five-segment NSIDs and the two v0.1
+      - [x] `ClaimKind::parse` for five-segment NSIDs and the two v0.1
             categories (`identity`, `relationship`; `consent` deferred);
             lexicon `kind` → `format: nsid`.
       - [ ] define `relationship.ownership` and `relationship.membership`

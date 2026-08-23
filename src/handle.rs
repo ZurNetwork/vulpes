@@ -155,9 +155,9 @@ impl Handle {
     /// 5. the rightmost segment does not start with a digit;
     /// 6. the rightmost segment is not a reserved TLD.
     ///
-    /// [`FromStr`] and both [`TryFrom`] impls delegate here; prefer those at
-    /// call sites. This inherent constructor exists because it can take an
-    /// owned `String` without a second allocation.
+    /// [`FromStr`] delegates here; prefer it at call sites. This inherent
+    /// constructor also accepts an owned `String` — though normalization
+    /// lowercases into a fresh allocation either way.
     ///
     /// ```
     /// use vulpes::{Handle, HandleError};
@@ -253,22 +253,6 @@ impl FromStr for Handle {
     type Err = HandleError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        Self::try_new(raw)
-    }
-}
-
-impl TryFrom<&str> for Handle {
-    type Error = HandleError;
-
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
-        Self::try_new(raw)
-    }
-}
-
-impl TryFrom<String> for Handle {
-    type Error = HandleError;
-
-    fn try_from(raw: String) -> Result<Self, Self::Error> {
         Self::try_new(raw)
     }
 }
@@ -444,11 +428,6 @@ mod tests {
     fn accepts_well_formed_handles_through_every_door() {
         let parsed: Handle = "alice.example.com".parse().unwrap();
         assert_eq!(parsed.as_str(), "alice.example.com");
-        assert_eq!(Handle::try_from("alice.example.com").unwrap(), parsed);
-        assert_eq!(
-            Handle::try_from("alice.example.com".to_string()).unwrap(),
-            parsed
-        );
         assert_eq!(parsed.to_string(), "alice.example.com");
         assert_eq!(AsRef::<str>::as_ref(&parsed), "alice.example.com");
         assert_eq!(String::from(parsed.clone()), "alice.example.com");

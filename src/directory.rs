@@ -135,7 +135,9 @@ impl PlcDirectory for HttpPlcDirectory {
         // `%HH`) plus `:` is already URL-path-safe — a `/`, `?` or `#` cannot
         // survive the parse — so a value that passes needs no further escaping,
         // and one that fails was never a DID a directory would accept.
-        let did = crate::Did::parse(did).map_err(crate::DirectoryError::new)?;
+        let did = did
+            .parse::<crate::Did>()
+            .map_err(crate::DirectoryError::new)?;
         let did = did.as_str();
 
         let url = format!("{}/{}", self.base_url, did);

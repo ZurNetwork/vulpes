@@ -269,9 +269,11 @@ Seeds:
 | `net.got-paws.acp.relationship.membership` | `member` / `account` | the member, naming the account; the account, naming the member, with its `grant` | the account; the member |
 | `app.zurfur.acp.identity.character` | — | the character | Zurfur's kind, not this spec's |
 
-The reference implementation's `ClaimKind` parses the shape — five segments,
-`acp` third, a known category fourth — and exposes authority, category and
-name. Shape, not meaning.
+The reference implementation's `ClaimKind` parses the shape — exactly five
+well-formed segments — and exposes authority, protocol, category and name as
+typed values: the two categories and the seeded names it knows, and an
+`Other` holding the syntax-checked segment for everything else, carried
+verbatim. Shape, not meaning.
 
 ## Status lists
 
