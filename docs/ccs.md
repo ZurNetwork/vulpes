@@ -20,20 +20,24 @@ with the counterpart as attestor — nothing else is added.
 
 1. **A consensual claim exists iff one party claims it and the counterpart
    attests it.** The claimant writes an ordinary ACP self-claim in its own
-   repo (`kind` from the catalog below, e.g. `owns`, with the counterpart's
-   DID in the payload); the counterpart signs an ordinary ACP attestation of
+   repo (`kind` from the catalog below, e.g.
+   `net.got-paws.acp.relationship.ownership`, with the counterpart's DID and
+   this side's `role` in the payload); the counterpart signs an ordinary ACP
+   attestation of
    that claim, which lives in the claimant's repo like every attestation. An
    unattested claim is a mere claim, not a relationship. Third parties may
    attest the same claim too — a registry, an app, a witness — and the
    verifier's trust policy decides whose signature counts.
-2. **Authority is partitioned by the kind.** Each kind names which party
-   claims and which attests; the claim's payload carries only what the
-   claimant is authoritative for, and the attestor's signature over the
-   claim's CID is its agreement to exactly that content and nothing more.
-   Where the counterpart has something of its own to assert (an account's
-   *role* for a member), the kind defines a reciprocal claim in the
-   counterpart's repo, attested by the first party — two claims, two
-   attestations, still one primitive. Nobody asserts on the other's behalf.
+2. **One kind, two roles; authority is partitioned by role.** Both sides
+   of a relationship use the *same* kind and say which side they are in the
+   payload's `role` — never an `owns`/`ownedBy` pair of kinds. Each side's
+   claim carries only what that side is authoritative for, and the
+   attestor's signature over the claim's CID is its agreement to exactly
+   that content and nothing more. Where the counterpart has something of
+   its own to assert (an account's grant to a member), it writes its own
+   claim of the same kind — its role, its content — attested by the first
+   party: two claims, two attestations, one kind. Nobody asserts on the
+   other's behalf.
 3. **Severance is asymmetric, and both routes are unilateral.** The
    claimant deletes the claim; every attestation of it stops resolving and
    the relationship is over, instantly. The counterpart cannot delete a
@@ -51,13 +55,14 @@ with the counterpart as attestor — nothing else is added.
    which party says what; it never ranks attestors. vulpes verifies the
    attestation and never decides what a kind *means* — the ownership check
    is a helper it provides (`acp::custody`), not a step it applies. The
-   consumer (Zurfur, any app) decides that `owns` requires it.
+   consumer (Zurfur, any app) decides that `ownership` requires it.
 
 ## The verification rule
 
 A consumer accepts a consensual claim of kind *K* between A and B iff:
 
-- A's repo contains a valid ACP claim of kind *K* naming B, AND
+- A's repo contains a valid ACP claim of kind *K* naming B in `did`, with
+  A's `role`, AND
 - that claim carries an attestation whose attestor is B, **in force** per
   `docs/acp.md` §Verification (signature, binding, expiry, status, and the
   consumer's trust policy), AND
@@ -67,27 +72,30 @@ A consumer accepts a consensual claim of kind *K* between A and B iff:
 All three checks run against public infrastructure (PDS repos + PLC
 directory). No service — vulpes included — is in the loop.
 
-This is also the impersonation defense: a rando publishing `owns:
-did:character` has no attestation from the character and holds no senior
-key. A self-loop (A claims a relationship with A, attested by A) is
+This is also the impersonation defense: a rando publishing an `ownership`
+claim (role `owner`) naming a character has no attestation from the
+character and holds no senior key. A self-loop (A claims a relationship with A, attested by A) is
 `attestor == subject` — valid and adding no trust (ruled 2026-08-12); the
 consumer's policy decides what to make of it.
 
-## Claim kinds — closed, in-code catalog
+## Claim kinds — closed categories, authority-owned names
 
-Per the NQ3 discipline (identity kinds are enumerated in code, instances are
-unbounded), CCS kinds are a closed lexicon catalog of ACP claim kinds. Each
-names who claims and who attests. First instances:
+A kind is a five-segment NSID, `<tld>.<domain>.acp.<category>.<name>`
+(`docs/acp.md` §Claim kinds): the authority owns the name and publishes its
+definition; the category — a closed ACP list — fixes who claims, who attests
+and what the payload must carry. Per the NQ3 discipline (kinds enumerated,
+instances unbounded). **One kind per relationship**: both sides use it and
+differ only in `role`. The seeds:
 
-- **`owns`** (ownership) — claimed by the owner, attested by the character.
-  See `docs/characters-atproto.md`.
-- **`memberOf`** (membership) — claimed by the user, attested by the account.
-  The reciprocal **`hasMember`** — claimed by the account (payload: the
-  role, the account's authority), attested by the user — carries what the
-  account asserts. A verifier reads the role only from the account's claim.
-- **`consentsTo`** (membership) — a character's consent to a displayed piece:
-  claimed by the character (payload: the artwork's **strongRef**, at-uri +
-  CID), attested by the artist. See `docs/characters-atproto.md`.
+| kind | roles | who claims | who attests | consumer check |
+|---|---|---|---|---|
+| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | the owner (role `owner`, `did` = the owned DID) | the owned DID | **seniority** — ownership-class. The `owned`-role claim is optional: the attestation is the owned DID's consent. |
+| `net.got-paws.acp.relationship.membership` | `member` / `account` | the member (role `member`, `did` = the account); the account (role `account`, `did` = the member, `grant` = what it granted) | the account; the member | none. A consumer reads the grant only from the account's claim. |
+| `net.got-paws.acp.consent.artwork` | — | the featured character (`ref` = the piece's strongRef, at-uri + CID) | the artist | none. See `docs/characters-atproto.md`. |
+| `app.zurfur.acp.identity.character` | — | the character DID | Zurfur | Zurfur's kind, not ACP's: "this DID is a character". |
+
+The identity kinds (`net.got-paws.acp.identity.email`, `….externalAccount`)
+are ACP's, not CCS's: one party, a verifier of the fact, no counterpart.
 
 ## The senior-key custody rule (HARD REQUIREMENT)
 
@@ -162,7 +170,8 @@ swap, in this order:
 
 1. An operation adds Sam's cold key **senior to Kit's**:
    `[sam, kit, vulpes, zurfur]`.
-2. Sam writes `owns: did:fox`; Fox attests it. Kit deletes their `owns`.
+2. Sam writes an `ownership` claim (role `owner`, `did` = Fox); Fox attests
+   it. Kit deletes theirs.
 3. An operation removes Kit's key: `[sam, vulpes, zurfur]`.
 
 Who signs step 1 decides finality. Signed by Zurfur's operational key (the
@@ -179,7 +188,7 @@ What an insecure transfer looks like, and what catches it:
 - **Kit's key left in the list** — Kit retains control. The buyer's client
   reads the final list; the seniority check against *all* non-custodian
   keys shows two owners where one was promised.
-- **Attestation only, no rotation** — Fox attests `sam owns fox` but the
+- **Attestation only, no rotation** — Fox attests Sam's `ownership` claim but the
   keys never moved. Custodian-grade proof at best; the seniority check fails
   it outright.
 - **Paid before the window closed** — the only hazard no check catches; it
@@ -193,7 +202,7 @@ partners should decide who holds index 0 before minting.
 
 Multi-owner characters are the exception, and the intended shape for them
 is **account-owned**: an Account DID at index 0, the sharing expressed as
-that account's membership (`memberOf` / `hasMember`), not as extra keys on
+that account's membership (the `membership` kind, both roles), not as extra keys on
 the character. Co-owner keys on a character are allowed — they are just not
 the path the client leads with.
 
