@@ -4,10 +4,10 @@
 //! This module is the reference verifier of the public lane: it knows how
 //! the two record types (`net.got-paws.acp.claim`, `.attestation`) and the
 //! status-list artifact serialize, what an attestor signs, and runs the
-//! spec's seven verification steps. It performs no I/O
-//! **of its own** — every repo fetch, DID resolution and status-list read
-//! goes through the three [`ports`], which the caller implements (a PDS
-//! client, a directory client, a mirror fetch) and tests fake in memory.
+//! spec's seven verification steps. It performs no I/O **of its own** —
+//! every repo fetch, DID resolution and status-list read goes through the
+//! three [`ports`], which the caller implements (a PDS client, a directory
+//! client, a mirror fetch) and tests fake in memory.
 //!
 //! # Layout
 //!

@@ -27,8 +27,8 @@ use super::status::newest_verifiable;
 /// Tolerated clock skew when checking `issuedAt` is not in the future.
 pub const CLOCK_SKEW_SECS: i64 = 300;
 
-/// Why an attestation is **not in force**. Every variant is
-/// final for the inputs given; none is "try again".
+/// Why an attestation is **not in force**. Every variant is final for the
+/// inputs given; none is "try again".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
     /// No record at the attestation's address.
@@ -103,7 +103,7 @@ pub enum Verdict {
         /// The stated method, if any.
         method: Option<String>,
         /// Seconds until expiry — a freshness signal for the caller.
-        remaining_secs: Option<i64>,
+        remaining_secs: i64,
     },
     /// A step failed; see [`Reason`].
     NotInForce(Reason),
@@ -291,7 +291,7 @@ impl Verifier<'_> {
         Ok(Verdict::InForce {
             attestor: att.body.attestor,
             method: att.body.method,
-            remaining_secs: Some(expires - now_s),
+            remaining_secs: expires - now_s,
         })
     }
 }
@@ -445,7 +445,7 @@ mod tests {
             } => {
                 assert_eq!(a, attestor());
                 assert_eq!(method.as_deref(), Some("email-challenge"));
-                assert_eq!(remaining_secs, Some(21 * 86_400));
+                assert_eq!(remaining_secs, 21 * 86_400);
             }
             other => panic!("{other:?}"),
         }

@@ -622,9 +622,9 @@ anonymous-owner flow (`docs/characters-atproto.md`, flow 13).
 
 The pivot's first fruits, specified in their own docs:
 
-- **`docs/ccs.md`** — the **Consensual Claims System**: mutual (bidirectional
-  record-pair) claims between DIDs, the complement to atproto labels'
-  unilateral broadcast. Includes the senior-key custody rule and the kill test.
+- **`docs/ccs.md`** — the **Consensual Claims System**: claims attested by
+  the counterpart (F45), the complement to atproto labels' unilateral
+  broadcast. Includes the senior-key custody rule and the kill test.
 - **`docs/characters-atproto.md`** — Zurfur characters as ATProto subjects:
   did:plc per character, default public, ownership via CCS, transfers by key
   rotation, galleries as consensual claims. Post-alpha roadmap.

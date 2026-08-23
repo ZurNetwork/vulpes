@@ -1,4 +1,4 @@
-//! The three ACP record types and their canonical bytes.
+//! The two ACP record types and their canonical bytes.
 //!
 //! Field names and shapes follow the lexicons under `lexicons/` exactly.
 //! Everything here serializes through [`canonical_bytes`] — DAG-CBOR, which

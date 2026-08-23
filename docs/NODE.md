@@ -15,10 +15,10 @@ fs:
     role: design interview record (DRAFT); NQ1 holder-held pivot
     node: false
   - name: ccs.md
-    role: Consensual Claims System spec draft — bidirectional relationship pairs
+    role: Consensual Claims System — claims + counterpart attestations (F45); rotation-key layout (F46)
     node: false
   - name: characters-atproto.md
-    role: characters as ATProto subjects via CCS (ruled 2026-08-11)
+    role: characters as ATProto subjects via CCS (ruled 2026-08-11, re-based on F45 2026-08-22)
     node: false
   - name: ROADMAP.md
     role: the live plan — dependency-ordered checkboxes; replaces Jira tickets since 2026-08-12

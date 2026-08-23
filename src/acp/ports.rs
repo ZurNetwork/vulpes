@@ -115,13 +115,19 @@ pub struct KeyMaterial {
     /// The `did:plc` rotation keys as `did:key` strings, in **directory
     /// order — most senior first**, exactly as the directory lists them.
     /// Empty for methods without rotation keys (`did:web`). Verification
-    /// never reads them; the custody helpers (FORKS F45) do.
+    /// never reads them: they exist for the `acp::custody` helpers (the
+    /// next PR, FORKS F45), which a consumer calls *after* an
+    /// ownership-class attestation verifies.
     ///
-    /// Strings, not parsed keys, on purpose: the senior-key check is an
-    /// equality on the top entry and never needs the key material, and
-    /// parsing here would let one rotation key on an unsupported curve make
-    /// the whole `keys()` call fail — breaking plain-signature verification
-    /// for an attestor whose rotation keys it never uses.
+    /// The rule those helpers check is `docs/ccs.md`'s senior-key rule
+    /// (FORKS F45, F46): some rotation key of the owner's that is **not a
+    /// custodian's** sits at a lower index than every custodian key in the
+    /// owned DID's list. It is a comparison of positions and string
+    /// equalities — never of key material — which is why these are strings
+    /// and not parsed keys: parsing here would let one rotation key on an
+    /// unsupported curve make the whole `keys()` call fail, breaking
+    /// plain-signature verification for an attestor whose rotation keys it
+    /// never uses.
     ///
     /// These are **not** in the DID document — `did:plc` deliberately omits
     /// them. Read `https://plc.directory/<did>/data` (`rotationKeys`) or the
@@ -131,9 +137,9 @@ pub struct KeyMaterial {
     ///
     /// **Verbatim.** Each entry is the `did:key:…` string exactly as the
     /// directory holds it — no re-encoding, no case change, no stripping
-    /// the prefix. The senior-key check is a string equality across two
-    /// DIDs; any normalization an implementation applied to one and not
-    /// the other would turn a real owner into `NoKeyControl`.
+    /// the prefix. The check is a string equality across two DIDs; any
+    /// normalization applied to one and not the other would make a real
+    /// owner fail it.
     pub rotation: Vec<String>,
 }
 
