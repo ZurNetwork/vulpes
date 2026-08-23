@@ -33,7 +33,7 @@ kind of repo Bluesky posts live in):
 ```json
 {
   "$type": "net.zur.acp.claim",
-  "kind": "email",
+  "kind": "net.got-paws.acp.identity.email",
   "payload": { "address": "kit@example.com" },
   "createdAt": "2026-08-11T20:00:00.000Z"
 }
@@ -123,8 +123,8 @@ they can't write to your repo. What someone says about you in *their* repo
 is their speech (ATProto already has that: follows, labels); ACP just never
 confuses it with *your* record. And for claims that inherently bind two
 parties — ownership, membership — nothing new is needed: you claim the
-relationship in your repo, and the *other* party is the one who vouches for
-it. No vouch, no relationship. You end it by deleting your claim; they end
+relationship in your repo (one kind for both sides; your payload says which
+side you are), and the *other* party is the one who vouches for it. No vouch, no relationship. You end it by deleting your claim; they end
 it by withdrawing their vouch — each unilaterally, neither touching the
 other's repo.
 
