@@ -8,8 +8,8 @@ actively wrong for a public library, in which case the reasoning is spelled out.
 
 Nothing here changes protocol behaviour. The one place where a behavioural fork
 appeared is **F8**, which the Engineer has ruled **strict** (see "Ruled by the
-Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13, F32, F36–F41 —
-is now ruled; no decision is left open.
+Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13,
+F32, F36–F46 — is now ruled; no decision is left open.
 
 Source: `zurfur/backend/crates/{adapter-atproto,adapter-pg,domain,api}`.
 Spec facts cited below were verified against
@@ -285,6 +285,29 @@ guard the network supplies, a cap a client library may not expose); the
 two MUSTs are the defense. The spec says "necessary, not sufficient" in so
 many words so that no conforming verifier mistakes the syntax check for
 the defense.
+
+### F44. Custodian keys are discovered from the directory, never shipped
+
+**Where:** the future `acp::custody` module (F45 moved it there from
+`BasicPolicy::with_custodians_from`).
+
+F40 makes ownership key control depend on knowing every operator rotation
+key among its subjects' hosts, and an incomplete set fails open silently.
+The obvious convenience — a `BSKY_SOCIAL_ROTATION_KEYS` constant — would
+put a fact the crate cannot keep true into a git-dep library, and per F40's
+completeness rule a stale constant is worse than none. **Ruled (Engineer,
+2026-08-22): no operator's keys live in vulpes.** A verifier names two or
+more unrelated accounts on a host; the rotation keys common to all of them
+are the operator's, fetched live through the `DidResolver`. Always current,
+no registry to maintain, and no line of this crate that knows who Bluesky
+is. One sample takes everything on it (the documented caveat); an
+unresolvable sample is an error, never a quietly empty set.
+
+**Amended by F45 (2026-08-22), same day:** key control left the verifier,
+so this discovery is no longer a `TrustPolicy` constructor. PR #15 carried
+the ruling and was closed unmerged for that reason — the entry is recorded
+here because F45 depends on it and the intersection logic returns in
+`acp::custody`, called by the consumer rather than the verifier.
 
 ### F41. `Datetime::to_unix` is hand-rolled
 

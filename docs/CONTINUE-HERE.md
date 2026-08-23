@@ -1,4 +1,4 @@
-# Vulpes — continue here (updated 2026-08-22, ACP core merged)
+# Vulpes — continue here (updated 2026-08-23, post-F43/F45 sync)
 
 ## 2026-08-22: the ACP core is on `main` (PR #10, `dc8be4c`)
 
@@ -15,6 +15,10 @@ Rulings made during review, all recorded:
   Researched: did:plc allows key reuse across DIDs; Bluesky `createAccount`
   puts the user key first, `goat` appends last — so public data alone can't
   say who holds a key. Co-ownership falls out of the rule.
+  **Superseded by F45 the same day**: key control leaves the verifier.
+  `TrustPolicy::custodian_keys` is retired (PR #17); the seniority check
+  becomes an `acp::custody` helper the consumer calls after an ownership
+  attestation verifies. The research stands, the location moved.
 - **F39 amended** — the signed status-list body carries `list` (its
   identifier; IETF Token Status List `sub` precedent) and an optional `ttl`.
 - **F42 (new)** — status fetch contract: judgment before the fetch, `StatusUri`
@@ -24,14 +28,24 @@ Rulings made during review, all recorded:
   claim URI's authority; changelog 2026-08-21 + 22.
 
 Open, from the review — Zuri's calls, none blocking:
-- `max_status_age_secs` defaults to `None` (fails open under mirror
-  withholding; `Some(86_400)` would cut dead attestors off after a day).
-- Ship bsky.social's two operator rotation keys as a named constant for
-  `with_custodians`, or leave verifiers to track them?
-- Self-ownership (`owner == owned`) passes key control trivially.
 - `StatusUri` accepts punycode; `Handle` rejects it.
 - Features matrix prints dead-code warnings for `src/memory.rs` fakes under
   some combos (`cargo check` only).
+
+Ruled since, all 2026-08-22 — three more of that list, now closed:
+- **F43** — `max_status_age_secs` is `Some(30 days)` in
+  `BasicPolicy::default()`; `permissive()` is the explicit `None`. A
+  withheld fresh copy reaches `StatusStale`, never "not revoked", and the
+  attestor's signed `ttl` still wins when tighter (PR #14). This is the
+  soft/hard freshness dial, ruled at the hard end.
+- **F44** — vulpes ships no operator's rotation keys, so bsky.social's never
+  become a constant. A verifier names two or more unrelated accounts on a
+  host; the keys common to all of them are the operator's, resolved live
+  through the `DidResolver`. PR #15 was closed and the helper moves to
+  `acp::custody` under F45 — the ruling stands, its home changed.
+- **F45** dissolves self-ownership: `attestor == subject` is valid and adds
+  no trust (ruled 2026-08-12), and key control leaves the verifier
+  altogether, so there is no trivial pass left to worry about.
 
 **Same day, later (PR #16, `4268ab1`): the boundary ruling.** Vulpes
 issues and verifies attestations and never decides what a claim means
@@ -41,9 +55,11 @@ attestation + consumer-checked seniority (`acp::custody` helpers to come);
 claim kinds are five-segment NSIDs with two v0.1 categories (`identity`,
 `relationship`; `consent` deferred behind takedown requests); rotation
 layout D `[user, vulpes, zurfur]` is the minted default, user key
-client-generated (F46). Code PRs in order: drop relationships →
-`acp::custody` → `ClaimKind::parse` + lexicon `format: nsid` → mint
-layout D.
+client-generated (F46). Code PRs, with what has landed: drop relationships
+(PR #17, merged) → `ClaimKind::parse` + lexicon `format: nsid` (PR #18,
+merged) → **`acp::custody`** (next; until it lands no seniority check
+exists in the crate, and the old one is recoverable from `7045189^`) →
+define `relationship.ownership` / `.membership` → mint layout D.
 
 Next roadmap line after those: **Talk to a PDS** — jacquard-backed ports, the `$bytes`
 boundary, the Docker PDS, and the kill test re-run against it. The HTTP
@@ -83,6 +99,13 @@ Zurfur") executed the doc updates and extended the design. Delta below.
   equal-or-senior rotation key vs any custodian) + routine CAR export/mirroring.
   Kill tests pass for Vulpes dying and Zurfur dying.
 - **T1 now "resolved structurally"** (Vulpes out of the disclosure loop).
+- **Superseded 2026-08-22 by F45** — the CCS and public-ownership bullets
+  above: there is no bidirectional record pair, no `owns` ↔ `ownedBy`. A
+  relationship is one claim in the claimant's repo, attested by the
+  counterpart, under a single kind (`…relationship.ownership`) whose
+  payload carries the `role`. Ownership's third fact — the owner senior on
+  the character's rotation list — is checked by the consumer, not the
+  verifier. Everything else in this section stands.
 
 ## RULED 2026-08-11: public-and-linkable first; private lane is roadmap
 
@@ -114,7 +137,8 @@ Guardrails the ruling carries:
 - **RULED 2026-08-12: v0.1 is passive-mode only.** Active and permanent are
   additive modes, deferred — the taxonomy's details stay parked on The
   Claims Model page. The soft/hard freshness dial (hard = soft +
-  verifier-chosen max status age) also remains parked, unruled.
+  verifier-chosen max status age) was parked here; **ruled 2026-08-22 by
+  F43** — the hard end is the default, bounded at 30 days.
 - **OPEN**: CCS clean rejection (the unanswered half is public + squattable;
   two-phase content-commitment pattern is the candidate fix — on the CCS
   page). Gerakines-spec interop posture set, contact parked (his remote
@@ -126,7 +150,7 @@ Guardrails the ruling carries:
 
 ## Open / owed
 
-- **PR for `docs/ccs-and-characters`** (commit `ff5cfad`, pushed) — not opened yet.
+- ~~PR for `docs/ccs-and-characters`~~ — opened and merged as PR #2.
 - **Record the public-first ruling** (above) in `identity-model.md` + the
   Confluence Ruling Record (49184769); reframe the future disclosure epic as
   roadmap.
