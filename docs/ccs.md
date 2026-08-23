@@ -178,8 +178,10 @@ Who signs step 1 decides finality. Signed by Zurfur's operational key (the
 normal client flow), Kit — senior to it in the list it replaced — can
 nullify for 72 h: the seller's undo, which is why a sale settles only after
 the window. Signed by Kit's own key, nothing outranks the signer and the
-transfer is final at once. Either is legitimate; the client must say which
-it did.
+transfer is final at once. **The default is custodian-signed**: the buyer
+waits out the window, the seller is protected from a reversed payment.
+Self-signed is the explicit "final now" option, and the client must say
+which it did.
 
 What an insecure transfer looks like, and what catches it:
 

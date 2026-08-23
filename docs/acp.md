@@ -248,7 +248,11 @@ schema, the roles, whether the kind is ownership-class (carries the
 consumer's seniority check), its default lifetime. A verifier validates the
 five-segment shape and treats the kind as opaque; a consumer acts on the
 kinds it defines or trusts. Records of an unrecognised kind are ignored,
-never rejected (forward compatibility).
+never rejected (forward compatibility). **Use the generic kind where one
+exists; define your own only when none fits; never redefine a generic
+notion under your own authority** — the generic kinds are the shared
+vocabulary, usable by any authority without permission, the way
+`app.bsky.feed.post` is.
 
 Seeds:
 
@@ -561,6 +565,11 @@ private layer exists to prevent.
 
 ## Possible future changes
 
+- **Kind equivalence**: a kind's definition record may declare
+  `equivalentTo` another kind, so a consumer resolving an unfamiliar
+  authority-specific kind learns it may treat it as a generic one
+  (JSON-LD's `sameAs`). Structural interop is already free through the
+  category invariants; this would add semantic interop without a registry.
 - **The private lane**: holder-held verifiable credentials presented
   peer-to-peer (VC 2.0 via OID4VP; SD-JWT-VC and/or BBS — the open Path A/B
   ruling) for claims whose existence must stay unlinkable. ACP claims are
