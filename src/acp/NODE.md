@@ -3,13 +3,13 @@ path: src/acp
 charted: 2026-08-21
 fs:
   - name: record.rs
-    role: Claim / Attestation / Relationship + canonical DAG-CBOR, pinned byte fixtures (F37, F38)
+    role: Claim / Attestation + canonical DAG-CBOR, pinned byte fixtures (F37, F38)
     node: false
   - name: sign.rs
     role: attestation pre-image, sign, verify — key signs the pre-image CID (F36); negatives incl. transplant
     node: false
   - name: verify.rs
-    role: verify_attestation — the spec's seven steps; mutual-claim verify (senior-rotation-key rule); the kill_test
+    role: verify_attestation — the spec's seven steps; the kill_test
     node: false
   - name: ports.rs
     role: RepoReader / DidResolver / StatusSource async_trait ports (F40)

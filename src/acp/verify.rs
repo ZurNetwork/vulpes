@@ -1,5 +1,4 @@
-//! `verify_attestation` — the spec's seven steps as one function — and
-//! `verify_relationship` for mutual claims.
+//! `verify_attestation` — the spec's seven steps as one function.
 //!
 //! Everything here reads through the [ports](super::ports) and nothing else.
 //! There is no attestor port, so there is nothing to call back: the attestor
@@ -16,25 +15,20 @@
 //! Conflating them would let an outage read as "not revoked" (fail-open) or
 //! as "revoked" (an outage becomes a denial of service on honest subjects).
 
-use std::collections::BTreeSet;
-
 use crate::Did;
 
 use super::error::VerifyError;
 use super::policy::{Decision, PolicyContext, TrustPolicy};
-use super::ports::{DidResolver, FetchedRecord, KeyMaterial, RepoReader, StatusSource};
-use super::record::{
-    AtUri, Attestation, Claim, Datetime, RELATIONSHIP_TYPE, RelKind, Relationship, canonical_bytes,
-};
-use super::sign::is_did_key_shaped;
+use super::ports::{DidResolver, FetchedRecord, RepoReader, StatusSource};
+use super::record::{AtUri, Attestation, Claim, Datetime, canonical_bytes};
 use super::sign::{Repository, verify_sig};
 use super::status::newest_verifiable;
 
 /// Tolerated clock skew when checking `issuedAt` is not in the future.
 pub const CLOCK_SKEW_SECS: i64 = 300;
 
-/// Why an attestation or relationship is **not in force**. Every variant is
-/// final for the inputs given; none is "try again".
+/// Why an attestation is **not in force**. Every variant is final for the
+/// inputs given; none is "try again".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
     /// No record at the attestation's address.
@@ -97,25 +91,6 @@ pub enum Reason {
     StatusIndexOutOfRange,
     /// The revocation bit is set — step 7.
     Revoked,
-
-    /// A relationship half (or its counterpart) is absent.
-    HalfMissing,
-    /// The halves do not name each other.
-    CounterpartMismatch,
-    /// The two kinds are not a defined pair.
-    KindsNotAPair,
-    /// A kind this build does not know; ignored, not rejected wholesale.
-    UnknownKind,
-    /// Ownership-tier pair without key control over the owned DID: no
-    /// rotation key of the owner's — custodians' keys excluded, per the
-    /// policy's [`custodian_keys`](super::policy::TrustPolicy::custodian_keys)
-    /// — sits above every custodian key in the owned DID's rotation list.
-    NoKeyControl,
-    /// One DID of an ownership-tier pair does not resolve (tombstoned, or
-    /// a `did:web` host gone), so key control cannot be read at all —
-    /// distinct from [`NoKeyControl`](Self::NoKeyControl), where both
-    /// resolved and the keys said no. Carries the DID that did not.
-    CounterpartUnresolvable(Did),
 }
 
 /// The outcome of verification.
@@ -123,14 +98,12 @@ pub enum Reason {
 pub enum Verdict {
     /// Every step passed.
     InForce {
-        /// Who vouched (attestation), or — for a relationship — the
-        /// counterpart the asked-about half turned out to be paired with.
+        /// Who vouched.
         attestor: Did,
-        /// The stated method, if any. Relationships have none.
+        /// The stated method, if any.
         method: Option<String>,
         /// Seconds until expiry — a freshness signal for the caller.
-        /// `None` for a relationship: it has no expiry, it is severed.
-        remaining_secs: Option<i64>,
+        remaining_secs: i64,
     },
     /// A step failed; see [`Reason`].
     NotInForce(Reason),
@@ -318,171 +291,9 @@ impl Verifier<'_> {
         Ok(Verdict::InForce {
             attestor: att.body.attestor,
             method: att.body.method,
-            remaining_secs: Some(expires - now_s),
+            remaining_secs: expires - now_s,
         })
     }
-
-    /// A mutual claim, starting from either half: both halves exist, name
-    /// each other, form a defined pair, and — for ownership-tier kinds — the
-    /// owner holds a rotation key of the owned DID senior to every
-    /// custodian's (FORKS F40; [`Reason::NoKeyControl`] states the rule).
-    ///
-    /// The trust policy is consulted for exactly one thing here, its
-    /// [`custodian_keys`](super::policy::TrustPolicy::custodian_keys):
-    /// `decide` is an attestation-shaped judgment (attestor, method, age)
-    /// and a mutual claim has none of those signals.
-    pub async fn verify_relationship(&self, half: &AtUri) -> Result<Verdict, VerifyError> {
-        let (a_fetched, a) = match self.fetch::<Relationship>(half).await? {
-            Fetched::Absent => not_in_force!(Reason::HalfMissing),
-            Fetched::Malformed(reason) => not_in_force!(reason),
-            Fetched::Found(fetched, a) => (fetched, a),
-        };
-        let Some(expected_kind) = a.relationship.pair() else {
-            not_in_force!(Reason::UnknownKind);
-        };
-
-        // The other half: by its declared address, else by search. The
-        // search accepts the first half that matches *completely* (kind,
-        // counterpart, and — when it declares one — counterpart record);
-        // a half that merely points elsewhere does not end the search, and
-        // a record that does not decode is skipped rather than vetoing the
-        // search — so the verdict never depends on the order a PDS lists
-        // records in, nor on junk sitting in the same collection. Only the
-        // *declared* address is held to "exists ⇒ decodes". Listing the
-        // counterpart's repo is inherent: the other half lives there.
-        let other = match &a.counterpart_record {
-            Some(uri) => {
-                // The declared address is written by this half's author. It
-                // must sit in the counterpart's repo — decided *before* the
-                // read, so a half naming `at://internal.svc/…` never makes
-                // the verifier fetch there. The post-fetch repository check
-                // below stays as defense in depth.
-                if uri.authority() != a.counterpart.as_str() {
-                    not_in_force!(Reason::CounterpartMismatch);
-                }
-                match self.fetch::<Relationship>(uri).await? {
-                    Fetched::Absent => None,
-                    Fetched::Malformed(reason) => not_in_force!(reason),
-                    Fetched::Found(fetched, b) => Some((fetched, b)),
-                }
-            }
-            None => {
-                let mut found = None;
-                let mut near_miss = false;
-                for fetched in self
-                    .repo
-                    .list_records(&a.counterpart, RELATIONSHIP_TYPE)
-                    .await?
-                {
-                    let Ok(r) = fetched.decode::<Relationship>() else {
-                        continue;
-                    };
-                    if r.relationship != expected_kind || r.counterpart != a_fetched.repository {
-                        continue;
-                    }
-                    match &r.counterpart_record {
-                        Some(declared) if declared != &a_fetched.uri => near_miss = true,
-                        _ => {
-                            found = Some((fetched, r));
-                            break;
-                        }
-                    }
-                }
-                if found.is_none() && near_miss {
-                    not_in_force!(Reason::CounterpartMismatch);
-                }
-                found
-            }
-        };
-        let Some((b_fetched, b)) = other else {
-            not_in_force!(Reason::HalfMissing);
-        };
-
-        if b.relationship != expected_kind {
-            not_in_force!(if matches!(b.relationship, RelKind::Unknown(_)) {
-                Reason::UnknownKind
-            } else {
-                Reason::KindsNotAPair
-            });
-        }
-        if a.counterpart != b_fetched.repository || b.counterpart != a_fetched.repository {
-            not_in_force!(Reason::CounterpartMismatch);
-        }
-        if let Some(declared) = &b.counterpart_record
-            && declared != &a_fetched.uri
-        {
-            not_in_force!(Reason::CounterpartMismatch);
-        }
-
-        if a.relationship.is_ownership_tier() {
-            let (owner, owned) = if a.relationship == RelKind::Owns {
-                (&a_fetched.repository, &b_fetched.repository)
-            } else {
-                (&b_fetched.repository, &a_fetched.repository)
-            };
-            let Some(owned_keys) = self.dids.keys(owned).await? else {
-                not_in_force!(Reason::CounterpartUnresolvable(owned.clone()));
-            };
-            let Some(owner_keys) = self.dids.keys(owner).await? else {
-                not_in_force!(Reason::CounterpartUnresolvable(owner.clone()));
-            };
-            if !holds_senior_rotation_key(&owner_keys, &owned_keys, self.policy.custodian_keys()) {
-                not_in_force!(Reason::NoKeyControl);
-            }
-        }
-
-        Ok(Verdict::InForce {
-            attestor: b_fetched.repository,
-            method: None,
-            remaining_secs: None,
-        })
-    }
-}
-
-/// Key control (FORKS F40, ruled 2026-08-22): the owner holds a rotation
-/// key that sits **above every custodian's** in the owned DID's list —
-/// `docs/ccs.md`'s senior-key rule, checked literally.
-///
-/// Ownership holds iff some `K` in the owner's rotation list, with `K` not a
-/// custodian key, appears in the owned DID's rotation list at an index
-/// lower (more senior) than every custodian key there — or there is no
-/// custodian key there at all. Which keys are custodians' is the policy's
-/// to say ([`TrustPolicy::custodian_keys`]): `did:plc` lets one key sit on
-/// any number of DIDs and records nothing about who holds it, so no rule
-/// over the lists alone can tell an owner's key from an operator's —
-/// "some key in both lists" matched bsky.social's operator key on every
-/// co-hosted pair, and "top equals top" both failed junior co-owners and
-/// passed two accounts with *only* operator keys. Position conventions
-/// differ by tool, too (Bluesky's signup puts a user key first; `goat`
-/// appends one last), so only the order relative to the named custodians
-/// is meaningful.
-///
-/// Consequences: a junior co-owner passes as long as they are above the
-/// custodian; two DIDs carrying nothing but custodian keys fail closed
-/// (nobody personal holds either); and with an **empty** custodian set the
-/// check degrades to "some key in both lists" — the permissive mode the
-/// policy documents. The set must also be *complete* for the hosts in
-/// play: an operator key the policy does not name counts as personal and
-/// sets no floor, so an unnamed key senior to the named ones is the
-/// bsky.social hole reopened for that host. Verification keys never
-/// count: `did:plc` gives them no control
-/// over the identity. Both lists are the verbatim `did:key:` strings the
-/// directory holds, in its order; the port contract forbids re-encoding,
-/// so there is nothing to normalize, and an entry that is not shaped like
-/// a `did:key:z…` string ([`is_did_key_shaped`]) is never a key.
-fn holds_senior_rotation_key(
-    owner: &KeyMaterial,
-    owned: &KeyMaterial,
-    custodians: &BTreeSet<String>,
-) -> bool {
-    // The most senior custodian position in the owned list, if any.
-    let custodian_floor = owned.rotation.iter().position(|k| custodians.contains(k));
-    owner
-        .rotation
-        .iter()
-        .filter(|k| is_did_key_shaped(k) && !custodians.contains(*k))
-        .filter_map(|k| owned.rotation.iter().position(|o| o == k))
-        .any(|idx| custodian_floor.is_none_or(|floor| idx < floor))
 }
 
 #[cfg(test)]
@@ -493,6 +304,7 @@ mod tests {
     use crate::acp::VerifyingKey;
     use crate::acp::memory::{MemoryRepo, MemoryResolver, MemoryStatus};
     use crate::acp::policy::BasicPolicy;
+    use crate::acp::ports::KeyMaterial;
     use crate::acp::record::fixtures::{attestor, kit, mallory};
     use crate::acp::record::{
         ATTESTATION_TYPE, CLAIM_TYPE, Claim, ClaimKind, MAX_SAFE_INTEGER, StatusRef, StrongRef,
@@ -515,12 +327,6 @@ mod tests {
         KeyMaterial {
             verification: vec![vk(k)],
             rotation: vec![],
-        }
-    }
-    fn rotation(keys: &[&Secp256k1Keypair]) -> KeyMaterial {
-        KeyMaterial {
-            verification: vec![],
-            rotation: keys.iter().map(|k| k.did()).collect(),
         }
     }
     fn dt(s: &str) -> Datetime {
@@ -639,7 +445,7 @@ mod tests {
             } => {
                 assert_eq!(a, attestor());
                 assert_eq!(method.as_deref(), Some("email-challenge"));
-                assert_eq!(remaining_secs, Some(21 * 86_400));
+                assert_eq!(remaining_secs, 21 * 86_400);
             }
             other => panic!("{other:?}"),
         }
@@ -1357,522 +1163,5 @@ mod tests {
                 .unwrap()
                 .is_in_force()
         );
-    }
-
-    // ── mutual claims ───────────────────────────────────────────────────────
-
-    fn fox() -> Did {
-        Did::new("did:plc:fox1234567890abcdefghijkl")
-    }
-
-    struct Pair {
-        repo: MemoryRepo,
-        dids: MemoryResolver,
-        status: MemoryStatus,
-        policy: BasicPolicy,
-        kit_half: AtUri,
-        fox_half: AtUri,
-    }
-
-    impl Pair {
-        /// Kit owns Fox; both halves written, each naming the other's
-        /// address; Kit holds Fox's senior rotation key.
-        fn new() -> Self {
-            let repo = MemoryRepo::new();
-            let dids = MemoryResolver::new();
-            let kit_key = key(50);
-            let host_key = key(51);
-
-            let fox_half_uri = AtUri::record(&fox(), RELATIONSHIP_TYPE, "ab12");
-            let kit_half_uri = AtUri::record(&kit(), RELATIONSHIP_TYPE, "cd34");
-
-            let mut owns =
-                Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-            owns.counterpart_record = Some(fox_half_uri.clone());
-            let mut owned_by =
-                Relationship::new(RelKind::OwnedBy, kit(), dt("2026-08-20T11:00:00Z"), None)
-                    .unwrap();
-            owned_by.counterpart_record = Some(kit_half_uri.clone());
-
-            let (kit_half, _) = repo.put(&kit(), RELATIONSHIP_TYPE, "cd34", &owns);
-            let (fox_half, _) = repo.put(&fox(), RELATIONSHIP_TYPE, "ab12", &owned_by);
-
-            // Kit's own account: her key senior to her host's (bsky, say).
-            // Fox, custodied by Zurfur: Kit's key senior to Zurfur's. The
-            // verifier names both operators as custodians — the one fact
-            // public data cannot supply.
-            dids.publish(&kit(), rotation(&[&kit_key, &key(52)]));
-            dids.publish(&fox(), rotation(&[&kit_key, &host_key]));
-            Self {
-                repo,
-                dids,
-                status: MemoryStatus::new(),
-                policy: BasicPolicy::permissive().with_custodians([host_key.did(), key(52).did()]),
-                kit_half,
-                fox_half,
-            }
-        }
-
-        async fn verdict_from(&self, half: &AtUri) -> Verdict {
-            Verifier {
-                repo: &self.repo,
-                dids: &self.dids,
-                status: &self.status,
-                policy: &self.policy,
-            }
-            .verify_relationship(half)
-            .await
-            .unwrap()
-        }
-    }
-
-    #[tokio::test]
-    async fn shared_custodian_key_is_not_ownership() {
-        // Kit and Fox on the same host, which lists its one operator key on
-        // every account. Kit's key is senior on Fox; the host's sits below.
-        // Mallory — same host, no key of her own — writes both records
-        // (she cannot, but suppose she did): the host key is in both her
-        // list and Fox's, and that must prove nothing.
-        let p = Pair::new();
-        let host = key(51);
-        p.dids.publish(&mallory(), rotation(&[&host]));
-        let mut owns =
-            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        owns.counterpart_record = Some(p.fox_half.clone());
-        let (mallory_half, _) = p.repo.put(&mallory(), RELATIONSHIP_TYPE, "ef56", &owns);
-        let mut owned_by = Relationship::new(
-            RelKind::OwnedBy,
-            mallory(),
-            dt("2026-08-20T11:00:00Z"),
-            None,
-        )
-        .unwrap();
-        owned_by.counterpart_record = Some(mallory_half.clone());
-        p.repo.replace(&p.fox_half, &owned_by);
-        assert_eq!(
-            reason(p.verdict_from(&mallory_half).await),
-            Reason::NoKeyControl
-        );
-        // Same with a different owner key on top of Fox: as long as Fox
-        // honours the senior-key rule, no co-hosted stranger passes.
-        p.dids.rotate(&fox(), rotation(&[&key(55), &host]));
-        assert_eq!(
-            reason(p.verdict_from(&mallory_half).await),
-            Reason::NoKeyControl
-        );
-    }
-
-    #[tokio::test]
-    async fn bsky_shaped_pair_is_not_ownership() {
-        // The dominant deployment: every bsky.social account carries the
-        // same two operator keys and nothing else. Two such accounts share
-        // their entire rotation list; with the operator named as custodian
-        // that proves nothing — nobody personal holds either DID.
-        let mut p = Pair::new();
-        let (bsky_a, bsky_b) = (key(60), key(61));
-        p.policy = p.policy.with_custodians([bsky_a.did(), bsky_b.did()]);
-        p.dids.rotate(&kit(), rotation(&[&bsky_a, &bsky_b]));
-        p.dids.rotate(&fox(), rotation(&[&bsky_a, &bsky_b]));
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::NoKeyControl
-        );
-        assert_eq!(
-            reason(p.verdict_from(&p.fox_half).await),
-            Reason::NoKeyControl
-        );
-        // Kit enrols a personal key above the operator's on Fox — and the
-        // operator's keys sit on her own account too, as they do for every
-        // bsky.social user. Now she owns Fox.
-        p.dids
-            .rotate(&kit(), rotation(&[&key(50), &bsky_a, &bsky_b]));
-        p.dids
-            .rotate(&fox(), rotation(&[&key(50), &bsky_a, &bsky_b]));
-        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
-        // Personal key present on Fox but *below* the operator's: the
-        // operator could take Fox from her. Not ownership.
-        p.dids
-            .rotate(&fox(), rotation(&[&bsky_a, &key(50), &bsky_b]));
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::NoKeyControl
-        );
-    }
-
-    #[tokio::test]
-    async fn no_custodian_set_is_the_permissive_mode() {
-        // With no custodian named, the check degrades to "some key in both
-        // lists" — the host's own key included. Documented on
-        // `TrustPolicy::custodian_keys`; a verifier that acts on ownership
-        // names its operators.
-        let mut p = Pair::new();
-        p.policy = BasicPolicy::permissive();
-        let host = key(51);
-        p.dids.rotate(&mallory(), rotation(&[&host]));
-        let mut owns =
-            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        owns.counterpart_record = Some(p.fox_half.clone());
-        let (mallory_half, _) = p.repo.put(&mallory(), RELATIONSHIP_TYPE, "ef56", &owns);
-        let mut owned_by = Relationship::new(
-            RelKind::OwnedBy,
-            mallory(),
-            dt("2026-08-20T11:00:00Z"),
-            None,
-        )
-        .unwrap();
-        owned_by.counterpart_record = Some(mallory_half.clone());
-        p.repo.replace(&p.fox_half, &owned_by);
-        assert!(p.verdict_from(&mallory_half).await.is_in_force());
-        // Naming the host closes it.
-        p.policy = BasicPolicy::permissive().with_custodians([host.did()]);
-        assert_eq!(
-            reason(p.verdict_from(&mallory_half).await),
-            Reason::NoKeyControl
-        );
-    }
-
-    #[tokio::test]
-    async fn custodian_senior_is_not_ownership() {
-        // Fox lists the host above Kit: Kit's key is present but junior. The
-        // senior-key rule is violated and the verifier says so.
-        let p = Pair::new();
-        p.dids.rotate(&fox(), rotation(&[&key(51), &key(50)]));
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::NoKeyControl
-        );
-        assert_eq!(
-            reason(p.verdict_from(&p.fox_half).await),
-            Reason::NoKeyControl
-        );
-    }
-
-    #[tokio::test]
-    async fn verification_keys_do_not_confer_control() {
-        // Kit's signing key is Fox's senior *rotation* key (someone
-        // misconfigured it); Kit's rotation list does not contain it.
-        let p = Pair::new();
-        let signing = key(53);
-        p.dids.rotate(
-            &kit(),
-            KeyMaterial {
-                verification: vec![vk(&signing)],
-                rotation: vec![key(50).did()],
-            },
-        );
-        p.dids.rotate(&fox(), rotation(&[&signing, &key(51)]));
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::NoKeyControl
-        );
-    }
-
-    #[tokio::test]
-    async fn co_owner_ordering() {
-        // Two owners, priority-ordered on Fox: [kit, bo, host]. Both are
-        // above the custodian, so both own Fox; key priority settles
-        // disputes between them (`docs/characters-atproto.md`), not whether
-        // either owns. Bo below the host would not.
-        let p = Pair::new();
-        let (kit_key, bo_key, host) = (key(50), key(54), key(51));
-        let bo = Did::new("did:plc:bo12345678901234567890ab");
-        p.dids.rotate(&fox(), rotation(&[&kit_key, &bo_key, &host]));
-        p.dids.publish(&bo, rotation(&[&bo_key, &key(52)]));
-        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
-
-        let mut owns =
-            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        owns.counterpart_record = Some(p.fox_half.clone());
-        let (bo_half, _) = p.repo.put(&bo, RELATIONSHIP_TYPE, "gh78", &owns);
-        let mut owned_by = Relationship::new(
-            RelKind::OwnedBy,
-            bo.clone(),
-            dt("2026-08-20T11:00:00Z"),
-            None,
-        )
-        .unwrap();
-        owned_by.counterpart_record = Some(bo_half.clone());
-        p.repo.replace(&p.fox_half, &owned_by);
-        assert!(p.verdict_from(&bo_half).await.is_in_force());
-        // Bo slips below the host: the custodian outranks him on Fox.
-        p.dids.rotate(&fox(), rotation(&[&kit_key, &host, &bo_key]));
-        assert_eq!(reason(p.verdict_from(&bo_half).await), Reason::NoKeyControl);
-    }
-
-    #[tokio::test]
-    async fn placeholder_rotation_entries_are_not_keys() {
-        // A resolver that answers with an empty or non-did:key entry for
-        // both DIDs produces two *equal* strings — which is not key control.
-        let p = Pair::new();
-        for junk in [
-            "",
-            "zQ3shhCGUqDKjStzuDxPkTxN6ujddP4RkEKJJouJGRRkaLGbg",
-            "did:key:",
-            "did:key:unknown",
-            "did:key:zab",
-        ] {
-            let km = |_: &Did| KeyMaterial {
-                verification: vec![],
-                rotation: vec![junk.to_string()],
-            };
-            p.dids.rotate(&kit(), km(&kit()));
-            p.dids.rotate(&fox(), km(&fox()));
-            assert_eq!(
-                reason(p.verdict_from(&p.kit_half).await),
-                Reason::NoKeyControl,
-                "{junk:?} passed as a rotation key"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn incomplete_custodian_set_fails_open_per_missing_key() {
-        // The hazard, pinned so nobody mistakes it for safety: a bsky-shaped
-        // pair with only ONE of the host's two operator keys named. The
-        // unnamed key counts as personal; when it is the *senior* one it
-        // sits above the floor the named key sets, and ownership "passes".
-        // (Naming only the senior key happens to hold — the floor is at
-        // index 0 — but a verifier cannot know which one it is missing.)
-        // Naming both closes it. The set must be complete for every host
-        // among the verifier's subjects.
-        let mut p = Pair::new();
-        let (bsky_a, bsky_b) = (key(60), key(61));
-        p.dids.rotate(&kit(), rotation(&[&bsky_a, &bsky_b]));
-        p.dids.rotate(&fox(), rotation(&[&bsky_a, &bsky_b]));
-        p.policy = BasicPolicy::permissive().with_custodians([bsky_b.did()]);
-        assert!(
-            p.verdict_from(&p.kit_half).await.is_in_force(),
-            "one key short is the bsky hole reopened — documented, not safe"
-        );
-        p.policy = BasicPolicy::permissive().with_custodians([bsky_a.did()]);
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::NoKeyControl
-        );
-        p.policy = BasicPolicy::permissive().with_custodians([bsky_a.did(), bsky_b.did()]);
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::NoKeyControl
-        );
-    }
-
-    #[tokio::test]
-    async fn unresolvable_did_in_an_ownership_pair_is_named() {
-        // A tombstoned owned DID (or owner) is not "no key control" — the
-        // keys were never read. The reason says which DID.
-        let p = Pair::new();
-        p.dids.remove(&fox());
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::CounterpartUnresolvable(fox())
-        );
-        p.dids.publish(&fox(), rotation(&[&key(50), &key(51)]));
-        p.dids.remove(&kit());
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::CounterpartUnresolvable(kit())
-        );
-    }
-
-    #[tokio::test]
-    async fn declared_counterpart_outside_the_counterpart_repo_is_not_fetched() {
-        // Kit's half names a counterpartRecord in some other authority — a
-        // handle, an internal host, Mallory's repo. The verifier decides
-        // CounterpartMismatch without reading it.
-        let p = Pair::new();
-        for foreign in [
-            AtUri::record(&mallory(), RELATIONSHIP_TYPE, "ab12"),
-            AtUri::parse("at://internal.svc:8080/net.got-paws.acp.relationship/x").unwrap(),
-            AtUri::parse("at://fox.got-paws.net/net.got-paws.acp.relationship/ab12").unwrap(),
-        ] {
-            let mut owns =
-                Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-            owns.counterpart_record = Some(foreign.clone());
-            p.repo.replace(&p.kit_half, &owns);
-            let before = p.repo.read_count();
-            assert_eq!(
-                reason(p.verdict_from(&p.kit_half).await),
-                Reason::CounterpartMismatch,
-                "{foreign}"
-            );
-            assert_eq!(
-                p.repo.read_count(),
-                before + 1,
-                "only Kit's own half was read for {foreign}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn pair_in_force_from_either_half() {
-        let p = Pair::new();
-        match p.verdict_from(&p.kit_half).await {
-            Verdict::InForce {
-                attestor,
-                method,
-                remaining_secs,
-            } => {
-                assert_eq!(attestor, fox(), "the counterpart is what was learned");
-                assert_eq!(method, None);
-                assert_eq!(remaining_secs, None, "relationships do not expire");
-            }
-            other => panic!("{other:?}"),
-        }
-        match p.verdict_from(&p.fox_half).await {
-            Verdict::InForce { attestor, .. } => assert_eq!(attestor, kit()),
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn pair_found_by_search_without_counterpart_record() {
-        let p = Pair::new();
-        let owns =
-            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        p.repo.replace(&p.kit_half, &owns); // no counterpartRecord
-        let owned_by =
-            Relationship::new(RelKind::OwnedBy, kit(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        p.repo.replace(&p.fox_half, &owned_by);
-        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
-    }
-
-    #[tokio::test]
-    async fn search_is_not_order_dependent() {
-        // Fox's repo holds a stale half (pointing at a record Kit deleted)
-        // listed *before* the live one. The live one must be found.
-        let p = Pair::new();
-        let owns =
-            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        p.repo.replace(&p.kit_half, &owns); // no counterpartRecord → search
-        let mut stale =
-            Relationship::new(RelKind::OwnedBy, kit(), dt("2026-08-19T11:00:00Z"), None).unwrap();
-        stale.counterpart_record = Some(AtUri::record(&kit(), RELATIONSHIP_TYPE, "gone"));
-        p.repo.put(&fox(), RELATIONSHIP_TYPE, "aa00", &stale); // sorts first
-        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
-        // With only the stale half present, it is a mismatch, not "missing".
-        p.repo.delete(&p.fox_half);
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::CounterpartMismatch
-        );
-    }
-
-    #[tokio::test]
-    async fn junk_in_the_collection_does_not_veto_the_search() {
-        // Fox's repo holds an undecodable relationship record (old schema,
-        // corruption) that lists *before* the live half. The search skips
-        // it; swapping rkeys must not change the verdict.
-        let p = Pair::new();
-        let owns =
-            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        p.repo.replace(&p.kit_half, &owns); // no counterpartRecord → search
-        let owned_by =
-            Relationship::new(RelKind::OwnedBy, kit(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        p.repo.replace(&p.fox_half, &owned_by);
-        p.repo
-            .put_bytes(&fox(), RELATIONSHIP_TYPE, "aa00", b"\xa0".to_vec()); // sorts first
-        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
-        p.repo
-            .put_bytes(&fox(), RELATIONSHIP_TYPE, "zz99", b"\xa0".to_vec()); // sorts last
-        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
-        // With no live half at all, junk alone is "missing", not malformed.
-        p.repo.delete(&p.fox_half);
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::HalfMissing
-        );
-        // The *declared* address is held to a higher bar: exists ⇒ decodes.
-        let mut declared =
-            Relationship::new(RelKind::Owns, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        declared.counterpart_record = Some(AtUri::record(&fox(), RELATIONSHIP_TYPE, "aa00"));
-        p.repo.replace(&p.kit_half, &declared);
-        assert!(matches!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::Malformed(_)
-        ));
-    }
-
-    #[tokio::test]
-    async fn one_half_missing_is_severance() {
-        let p = Pair::new();
-        p.repo.delete(&p.fox_half);
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::HalfMissing
-        );
-        assert_eq!(
-            reason(p.verdict_from(&p.fox_half).await),
-            Reason::HalfMissing
-        );
-    }
-
-    #[tokio::test]
-    async fn counterpart_mismatch() {
-        let p = Pair::new();
-        let mut owned_by = Relationship::new(
-            RelKind::OwnedBy,
-            mallory(),
-            dt("2026-08-20T11:00:00Z"),
-            None,
-        )
-        .unwrap();
-        owned_by.counterpart_record = Some(p.kit_half.clone());
-        p.repo.replace(&p.fox_half, &owned_by);
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::CounterpartMismatch
-        );
-    }
-
-    #[tokio::test]
-    async fn kinds_not_a_pair_and_unknown() {
-        let p = Pair::new();
-        let mut wrong =
-            Relationship::new(RelKind::MemberOf, kit(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        wrong.counterpart_record = Some(p.kit_half.clone());
-        p.repo.replace(&p.fox_half, &wrong);
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::KindsNotAPair
-        );
-
-        let mut unknown = Relationship::new(
-            RelKind::from("sponsors"),
-            kit(),
-            dt("2026-08-20T11:00:00Z"),
-            None,
-        )
-        .unwrap();
-        unknown.counterpart_record = Some(p.kit_half.clone());
-        p.repo.replace(&p.fox_half, &unknown);
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::UnknownKind
-        );
-        assert_eq!(
-            reason(p.verdict_from(&p.fox_half).await),
-            Reason::UnknownKind
-        );
-    }
-
-    #[tokio::test]
-    async fn ownership_requires_key_control() {
-        let p = Pair::new();
-        // The host rotates Kit out: two records, no key control, no ownership.
-        p.dids.rotate(&fox(), rotation(&[&key(51)]));
-        assert_eq!(
-            reason(p.verdict_from(&p.kit_half).await),
-            Reason::NoKeyControl
-        );
-        // A non-ownership pair needs no key control at all.
-        let mut a =
-            Relationship::new(RelKind::MemberOf, fox(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        a.counterpart_record = Some(p.fox_half.clone());
-        let mut b =
-            Relationship::new(RelKind::HasMember, kit(), dt("2026-08-20T11:00:00Z"), None).unwrap();
-        b.counterpart_record = Some(p.kit_half.clone());
-        p.repo.replace(&p.kit_half, &a);
-        p.repo.replace(&p.fox_half, &b);
-        assert!(p.verdict_from(&p.kit_half).await.is_in_force());
     }
 }

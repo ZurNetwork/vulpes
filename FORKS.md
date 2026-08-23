@@ -78,7 +78,7 @@ recorded on the roadmap beside this ruling.
 ### F45. Vulpes only does attestations — CCS is claims plus counterpart attestations
 
 **Where:** `docs/ccs.md`, `docs/acp.md` §Record types, §Verification,
-§Conformance; `src/acp/verify.rs` (the relationship path, to be removed).
+§Conformance; `src/acp/verify.rs` (the relationship path, removed in PR #17).
 
 The 2026-08-11 CCS shape was a second record type (`relationship`) with its
 own verification rule: two halves, one in each repo, each naming the
@@ -218,7 +218,10 @@ Engineer after sourced research):**
   last, a junior co-owner is never first, and two accounts carrying *only*
   the operator's keys have equal tops and passed anyway. A rule over the
   lists alone cannot work: **public data never says who holds a key.**
-- **Ruled:** the verifier names the custodians. `TrustPolicy::custodian_keys`
+- **Superseded by F45 (2026-08-22):** `TrustPolicy::custodian_keys` is
+  gone from the verifier; the rule below survives as a consumer-side helper
+  (`acp::custody`, the PR after #17).
+- **Ruled (as it stood):** the verifier names the custodians. `TrustPolicy::custodian_keys`
   (the same shape as `trusted_attestors`) lists operator rotation keys —
   bsky.social's two, Zurfur's vault key, whatever a deployment's subjects
   use. Ownership holds iff some owner rotation key that is *not* a
@@ -319,9 +322,8 @@ The lexicons type them `unknown`. Holding them as `Ipld` would add
 `ipld-core` as a direct dependency for no wire difference; holding them as
 `serde_json::Value` risks a float or `null` reaching the signer (forbidden by
 the atproto data model, and `serde_ipld_dagcbor` would happily encode an
-f64). **Ruled: `serde_json::Value`, rejected at `Claim::new` /
-`Relationship::new` if it contains a float, a `null`, or an integer beyond
-±2⁵³.** `serde_json`'s `preserve_order` (on globally since F35) is harmless
+f64). **Ruled: `serde_json::Value`, rejected at `Claim::new` if it contains a
+float, a `null`, or an integer beyond ±2⁵³.** `serde_json`'s `preserve_order` (on globally since F35) is harmless
 here — the DAG-CBOR encoder re-sorts — and a test pins that. Known limit: a
 `$bytes` value inside a payload will not round-trip through `Value`; no v0.1
 kind carries one.

@@ -10,10 +10,10 @@ tickets stay parked in Jira as historical detail.
 Done when the **kill test** passes as an integration test: tear the attestor's
 infrastructure down and every issued vouch still verifies.
 
-- [x] **The lexicons** — the three record schemas under `net.got-paws.acp.*`
-      (PR #5).
-- [x] **Record types in Rust** — `Claim` / `Attestation` / `Relationship`
-      structs + canonical DAG-CBOR, so signing has stable bytes. Decided:
+- [x] **The lexicons** — the record schemas under `net.got-paws.acp.*`
+      (PR #5; the `relationship` schema was retired by F45, PR #17).
+- [x] **Record types in Rust** — `Claim` / `Attestation` structs +
+      canonical DAG-CBOR, so signing has stable bytes. Decided:
       hand-rolled over our own deps (FORKS F37). Fixtures pin exact bytes,
       including the *pre-image* fixture, cross-checked against an independent
       encoder (`src/acp/record.rs`).
@@ -52,15 +52,22 @@ infrastructure down and every issued vouch still verifies.
 - [ ] **Expiry & renewal** — per-kind lifetimes, the auto-renew loop
       (re-runs diligence), human vouches never auto-renew, the
       strand-on-attestor-death test.
-- [ ] **CCS as attestations** (FORKS F45, ruled 2026-08-22) — delete the
-      relationship path (`Relationship`, `RelKind`, `verify_relationship`,
-      the counterpart search, the `relationship` lexicon); move the seniority
-      check and custodian discovery into pure `acp::custody` helpers and drop
-      `TrustPolicy::custodian_keys`; `ClaimKind::parse` for five-segment NSIDs
-      and the two v0.1 categories (`identity`, `relationship` — `consent`
-      deferred); define `relationship.ownership` and
-      `relationship.membership` (roles, who claims, who attests); show the
-      consumer pattern — verify, then check seniority — in the explainer.
+- [ ] **CCS as attestations** (FORKS F45, ruled 2026-08-22), in order:
+      - [x] delete the relationship path — `Relationship`, `RelKind`,
+            `verify_relationship`, the counterpart search, the
+            `relationship` lexicon, `TrustPolicy::custodian_keys` (PR #17).
+      - [ ] `acp::custody` — the seniority check and custodian discovery as
+            pure helpers a consumer calls after an ownership-class
+            attestation verifies. Until it lands no seniority check exists
+            in the crate; the previous check and its adversarial tests are
+            recoverable from `7045189^`.
+      - [ ] `ClaimKind::parse` for five-segment NSIDs and the two v0.1
+            categories (`identity`, `relationship`; `consent` deferred);
+            lexicon `kind` → `format: nsid`.
+      - [ ] define `relationship.ownership` and `relationship.membership`
+            (roles, who claims, who attests).
+      - [ ] the consumer pattern — verify, then check seniority — in the
+            explainer.
       The "unanswered half" fork is dissolved: an unattested claim is a claim.
 - [ ] **Mint layout D** (FORKS F46) — `MintPolicy` mints
       `[user_cold, vulpes_recovery, zurfur_operational]` by default, offers

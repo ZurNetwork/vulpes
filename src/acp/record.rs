@@ -1,4 +1,4 @@
-//! The three ACP record types and their canonical bytes.
+//! The two ACP record types and their canonical bytes.
 //!
 //! Field names and shapes follow the lexicons under `lexicons/` exactly.
 //! Everything here serializes through [`canonical_bytes`] — DAG-CBOR, which
@@ -29,8 +29,6 @@ use super::error::CodecError;
 pub const CLAIM_TYPE: &str = "net.got-paws.acp.claim";
 /// NSID of the attestation record.
 pub const ATTESTATION_TYPE: &str = "net.got-paws.acp.attestation";
-/// NSID of the mutual-claim (relationship) record.
-pub const RELATIONSHIP_TYPE: &str = "net.got-paws.acp.relationship";
 /// NSID of the status-list artifact (see [`super::status`]).
 pub const STATUS_LIST_TYPE: &str = "net.got-paws.acp.statusList";
 
@@ -179,10 +177,6 @@ type_marker!(
 type_marker!(
     /// The `$type` of an [`Attestation`]: serializes as [`ATTESTATION_TYPE`].
     AttestationType = ATTESTATION_TYPE
-);
-type_marker!(
-    /// The `$type` of a [`Relationship`]: serializes as [`RELATIONSHIP_TYPE`].
-    RelationshipType = RELATIONSHIP_TYPE
 );
 
 // ─── scalar newtypes ────────────────────────────────────────────────────────
@@ -738,43 +732,6 @@ string_enum!(
     }
 );
 
-string_enum!(
-    /// A relationship half's kind, from the published catalog (v0.1 seeds).
-    RelKind {
-        /// Ownership-tier: this repo owns the counterpart DID.
-        Owns = "owns",
-        /// Ownership-tier: this repo is owned by the counterpart DID.
-        OwnedBy = "ownedBy",
-        /// This repo is a member of the counterpart (an account).
-        MemberOf = "memberOf",
-        /// This repo (an account) has the counterpart as a member.
-        HasMember = "hasMember",
-        /// This repo consents to something the counterpart does (gallery consent).
-        ConsentsTo = "consentsTo",
-    }
-);
-
-impl RelKind {
-    /// The kind the other half must carry for the pair to be defined.
-    /// `ConsentsTo` pairs with itself; unknown kinds pair with nothing.
-    pub fn pair(&self) -> Option<RelKind> {
-        Some(match self {
-            Self::Owns => Self::OwnedBy,
-            Self::OwnedBy => Self::Owns,
-            Self::MemberOf => Self::HasMember,
-            Self::HasMember => Self::MemberOf,
-            Self::ConsentsTo => Self::ConsentsTo,
-            Self::Unknown(_) => return None,
-        })
-    }
-
-    /// Ownership-tier kinds additionally require key control (verified
-    /// against the owned DID's PLC log) — two records alone are not ownership.
-    pub fn is_ownership_tier(&self) -> bool {
-        matches!(self, Self::Owns | Self::OwnedBy)
-    }
-}
-
 // ─── the atproto data-model check for opaque values ─────────────────────────
 
 /// The largest integer the atproto data model allows (2⁵³ − 1): a record
@@ -949,54 +906,6 @@ impl Attestation {
         &self.body
     }
 }
-
-/// `net.got-paws.acp.relationship` — one half of a Consensual Claims System
-/// pair. Each party writes one in its own repo; the relationship exists iff
-/// both halves exist and name each other. No inner signature: the repo commit
-/// signature is the assertion.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Relationship {
-    /// Always [`RELATIONSHIP_TYPE`].
-    #[serde(rename = "$type")]
-    pub type_: RelationshipType,
-    /// This side's kind; the other half must carry [`RelKind::pair`].
-    pub relationship: RelKind,
-    /// The other party.
-    pub counterpart: Did,
-    /// The expected address of the other half, once known.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub counterpart_record: Option<AtUri>,
-    /// Content this side is authoritative for (role, consent terms).
-    /// Verifiers ignore scope a side is not authoritative for.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<serde_json::Value>,
-    /// When this side asserted it.
-    pub created_at: Datetime,
-}
-
-impl Relationship {
-    /// Build a half, checking `scope` against the data model.
-    pub fn new(
-        relationship: RelKind,
-        counterpart: Did,
-        created_at: Datetime,
-        scope: Option<serde_json::Value>,
-    ) -> Result<Self, CodecError> {
-        if let Some(scope) = &scope {
-            check_opaque(scope)?;
-        }
-        Ok(Self {
-            type_: RelationshipType,
-            relationship,
-            counterpart,
-            counterpart_record: None,
-            scope,
-            created_at,
-        })
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod fixtures {
     //! Kit's story, as fixed records — shared by the record and sign tests.
@@ -1051,22 +960,6 @@ pub(crate) mod fixtures {
         b.method = Some("email-challenge".into());
         b
     }
-    pub fn relationship() -> Relationship {
-        let mut r = Relationship::new(
-            RelKind::Owns,
-            Did::new("did:plc:fox1234567890abcdefghijkl"),
-            Datetime::parse("2026-08-20T11:00:00Z").unwrap(),
-            None,
-        )
-        .unwrap();
-        r.counterpart_record = Some(
-            AtUri::parse(
-                "at://did:plc:fox1234567890abcdefghijkl/net.got-paws.acp.relationship/ab12",
-            )
-            .unwrap(),
-        );
-        r
-    }
 }
 
 #[cfg(test)]
@@ -1103,7 +996,7 @@ mod tests {
         // THE WIRE FORMAT. Generated by this crate, then cross-checked with an
         // independent encoder (see `vectors` below for the tool + version).
         // A change here breaks every signature and strongRef in the world.
-        let cases: [(&str, Vec<u8>); 4] = [
+        let cases: [(&str, Vec<u8>); 3] = [
             ("claim", canonical_bytes(&claim()).unwrap()),
             (
                 "attestation-min",
@@ -1113,7 +1006,6 @@ mod tests {
                 "attestation-full",
                 canonical_bytes(&body_full().with_sig(Sig(vec![0xAB; 64]))).unwrap(),
             ),
-            ("relationship", canonical_bytes(&relationship()).unwrap()),
         ];
         for (name, bytes) in &cases {
             println!("{name}: {}", hex(bytes));
@@ -1122,7 +1014,6 @@ mod tests {
         assert_eq!(hex(&cases[0].1), super::tests::vectors::CLAIM);
         assert_eq!(hex(&cases[1].1), super::tests::vectors::ATTESTATION_MIN);
         assert_eq!(hex(&cases[2].1), super::tests::vectors::ATTESTATION_FULL);
-        assert_eq!(hex(&cases[3].1), super::tests::vectors::RELATIONSHIP);
         assert_eq!(
             RecordCid::of(&cases[0].1).to_string(),
             super::tests::vectors::CLAIM_CID
@@ -1139,7 +1030,6 @@ mod tests {
         pub const CLAIM_CID: &str = "bafyreihuihzqug57iwailciamsvfctyrz76w4bf5mjxsfl4y5seje5ziya";
         pub const ATTESTATION_MIN: &str = "a7637369675840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab652474797065781c6e65742e676f742d706177732e6163702e6174746573746174696f6e65636c61696da263636964783b62616679726569687569687a7175673537697761696c6369616d737666637479727a373677346266356d6a7873666c34793573656a65357a69796163757269784b61743a2f2f6469643a706c633a6b6974313233343536373839306162636465666768696a6b6c2f6e65742e676f742d706177732e6163702e636c61696d2f336b7832767035716d656b3268677375626a65637478216469643a706c633a6b6974313233343536373839306162636465666768696a6b6c686174746573746f72766469643a7765623a6174746573742e6578616d706c6568697373756564417474323032362d30382d32305431303a30303a30305a6965787069726573417474323032362d30392d31395431303a30303a30305a";
         pub const ATTESTATION_FULL: &str = "a9637369675840abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab652474797065781c6e65742e676f742d706177732e6163702e6174746573746174696f6e65636c61696da263636964783b62616679726569687569687a7175673537697761696c6369616d737666637479727a373677346266356d6a7873666c34793573656a65357a69796163757269784b61743a2f2f6469643a706c633a6b6974313233343536373839306162636465666768696a6b6c2f6e65742e676f742d706177732e6163702e636c61696d2f336b7832767035716d656b3268666d6574686f646f656d61696c2d6368616c6c656e676566737461747573a2646c697374781f68747470733a2f2f6174746573742e6578616d706c652f7374617475732f3165696e64657819101f677375626a65637478216469643a706c633a6b6974313233343536373839306162636465666768696a6b6c686174746573746f72766469643a7765623a6174746573742e6578616d706c6568697373756564417474323032362d30382d32305431303a30303a30305a6965787069726573417474323032362d30392d31395431303a30303a30305a";
-        pub const RELATIONSHIP: &str = "a5652474797065781d6e65742e676f742d706177732e6163702e72656c6174696f6e736869706963726561746564417474323032362d30382d32305431313a30303a30305a6b636f756e7465727061727478216469643a706c633a666f78313233343536373839306162636465666768696a6b6c6c72656c6174696f6e73686970646f776e7371636f756e746572706172745265636f7264784961743a2f2f6469643a706c633a666f78313233343536373839306162636465666768696a6b6c2f6e65742e676f742d706177732e6163702e72656c6174696f6e736869702f61623132";
     }
 
     // ── structural guarantees ───────────────────────────────────────────────
@@ -1240,10 +1130,6 @@ mod tests {
         let c = claim();
         let back: Claim = from_canonical_bytes(&canonical_bytes(&c).unwrap()).unwrap();
         assert_eq!(back, c);
-
-        let r = relationship();
-        let back: Relationship = from_canonical_bytes(&canonical_bytes(&r).unwrap()).unwrap();
-        assert_eq!(back, r);
     }
 
     #[test]
@@ -1252,11 +1138,6 @@ mod tests {
         c.kind = ClaimKind::from("phone");
         let back: Claim = from_canonical_bytes(&canonical_bytes(&c).unwrap()).unwrap();
         assert_eq!(back.kind, ClaimKind::Unknown("phone".into()));
-        assert_eq!(RelKind::from("sponsors").pair(), None);
-        assert_eq!(RelKind::Owns.pair(), Some(RelKind::OwnedBy));
-        assert_eq!(RelKind::ConsentsTo.pair(), Some(RelKind::ConsentsTo));
-        assert!(RelKind::OwnedBy.is_ownership_tier());
-        assert!(!RelKind::MemberOf.is_ownership_tier());
     }
 
     #[test]
@@ -1530,9 +1411,11 @@ mod tests {
 
     #[test]
     fn did_in_record_is_validated_on_decode() {
-        let mut bytes = canonical_bytes(&relationship()).unwrap();
-        let pos = bytes.windows(8).position(|w| w == b"did:plc:").unwrap();
+        let mut bytes = canonical_bytes(&body()).unwrap();
+        // The last `did:plc:` is `subject` (the first sits inside `claim.uri`,
+        // where the at-uri syntax would let it pass).
+        let pos = bytes.windows(8).rposition(|w| w == b"did:plc:").unwrap();
         bytes[pos..pos + 8].copy_from_slice(b"nid:plc:");
-        assert!(from_canonical_bytes::<Relationship>(&bytes).is_err());
+        assert!(from_canonical_bytes::<UnsignedAttestation>(&bytes).is_err());
     }
 }

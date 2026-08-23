@@ -90,7 +90,8 @@ impl MemoryRepo {
             .map(|(repo, bytes)| FetchedRecord::new(bytes.clone(), uri.clone(), repo.clone()))
     }
 
-    /// Everything in `repo` — a CAR export, in spirit.
+    /// Everything in `repo` — a CAR export, in spirit. A test knob (the
+    /// custodian-death test restores a repo elsewhere from it), not a port.
     pub fn export(&self, repo: &Did) -> Vec<(AtUri, FetchedRecord)> {
         self.records
             .lock()
@@ -142,20 +143,6 @@ impl RepoReader for MemoryRepo {
     async fn get_record(&self, uri: &AtUri) -> Result<Option<FetchedRecord>, RepoError> {
         self.check()?;
         Ok(self.get(uri))
-    }
-
-    async fn list_records(
-        &self,
-        repo: &Did,
-        collection: &str,
-    ) -> Result<Vec<FetchedRecord>, RepoError> {
-        self.check()?;
-        Ok(self
-            .export(repo)
-            .into_iter()
-            .filter(|(uri, _)| uri.collection() == Some(collection))
-            .map(|(_, f)| f)
-            .collect())
     }
 }
 
