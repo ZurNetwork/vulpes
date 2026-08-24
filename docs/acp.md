@@ -650,12 +650,12 @@ private layer exists to prevent.
 - **2026-08-12** — v0.1 scoped to the **passive** vouch mode only; active and
   permanent modes ruled additive, deferred (§Expiry and renewal, §Possible
   future changes).
+- **2026-08-12** — lexicon namespace settled: `net.got-paws.acp.*`
+  (authority domain `got-paws.net`). No longer provisional.
 - **2026-08-13** — the six design axioms adopted (§Design principles),
   transcribed from the independent first-principles derivation
   ([The Claim Handshake](the-claim-handshake.md)), which converged on the
   recorded design without consulting it — treated as validation evidence.
-- **2026-08-12** — lexicon namespace settled: `net.got-paws.acp.*`
-  (authority domain `got-paws.net`). No longer provisional.
 - **2026-08-20** — signing pinned to the CID-First construction: the key signs
   the CIDv1 of the pre-image; `$sig.$type` fixed as
   `net.got-paws.acp.sigBinding`; strongRef `cid` confirmed a text string on
