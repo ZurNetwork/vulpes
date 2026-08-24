@@ -1,59 +1,53 @@
 ---
 path: .
-charted: 2026-08-21
+charted: 2026-08-23
 fs:
   - name: src/
-    role: the crate — did:plc substrate + ACP core, feature-gated
-    node: true
-  - name: tests/
-    role: Postgres-backed integration suite (testcontainers)
+    role: the vulpes crate — did:plc substrate + the ACP reference implementation
     node: true
   - name: docs/
-    role: the ruling documents — ACP spec, roadmap, handoff, design record
+    role: the ruling documents — spec (acp.md), plan (ROADMAP.md), handoff, rationale
+    node: true
+  - name: tests/
+    role: the Postgres-backed integration suite (testcontainers; Docker required)
     node: true
   - name: lexicons/
-    role: the three net.got-paws.acp.* record schemas (claim, attestation, relationship)
+    role: net.got-paws.acp.* record schemas (claim, attestation, statusList)
     node: false
   - name: migrations/
-    role: four sqlx migrations (key custody, plc operations, oauth state, plc op MAC); edited in place pre-1.0 (F31)
+    role: four numbered SQL migrations, embedded by build.rs (F10, F11)
     node: false
   - name: queries/
-    role: one .sql file per store op — key_store/, oauth_state/, plc_log/ — loaded by src/postgres
+    role: SQL files per store/<op> (F12) — key_store, oauth_state, plc_log
     node: false
-  - name: .github/workflows/ci.yml
-    role: fmt · clippy · test · features matrix · advisories · docs
+  - name: .github/workflows/
+    role: ci.yml — fmt · clippy · test · features · advisories · docs
     node: false
-  - name: .understand/
-    role: /understand + /remember briefings (chartignored)
+  - name: CLAUDE.md
+    role: working contract, ruling docs list, branch/commit rules
     node: false
-  - name: Cargo.toml
-    role: features — default [minter, directory]; oauth, postgres, axum, vc, acp; publish=false
-    node: false
-  - name: build.rs
-    role: embeds migrations/ at compile time (stand-in for sqlx::migrate!)
+  - name: FORKS.md
+    role: judgment calls the rulings don't cover (F-numbers)
     node: false
   - name: justfile
-    role: `just gate` mirrors CI
+    role: `just gate` = everything CI runs
+    node: false
+  - name: Cargo.toml
+    role: MSRV 1.88 · edition 2024 · features: minter+directory default; acp, oauth, postgres, vc, axum
+    node: false
+  - name: build.rs
+    role: embeds migrations/ into the binary
     node: false
   - name: deny.toml
     role: cargo-deny advisories config
     node: false
-  - name: FORKS.md
-    role: numbered judgment calls (F1…F41), Engineer-ruled
-    node: false
-  - name: CLAUDE.md
-    role: working contract, rulebooks, branch/commit rules
-    node: false
-  - name: .chartignore
-    role: dirs not worth a node
-    node: false
 ---
-**Is:** `vulpes` — a single Rust crate (edition 2024, MSRV 1.88, git-dep only): AT Protocol identity for servers (did:plc write path, key custody, OAuth state) and the reference implementation of the ACP (Attested Claims Protocol).
+**Is:** AT Protocol identity for Rust servers and the reference implementation of the ACP (Attested Claims Protocol); the shipped v0.1.0 substrate (did:plc writes, key custody, OAuth state) plus the in-flight ACP public lane.
 
-**Reading this tree:** to understand a path, read every `NODE.md` from the root down to that directory; each node states only what its ancestors haven't. Entries marked `node: false` are fully described by their `fs` line.
+**Reading this tree:** to understand any path, read every `NODE.md` from this root down to that directory; each node only adds what its ancestors haven't said. Entries marked `node: false` are fully described by their `fs` line here.
 
-**Conventions:** everything optional is a Cargo feature; `--no-default-features` is the pure protocol core. Closed error enums (F1). Every feature must pass the kill test before shipping. Gate = `just gate`; Docker required for tests.
+**Conventions:** the one law is the kill test — no operator's death may be a breaking factor. The plan is `docs/ROADMAP.md` (no tickets); judgment calls land in `FORKS.md`; rulings live in Confluence VU. Green `just gate` locally = green CI.
 
-**Entry points:** `src/lib.rs` (feature map), `docs/ROADMAP.md` (what's in flight), `docs/CONTINUE-HERE.md` (handoff).
+**Entry points:** `docs/ROADMAP.md` → `docs/CONTINUE-HERE.md` → `src/lib.rs`.
 
-**Refs:** CLAUDE.md; FORKS.md; Confluence VU space (Ruling Record 49184769, ACP pointer 49905665, Guide to Jira Tickets 50692097); memory `zuri-leads-vulpes-acp`.
+**Refs:** CLAUDE.md; Confluence VU Ruling Record 49184769, ACP pointer 49905665; memory `project-file-system-map`.

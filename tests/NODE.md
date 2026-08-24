@@ -1,6 +1,6 @@
 ---
 path: tests
-charted: 2026-08-21
+charted: 2026-08-23
 fs:
   - name: postgres/
     role: one integration binary (main.rs) — pg.rs shared-container harness; migrations, key_store, plc_log, oauth_state, oauth_bridge, minter suites
