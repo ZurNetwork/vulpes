@@ -1,12 +1,15 @@
 ---
 path: docs
-charted: 2026-08-21
+charted: 2026-08-23
 fs:
   - name: acp.md
     role: THE spec — record shapes, signing, status lists, verification, conformance + kill test, trust model
     node: false
   - name: explainer.md
     role: worked walkthrough (Kit's story)
+    node: false
+  - name: the-claim-handshake.md
+    role: the first-principles derivation (Supernote transcription); source of the spec's six axioms
     node: false
   - name: manifesto.md
     role: why the design choices look the way they do
