@@ -1,6 +1,7 @@
 # The Consensual Claims System (CCS) — spec draft
 
-> Named 2026-08-11; reshaped 2026-08-22 (FORKS F45). vulpes's original
+> Named 2026-08-11; reshaped 2026-08-22 (FORKS F45); the claims and
+> administration lanes separated 2026-08-23 (FORKS F47). vulpes's original
 > contribution to the open-protocol layer: **mutual** assertions between
 > DIDs, the complement to atproto labels' **unilateral** broadcast. Status:
 > design draft — a claim-kind catalog + per-kind consumer rules over the ACP
@@ -38,24 +39,36 @@ with the counterpart as attestor — nothing else is added.
    claim of the same kind — its role, its content — attested by the first
    party: two claims, two attestations, one kind. Nobody asserts on the
    other's behalf.
-3. **Severance is asymmetric, and both routes are unilateral.** The
-   claimant deletes the claim; every attestation of it stops resolving and
-   the relationship is over, instantly. The counterpart cannot delete a
-   record in another repo: it revokes (its status list) or declines to
-   renew. A human counterpart without infrastructure attests with a short
-   `expiresAt` and lets silence do the rest. No mediator either way.
-4. **Ownership adds a third fact, checked by the consumer.** Kinds that are
-   *ownership* require, beyond the attestation, that the owner holds a
-   rotation key on the owned DID senior to every custodian's (the senior-key
-   rule below). The attestation proves *consent* — the owned DID's signing
-   key agreed, and whoever operates that DID holds that key; the seniority
-   proves *control* — no custodian can take the DID away. Kinds that are
-   *membership* stop at the attestation.
+3. **Severance is unilateral, instant, and never waits on the calendar.**
+   The claimant deletes the claim; every attestation of it stops resolving
+   and the relationship is over, instantly. The counterpart cannot delete
+   a record in another repo: it revokes — one bit on its status list,
+   immediate for any verifier that fetches. Relationship attestations
+   therefore **must carry `status`** (FORKS F47); `expiresAt` bounds the
+   relationship's lifetime and is the backstop, never the exit. No
+   mediator either way.
+4. **Ownership is claims-only, and a subject has one owner** (FORKS F47).
+   The ownership verdict is the claim plus the owned DID's attestation —
+   nothing else. Rotation-key seniority belongs to the administration
+   lane (below): it answers "who can recover this DID", never "who owns
+   it", and whoever administers the owned repo could grant or revoke the
+   consent regardless, so a key gate would remove no power. A subject has
+   at most **one** in-force ownership edge — a user, or an account where
+   several humans share it; consumers treat more than one as a conflict
+   state. The humans behind an account-owned character are the
+   character's **owner roster**: one claim in the character's repo
+   listing owner DIDs, each named human attesting their entry. The roster
+   is character-scoped — two of five collective members may own this
+   character — so it is never derived from account membership, and
+   roster-of-one gives every character the same "who owns me" answer
+   from its own repo. Co-owner churn edits the roster: no keys, no
+   transfer, no 72 h window.
 5. **Trust stays at the edge, and meaning stays out of vulpes.** CCS defines
    which party says what; it never ranks attestors. vulpes verifies the
-   attestation and never decides what a kind *means* — the ownership check
-   is a helper it provides (`acp::custody`), not a step it applies. The
-   consumer (Zurfur, any app) decides that `ownership` requires it.
+   attestation and never decides what a kind *means* — the seniority
+   check is an administrative-health helper it provides (`acp::custody`),
+   not a step it applies and not part of any ownership verdict. A
+   consumer with stakes (a buyer) may still run it as due diligence.
 
 ## The verification rule
 
@@ -65,18 +78,20 @@ A consumer accepts a consensual claim of kind *K* between A and B iff:
   A's `role`, AND
 - that claim carries an attestation whose attestor is B, **in force** per
   `docs/acp.md` §Verification (signature, binding, expiry, status, and the
-  consumer's trust policy), AND
-- (ownership kinds only) A holds a rotation key on B senior to every key the
-  consumer names as a custodian's, per the PLC directory's rotation list.
+  consumer's trust policy).
 
-All three checks run against public infrastructure (PDS repos + PLC
-directory). No service — vulpes included — is in the loop.
+That is the whole verdict, ownership included (FORKS F47). Both checks
+run against public repos; no service — vulpes included — is in the loop.
+A consumer may additionally consult the administration lane —
+`acp::custody`'s seniority check against the PLC directory — as due
+diligence on recoverability; that check informs no relationship verdict.
 
 This is also the impersonation defense: a rando publishing an `ownership`
 claim (role `owner`) naming a character has no attestation from the
-character and holds no senior key. A self-loop (A claims a relationship with A, attested by A) is
-`attestor == subject` — valid and adding no trust (ruled 2026-08-12); the
-consumer's policy decides what to make of it.
+character — consent is the gate. A self-loop (A claims a relationship
+with A, attested by A) is `attestor == subject` — valid and adding no
+trust (ruled 2026-08-12); the consumer's policy decides what to make of
+it.
 
 ## Claim kinds — closed categories, authority-owned names
 
@@ -87,14 +102,24 @@ and what the payload must carry. Per the NQ3 discipline (kinds enumerated,
 instances unbounded). **One kind per relationship**: both sides use it and
 differ only in `role`. The seeds:
 
-| kind | roles | who claims | who attests | consumer check |
+| kind | roles | who claims | who attests | consumer rule |
 |---|---|---|---|---|
-| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | the owner (role `owner`, `did` = the owned DID) | the owned DID | **seniority** — ownership-class. The `owned`-role claim is optional: the attestation is the owned DID's consent. |
-| `net.got-paws.acp.relationship.membership` | `member` / `account` | the member (role `member`, `did` = the account); the account (role `account`, `did` = the member, `grant` = what it granted) | the account; the member | none. A consumer reads the grant only from the account's claim. |
+| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | the owner (role `owner`, `did` = the owned DID) | the owned DID | at most **one** in force per subject (F47); more is a conflict state. The `owned`-role claim is optional: the attestation is the owned DID's consent. |
+| `net.got-paws.acp.relationship.membership` | `member` / `account` | the member (role `member`, `did` = the account); the account (role `account`, `did` = the member, `grant` = what it granted) | the account; the member | a consumer reads the grant only from the account's claim. |
+| *the owner roster* (name with the kind definitions) | — | the character, listing its owner DIDs | each listed human, their own entry | character-scoped; never derived from account membership (F47). |
 | `app.zurfur.acp.identity.character` | — | the character DID | Zurfur | Zurfur's kind, not ACP's: "this DID is a character". |
 
 The identity kinds (`net.got-paws.acp.identity.email`, `….externalAccount`)
 are ACP's, not CCS's: one party, a verifier of the fact, no counterpart.
+
+---
+
+Everything below this line is the **administration lane** (FORKS F47):
+who can write, rotate, recover, and survive — mechanism, never meaning.
+It shares no verdict with the claims lane above; its one contact point is
+that the administrative controller holds the pen for a subject's side of
+the claims. A key compromise forges no history; a hostile claim touches
+no keys.
 
 ## The senior-key custody rule (HARD REQUIREMENT)
 
@@ -164,14 +189,22 @@ client-side and never transits Zurfur or Vulpes**.
 
 ### Transfer and co-ownership
 
-A transfer of Fox from Kit to Sam is a rotation-key change plus a claim
-swap, in this order:
+The *ownership* transfer of Fox from Kit to Sam is the claim swap alone
+(FORKS F47): Sam writes an `ownership` claim (role `owner`, `did` = Fox);
+Fox attests it; Kit deletes theirs — one edge revoked and re-issued, and
+the one-owner rule is momentarily what makes the order matter (Kit
+deletes before Fox attests Sam, or a consumer sees a conflict state).
+The **administrative accompaniment** hands over recoverability, in this
+order:
 
 1. An operation adds Sam's cold key **senior to Kit's**:
    `[sam, kit, vulpes, zurfur]`.
-2. Sam writes an `ownership` claim (role `owner`, `did` = Fox); Fox attests
-   it. Kit deletes theirs.
+2. The claim swap above.
 3. An operation removes Kit's key: `[sam, vulpes, zurfur]`.
+
+A buyer who skips the key steps owns Fox in every verifier's eyes and
+cannot recover Fox from anyone — which is why a buying client runs
+`acp::custody` as due diligence even though no verdict requires it.
 
 Who signs step 1 decides finality. Signed by Zurfur's operational key (the
 normal client flow), Kit — senior to it in the list it replaced — can
@@ -182,30 +215,27 @@ waits out the window, the seller is protected from a reversed payment.
 Self-signed is the explicit "final now" option, and the client must say
 which it did.
 
-What an insecure transfer looks like, and what catches it:
+What an incomplete handover looks like, and what the buyer's due
+diligence (`acp::custody`, no verdict involved) catches:
 
-- **Sam added junior to Kit** — Kit can still fire Sam. Not a transfer; the
-  consumer's seniority check sees Kit above Sam.
-- **Kit's key left in the list** — Kit retains control. The buyer's client
-  reads the final list; the seniority check against *all* non-custodian
-  keys shows two owners where one was promised.
-- **Attestation only, no rotation** — Fox attests Sam's `ownership` claim but the
-  keys never moved. Custodian-grade proof at best; the seniority check fails
-  it outright.
-- **Paid before the window closed** — the only hazard no check catches; it
+- **Sam added junior to Kit** — Kit can still fire Sam administratively.
+  The seniority read shows Kit above Sam.
+- **Kit's key left in the list** — Kit retains recovery power. The read
+  shows two non-custodian keys where one was promised.
+- **Attestation only, no rotation** — Sam owns Fox (claims-only, F47) but
+  cannot recover Fox from anyone; the read shows Sam holding nothing.
+  Fine between friends, malpractice in a sale.
+- **Paid before the window closed** — the only hazard no read catches; it
   is a timing rule for the client, not a protocol fact.
 
-How many owners can a character have: the five slots minus the custodians
-(Vulpes and Zurfur) leave **three** owner positions — three co-owners with
-no backup key, or two plus a backup. Co-owners are ordered: the first is
-the tiebreak, and a senior co-owner can remove a junior one, so equal
-partners should decide who holds index 0 before minting.
-
-Multi-owner characters are the exception, and the intended shape for them
-is **account-owned**: an Account DID at index 0, the sharing expressed as
-that account's membership (the `membership` kind, both roles), not as extra keys on
-the character. Co-owner keys on a character are allowed — they are just not
-the path the client leads with.
+How many owners can a character have: **one edge, any number of humans**
+(FORKS F47). A multi-human character is account-owned — the account DID
+holds the single ownership edge and sits at index 0 of the character's
+rotation list — and the humans are the character's owner roster (rule 4).
+Adding a co-owner edits the roster; the keys and the ownership edge never
+move. Extra owner keys on the character's own list are legal
+administration (the five slots leave room) but express nothing about
+ownership and are not the path the client leads with.
 
 The 72-hour nullification window is did:plc's, enforced by the directory;
 it protects only against a stolen *junior* key, and a longer one would delay
@@ -221,7 +251,8 @@ If vulpes vanished tomorrow:
 - every consensual claim still verifies (the claim and its attestation live
   in the claimant's repo; the rule is a published spec; any implementation
   runs it),
-- seniority is still checkable from the directory's public rotation lists,
+- the administration lane still works from the directory's public
+  rotation lists (seniority readable by anyone),
 - the library keeps working and can be forked; the spec is forkable text.
 
 Damage is confined to users of the *reference instance*: custodied wallet
@@ -236,8 +267,9 @@ way a compiler enforces a language spec, not the way a court enforces a law.
 
 ## Position in the three-layer role
 
-- **Library** — mint the layout, verify the attestation, check seniority on
-  request (`acp::custody`). Never decide what a kind means.
+- **Library** — mint the layout, verify the attestation, read
+  administrative health on request (`acp::custody`; never wired into a
+  verdict). Never decide what a kind means.
 - **Protocol** — this document: the kind catalog + per-kind consumer rules
   over the ACP primitive. Candidate contribution *to* the atproto ecosystem,
   implementable by any AppView.
