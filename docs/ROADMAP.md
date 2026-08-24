@@ -17,13 +17,15 @@ infrastructure down and every issued vouch still verifies.
       hand-rolled over our own deps (FORKS F37). Fixtures pin exact bytes,
       including the *pre-image* fixture, cross-checked against an independent
       encoder (`src/acp/record.rs`).
-- [ ] **Sign & verify** — the crypto heart. Pre-image = record minus `sig`
+- [x] **Sign & verify** — the crypto heart. Pre-image = record minus `sig`
       plus the injected `{$type, repository}`; repository DID is an explicit
       parameter (fetch context, never read from the record); the key signs
       the pre-image's CID (FORKS F36). Built in `src/acp/sign.rs` with the
       negative tests: tamper, wrong key, algorithm confusion, high-S, and the
       mandatory **transplant test** (`expired` belongs to
-      `verify_attestation`). **Ticks after the adversarial review.**
+      `verify_attestation`). Adversarially reviewed 2026-08-21/22 (three
+      security passes + Copilot, PR #10): F36 CID-first binding, algorithm
+      confusion, high-S and the transplant defense all held.
 - [ ] **Talk to a PDS** — record create/get/list/delete over XRPC, strongRef
       fetch-and-check, local PDS in Docker as the test bed. Now concretely:
       jacquard-backed `RepoReader` / `DidResolver` / `StatusSource` (and a
