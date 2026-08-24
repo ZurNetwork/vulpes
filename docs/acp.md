@@ -19,6 +19,38 @@ where a design choice here seems arbitrary, the manifesto is why.
 
 ---
 
+## Design principles (the axioms)
+
+Six axioms govern every mechanism in this specification. The first three are
+facts about a decentralized world that no protocol can change; the last
+three are this protocol's laws in response. They were derived from first
+principles in [The Claim Handshake](the-claim-handshake.md); a design change
+that violates one of them is wrong until proven otherwise.
+
+**Facts:**
+
+1. **Everybody may be lying, for no apparent reason at all.** The protocol
+   authenticates who said what; it never rules on truth.
+2. **Valid claims may be made by entities that no longer exist, or may just
+   be unreachable.** Verification must not require the attestor to be alive
+   or responsive (the kill test).
+3. **Systems decide how to process data under their own rules.** Claim
+   modes and expiry are the attestor's *recommendation*; every verifier
+   applies its own policy. Democratization of processing is how
+   centralization is fought.
+
+**Laws:**
+
+4. **Information that is not explicit may as well not be information at
+   all.** Everything a verification depends on is either in the signed
+   bytes or injected from the verifier's own observed context — never
+   assumed.
+5. **Information for claims must be signed. Always.** Unsigned material has
+   no standing anywhere in the protocol.
+6. **Referenced data is never to be treated as permanent, but rather as
+   temporary. Absence doesn't mean malice.** An unreachable reference
+   degrades freshness; it implies nothing else.
+
 ## How it works
 
 1. A **subject** (any DID) writes a **self-claim** — a record in its own PDS
@@ -620,6 +652,10 @@ private layer exists to prevent.
   future changes).
 - **2026-08-12** — lexicon namespace settled: `net.got-paws.acp.*`
   (authority domain `got-paws.net`). No longer provisional.
+- **2026-08-13** — the six design axioms adopted (§Design principles),
+  transcribed from the independent first-principles derivation
+  ([The Claim Handshake](the-claim-handshake.md)), which converged on the
+  recorded design without consulting it — treated as validation evidence.
 - **2026-08-20** — signing pinned to the CID-First construction: the key signs
   the CIDv1 of the pre-image; `$sig.$type` fixed as
   `net.got-paws.acp.sigBinding`; strongRef `cid` confirmed a text string on

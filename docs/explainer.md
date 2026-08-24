@@ -3,7 +3,10 @@
 *A developer's walkthrough of the Attested Claims Protocol. The values are in
 the [manifesto](manifesto.md); the normative details are in the
 [spec](acp.md). This document is the bridge: one worked story, real records,
-and the differences from the things you already know.*
+and the differences from the things you already know. Prefer to see the
+design forced into existence step by step instead? Read
+[The Claim Handshake](the-claim-handshake.md) — the first-principles
+derivation the spec's six axioms come from.*
 
 ---
 
