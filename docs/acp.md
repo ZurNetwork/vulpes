@@ -119,24 +119,60 @@ strings.
 
 ### Self-claim — `net.got-paws.acp.claim`
 
-A record in the subject's repo. The subject is the repo owner; it is not
-repeated in the record.
+A record in the subject's repo. The subject is the repo owner; `claimant`
+repeats it for export self-containment and the transplant check, and is
+never *read* as the repo DID (§Signing).
 
 ```
 record net.got-paws.acp.claim {
-  kind:      string   // a five-segment NSID naming the claim kind, e.g.
-                      // net.got-paws.acp.identity.email (see Claim kinds)
-  payload:   object   // kind-defined content, e.g. { "address": "a@b.c" }
+  id:        string    // the edge id — see below. REQUIRED
+  nonce:     string    // 16 random bytes, lowercase hex, agreed with the
+                       // counterpart (paired) or chosen alone. REQUIRED
+  claimant:  did       // the repo owner's DID, CHECKED against the repo the
+                       // record was fetched from. REQUIRED
+  kind:      string    // a five-segment NSID naming the claim kind, e.g.
+                       // net.got-paws.acp.identity.email (see Claim kinds)
+  payload:   object    // kind-defined content, e.g. { "address": "a@b.c" }
+                       // or { "role": "owner", "subject": did }
   createdAt: datetime
+  expiresAt: datetime  // REQUIRED — there is no permanent claim; a
+                       // far-future date is semantically permanent
+  status:    object?   // { list: uri, index: integer } — the claimant's own
+                       // revocation lever; see Status lists
+  witnesses: array?    // [{ did, sig: bytes, status?: object }] — third
+                       // parties who signed this record's pre-image;
+                       // default []. See Signing and Relationships
 }
 ```
+
+**The edge id** (FORKS F48) pairs two halves of a relationship, or names
+a lone claim:
+
+```
+id = hex( sha256( min(a, b) ‖ "\n" ‖ max(a, b) ‖ "\n" ‖ expiresAt ‖ "\n" ‖ nonce ) )
+```
+
+`a` is the claimant's DID; `b` is the counterpart DID the payload names
+(`subject`, for the `relationship` category) or `a` itself when the kind
+names none — so every claim has an id and an identity claim is a
+self-edge. `min`/`max` are byte-wise over the full DID strings (order-
+independent, method-agnostic — no decoding of any DID method); `expiresAt`
+is the exact string written in the record; the separator cannot occur in a
+DID or an RFC 3339 datetime; output is 64 lowercase hex characters. Two
+halves of one edge share `expiresAt` and `nonce` and therefore `id`; a
+verifier recomputes it. Renewal is a new `expiresAt`, hence a new id: a new
+term, never an edit. The nonce keeps a re-established edge from inheriting
+a dead edge's id (and a consumer's memory of its revocation).
 
 - The record key should be a TID (timestamp identifier), per ATProto
   convention.
 - A claim is retracted by deleting the record. Deleting a claim does not
   delete attestations that reference it, but it breaks their strongRef
   resolution — verifiers must treat an attestation whose claim is gone as
-  no longer in force.
+  no longer in force. A claim may also be revoked without deletion through
+  its own `status`.
+- A claim **gone from a reachable repo** is severed; a claim whose repo
+  is **unreachable** is *not checkable* — never severed, never in force.
 
 ### Attestation — `net.got-paws.acp.attestation`
 
@@ -191,6 +227,22 @@ With `repository` carrying the transplant defense, the explicit `subject`
 field's rationale is **export self-containment**: an attestation exported
 from its repo (CAR backup, migration) still names who it is about.
 
+**Witness signatures on claims** (FORKS F48) use the same construction.
+The claim's pre-image is the claim record **minus the `witnesses` field
+entirely**, plus the same injected `$sig` binding with `repository` = the
+claimant's repo DID; each witness signs the CIDv1 of that pre-image with a
+key in its own DID document and hands `{did, sig, status?}` to the
+claimant, who writes the record with the entries inside. Because the
+pre-image excludes the whole field, every witness signs identical bytes,
+witnesses sign *before* the write, and one rule serves any number of
+them (the proof-set shape of W3C Data Integrity). A transplanted claim
+fails every witness signature structurally, as an attestation does. A
+witness's `status` is its revocation lever — an embedded signature cannot
+otherwise be withdrawn. Key rotation follows the attestor rule: current
+keys only; a rotated witness key makes its entry fail verification, the
+witness re-signs, the claimant rewrites the record (new CID; the edge
+`id` is unaffected; attestations bound by strongRef are not).
+
 Allowed algorithms follow the atproto cryptography profile (ES256 / ES256K,
 low-S). The signature is stored as raw bytes (base64url when rendered in
 JSON).
@@ -206,25 +258,42 @@ content (CID). If the subject rewrites the claim, existing attestations no
 longer resolve and are no longer in force. Attest the new version or live
 without.
 
-### Relationships are attestations
+### Relationships are consent, in four shapes
 
 A relationship between two DIDs is **not a separate record type**
-(ruled 2026-08-22, FORKS F45). The party asserting it writes an ordinary
-self-claim — a `relationship`-category `kind`
-(`net.got-paws.acp.relationship.ownership`, …), the counterpart's DID and
-this side's `role` in the payload — and the counterpart signs an
-ordinary attestation of it, stored in the claimant's repo like every
-attestation. A verifier checks it exactly as it checks any attestation.
-Third parties may attest the same claim; trust policy decides whose
-signature counts.
+(ruled 2026-08-22, FORKS F45): it is a `relationship`-category self-claim
+(`net.got-paws.acp.relationship.ownership`, …) carrying the counterpart's
+DID as `subject` and this side's `role` — answered, or not, by something
+that proves consent. What answers it is the **shape** (ruled 2026-08-25,
+FORKS F48):
+
+| shape | claims | consent is | pairs by | example |
+|---|---|---|---|---|
+| **one-sided** | one half, no counterpart | none — an assertion (F45: an unattested claim is a claim). Valid; proves nothing; the shape of a Bluesky follow | — | Kit "follows" Fox; Fox signs nothing. Kit claims her email; nobody has vouched yet. |
+| **asymmetric** | one half | the counterpart's attestation, in the claimant's repo | strongRef | Kit's email claim + the attestor's attestation — Kit's story (`explainer.md`). |
+| **symmetric (paired)** | two halves, one in each repo | the other half existing, with an equal `id` | `id` | Kit writes `ownership {role: owner, subject: fox}`; Fox writes `ownership {role: owned, subject: kit}`; both carry the same `id`. Either deletes its half → severed. |
+| **witnessed** | any of the above | + witness signatures embedded in each half (§Signing) | `witnesses[].sig` per half | The sale went through Zurfur: Zurfur signed both halves before they were written. A buyer's policy may require it; no verdict does. |
+
+**Paired is the recommended shape for relationship kinds.** Asymmetric
+stays valid and unchanged. A verifier checks each half as it checks any
+claim, recomputes the id, and requires both halves in force; third parties
+may still attest either half (an org vouching for Kit's side), and trust
+policy decides whose signature counts. The contrast with the ecosystem: a
+follow is one-sided; a label is a third party nobody invited. ACP's
+addition is consent in every row past the first.
+
+A **witness** is a notary — "I saw it happen, or it went through me; here
+is my signature" — and the delegation answer: when a client writes on a
+user's behalf, the witness signature is what a verifier's policy weighs to
+believe the half at all. A witness signature exists for the *subject's*
+benefit (a stronger half), not the witness's; a witness that needs proof
+it signed keeps its own copy, or writes an attestation.
 
 - **One kind, two roles**: both sides use the same kind and differ only
   in the payload's `role`; each side's claim carries only what that side is
-  authoritative for, and the attestor's signature over the claim's CID is
-  agreement to exactly that content. Where the counterpart has something of
-  its own to assert (an account's grant to a member), it writes its own
-  claim of the same kind — its role, its content — attested by the first
-  party.
+  authoritative for. Paired, each half is exactly that side's assertion and
+  nobody asserts on the other's behalf; asymmetric, the attestor's
+  signature over the claim's CID is agreement to exactly that content.
 - **Severance is asymmetric in mechanism, instant on both sides.** The
   claimant deletes the claim and every attestation of it stops resolving
   (§Self-claim). The counterpart cannot delete a record in another repo:
@@ -248,16 +317,14 @@ signature counts.
   never as a verification step. A subject SHOULD have at most **one**
   in-force ownership attestation (a user, or an account when several
   humans share it); consumers treat more than one as a conflict state,
-  never as co-ownership. Multi-human ownership is expressed one level up
-  — the character is owned by an account, and the character claims its
-  **owner roster** (the humans, each attesting their entry; one claim,
-  N attestations), a kind defined alongside `ownership` and
-  `membership`. The roster is character-scoped — not derivable from
-  account membership — and roster-of-one makes "who owns me" answerable
-  from any character's own repo.
-- **Lifetime**: ownership-kind attestations may carry a far-future
-  `expiresAt`; the permanent mode stays deferred and additive (§Possible
-  future changes).
+  never as co-ownership. Multi-human ownership needs no kind of its own
+  (FORKS F48): the character is owned by an account, and the humans
+  behind it are the N `owner`-role halves paired against the character —
+  character-scoped, not derivable from account membership, and "who owns
+  me" is answerable from the character's own repo.
+- **Lifetime**: `expiresAt` is required on every claim and attestation;
+  there is no permanent mode — a far-future date is semantically
+  permanent (FORKS F48). Renewal mints a new edge id.
 
 ### Claim kinds
 
@@ -497,11 +564,37 @@ To verify an attestation, a verifier:
    attacks): past the bound a copy is *not checkable*, never "not
    revoked".
 
-A relationship is verified as the attestation it is — there is no second
-procedure, and no kind adds a verification step (FORKS F47): the
-in-force attestation is the whole relationship verdict. Administrative
-due diligence (rotation-key seniority, `docs/ccs.md`) is a consumer's
-optional extra, run outside any verdict.
+**Verifying a claim** (any shape) is the subset that applies to it: fetch
+from the claimant's repo; check `claimant` **is** the DID of the repo it was
+fetched from (never the reverse); check the stored bytes are canonical;
+check `expiresAt`; recompute `id` from `claimant`, the payload's
+counterpart (or `claimant` itself), `expiresAt` and `nonce` and require
+equality; if `status` is present and policy demands freshness, check it as
+in step 7; for each `witnesses` entry, verify `sig` over the claim
+pre-image (§Signing) against the witness's current keys and report the
+result — a failing witness makes the half *incomplete*, not invalid.
+
+**Verifying a paired relationship** (FORKS F48): verify each half as a
+claim, in its own repo; require the two ids equal and each half's
+`subject` to be the other's `claimant`; require both in force. A half
+gone from a reachable repo is severed; a half in an unreachable repo is
+*not checkable* — never severed, never in force. No attestation is
+required for consent; attestations on either half are reported, and
+trust policy decides what they add.
+
+**The verdict is a report, not a boolean.** A verifier returns at least:
+`in_force`; `paired { verified, halves, ids_match, lifetime_agreed }`
+(`none` for a one-sided claim); per half `{ repo, role, status,
+expires_at, witnesses: [{ did, sig_valid, status }] }`; `attestations:
+[{ attestor, on, in_force }]`; and `custody: null` unless the consumer
+asked for the administration lane (FORKS F47). A consumer that wants a
+boolean reads `in_force`; one that wants to know *how* reads the rest.
+(Precedent: W3C VCALM `VerifyCredentialResult`.)
+
+No kind adds a verification step (FORKS F47); the shape decides which
+checks apply, and the in-force result is the whole relationship verdict.
+Administrative due diligence (rotation-key seniority, `docs/ccs.md`) is a
+consumer's optional extra, run outside any verdict.
 
 ## Conformance
 
@@ -510,6 +603,8 @@ Conformance is per role:
 **Subjects / holders**
 - must store their claims and attestations in a repo they can export (CAR)
   and migrate;
+- must set `expiresAt`, `nonce`, `claimant` and a correctly computed `id`
+  on every claim (FORKS F48);
 - should export or mirror routinely (custody is theirs).
 
 **Attestors**
@@ -524,7 +619,13 @@ Conformance is per role:
 - must verify using only public infrastructure (DID resolution, repo fetch,
   status artifacts) with no callback to the attestor;
 - must reject expired attestations and unresolved claim references;
-- must treat an unattested relationship claim as a mere claim;
+- must reject a claim whose `claimant` is not the repo it was fetched
+  from, or whose `id` does not recompute (FORKS F48);
+- must treat an unattested, unpaired relationship claim as a mere claim;
+- must not require a witness for any verdict, and must report a failing
+  witness signature as an incomplete half, not an invalid one;
+- must distinguish a record gone from a reachable repo (severed) from an
+  unreachable repo (not checkable);
 - must not treat any attestor — including the reference instance — as
   privileged by protocol;
 - must decide trust before fetching a status list, and must not fetch an
@@ -534,10 +635,10 @@ Conformance is per role:
   the number of copies it returns (FORKS F42).
 
 **Consumers** (applications acting on what a kind means)
-- must treat the in-force attestation as the whole relationship verdict,
-  ownership included (FORKS F47) — and must treat more than one in-force
-  ownership attestation on a subject as a conflict state, never as
-  co-ownership;
+- must treat the in-force result — a pair, or an attested half — as the
+  whole relationship verdict, ownership included (FORKS F47, F48) — and
+  must treat more than one in-force ownership edge on a subject as a
+  conflict state, never as co-ownership;
 - should, where stakes demand it (a purchase), read the administration
   lane as due diligence — the seniority check, `docs/ccs.md` — knowing
   it informs recoverability, never ownership;
@@ -653,11 +754,10 @@ private layer exists to prevent.
 - **Further vouch modes** (additive to v0.1's passive mode): *active* —
   freshness established by asking the attestor at use, which is an attestor
   endpoint artifact, never a PDS answer, and stays within trust boundaries
-  (cross-boundary actives are a correlation oracle); *permanent* — immutable
-  facts, living in the subject's repo with status mandatory instead of
-  expiry (the honest carve-out from the pulse doctrine: no switching exists
-  to exercise there). Until it lands, ownership-kind attestations use a
-  far-future `expiresAt` (FORKS F45). Taxonomy details parked on The Claims Model page.
+  (cross-boundary actives are a correlation oracle); the *permanent* mode is
+  **retired** (FORKS F48): `expiresAt` is required everywhere and a
+  far-future date is semantically permanent. Taxonomy details parked on
+  The Claims Model page.
 - **Predicate attestations**: issuer-baked booleans ("+18: true") as a claim
   kind, and possibly blinded-token (Privacy Pass) issuance for yes/no gates.
 - DNS publication of the lexicon schemas (`_lexicon` TXT on
@@ -731,6 +831,16 @@ private layer exists to prevent.
   carry `status` (§Claim kinds, §Status lists, §Privacy and security).
   Status-list residence stated: control is the signature, hosting
   confers no authority.
+
+- **2026-08-25** — **consent has four shapes** (FORKS F48): one-sided,
+  asymmetric (unchanged), symmetric/**paired** (recommended for
+  relationship kinds — two halves, one per repo, paired by a recomputable
+  edge `id`), and witnessed (third-party signatures embedded in the
+  claim, proof-set style). The claim record gains `id`, `nonce`,
+  `claimant`, `expiresAt` (all required), `status` and `witnesses`; the
+  claim pre-image is defined (§Signing); the verdict is a report, not a
+  boolean (§Verification); the permanent mode is retired; the owner
+  roster is N paired `owner` halves, no kind of its own.
 
 ## References
 
