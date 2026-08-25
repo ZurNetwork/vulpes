@@ -64,11 +64,12 @@ infrastructure down and every issued vouch still verifies.
       - [x] delete the relationship path — `Relationship`, `RelKind`,
             `verify_relationship`, the counterpart search, the
             `relationship` lexicon, `TrustPolicy::custodian_keys` (PR #17).
-      - [ ] `acp::custody` — the seniority check and custodian discovery
+      - [x] `acp::custody` — the seniority check and custodian discovery
             as pure **administrative-health** helpers (F47: due diligence,
-            never an ownership gate). Until it lands no seniority check
-            exists in the crate; the previous check and its adversarial
-            tests are recoverable from `7045189^`.
+            never an ownership gate): `CustodianKeys::discover` (F44),
+            `holds_senior_rotation_key`, `inspect` → `CustodyReport`; the
+            F40 adversarial tests recovered, plus the verifier-side
+            invariant test that an ownership verdict never consults it.
       - [x] `ClaimKind::parse` for five-segment NSIDs and the two v0.1
             categories (`identity`, `relationship`; `consent` deferred);
             lexicon `kind` → `format: nsid`.

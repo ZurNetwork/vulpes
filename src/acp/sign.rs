@@ -223,6 +223,16 @@ pub(crate) fn is_multikey_shaped(multikey: &str) -> bool {
         .is_some_and(|body| body.len() >= 4 && body.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
+/// Whether `s` has the shape of a `did:key:z…` string — the form every
+/// entry in a `did:plc` rotation list takes. `acp::custody` compares
+/// rotation entries as strings, so a placeholder that is not key-shaped
+/// (`""`, `did:key:`, `did:key:unknown`, a bare multikey) must never count
+/// as a key, or two resolvers emitting the same sentinel would make every
+/// pair senior to each other.
+pub(crate) fn is_did_key_shaped(s: &str) -> bool {
+    s.strip_prefix("did:key:").is_some_and(is_multikey_shaped)
+}
+
 /// Verify `att`'s signature as a record fetched from `repo`, against the
 /// attestor's current keys.
 ///
