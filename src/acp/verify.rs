@@ -1083,6 +1083,43 @@ mod tests {
 
     // ── THE KILL TEST ───────────────────────────────────────────────────────
 
+    /// FORKS F47 as a test: ownership is claims-only. An ownership
+    /// attestation is in force with **no rotation key anywhere** — the
+    /// verifier never consults `acp::custody`; that is the consumer's
+    /// due diligence, never a gate.
+    #[tokio::test]
+    async fn ownership_verdict_never_consults_custody() {
+        let w = World::new();
+        let claim = Claim::new(
+            ClaimKind::OWNERSHIP,
+            serde_json::json!({ "subject": mallory().as_str(), "role": "owner" }),
+            dt("2026-08-20T09:00:00Z"),
+        )
+        .unwrap();
+        let (claim_uri, claim_cid) = w.repo.put(&kit(), CLAIM_TYPE, "3kx2vp5owner1", &claim);
+        let mut body = UnsignedAttestation::new(
+            StrongRef::new(claim_uri, &claim_cid),
+            attestor(),
+            kit(),
+            dt("2026-08-20T10:00:00Z"),
+            dt("2026-09-19T10:00:00Z"),
+        );
+        body.status = Some(StatusRef {
+            list: STATUS_URL.parse().unwrap(),
+            index: INDEX,
+        });
+        let att = sign(body, Repository(&kit()), &w.attestor_key).unwrap();
+        let (att_uri, _) = w.repo.put(&kit(), ATTESTATION_TYPE, "3kx2vq7owner1", &att);
+        // Every rotation list in the world is empty (`keys_of`): no
+        // seniority read could pass. The verdict does not care.
+        let v = w
+            .verifier()
+            .verify_attestation(&att_uri, &dt(NOW))
+            .await
+            .unwrap();
+        assert!(v.is_in_force());
+    }
+
     /// Tear the attestor down after issuance; every vouch still verifies,
     /// and then ages out on schedule.
     #[tokio::test]
