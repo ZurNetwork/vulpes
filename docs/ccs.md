@@ -19,50 +19,53 @@ with the counterpart as attestor — nothing else is added.
 
 ## The spec (five rules)
 
-1. **A consensual claim exists iff one party claims it and the counterpart
-   attests it.** The claimant writes an ordinary ACP self-claim in its own
-   repo (`kind` from the catalog below, e.g.
-   `net.got-paws.acp.relationship.ownership`, with the counterpart's DID and
-   this side's `role` in the payload); the counterpart signs an ordinary ACP
-   attestation of
-   that claim, which lives in the claimant's repo like every attestation. An
-   unattested claim is a mere claim, not a relationship. Third parties may
-   attest the same claim too — a registry, an app, a witness — and the
-   verifier's trust policy decides whose signature counts.
+1. **A consensual claim exists iff the counterpart has answered it** — in
+   one of two shapes (FORKS F48). **Paired** (recommended): each party
+   writes an ordinary ACP self-claim of the same `kind` in its *own* repo,
+   naming the other as `subject` with its own `role`, and the two halves
+   share an edge `id` computed from the two DIDs, the agreed `expiresAt`
+   and a shared `nonce`; consent is the other half existing. **Asymmetric**
+   (still valid): one party claims, the counterpart signs an ordinary ACP
+   attestation of that claim, stored in the claimant's repo. An unanswered
+   claim is a mere claim, not a relationship. Third parties may attest
+   either half, or sign it as a **witness** (an embedded signature on the
+   half itself — a notary, never required); the verifier's trust policy
+   decides whose signature counts.
 2. **One kind, two roles; authority is partitioned by role.** Both sides
    of a relationship use the *same* kind and say which side they are in the
    payload's `role` — never an `owns`/`ownedBy` pair of kinds. Each side's
    claim carries only what that side is authoritative for, and the
    attestor's signature over the claim's CID is its agreement to exactly
    that content and nothing more. Where the counterpart has something of
-   its own to assert (an account's grant to a member), it writes its own
-   claim of the same kind — its role, its content — attested by the first
-   party: two claims, two attestations, one kind. Nobody asserts on the
+   its own to assert (an account's grant to a member), that is simply its
+   half of the pair — its role, its content. Nobody asserts on the
    other's behalf.
 3. **Severance is unilateral, instant, and never waits on the calendar.**
-   The claimant deletes the claim; every attestation of it stops resolving
-   and the relationship is over, instantly. The counterpart cannot delete
-   a record in another repo: it revokes — one bit on its status list,
-   immediate for any verifier that fetches. Relationship attestations
-   therefore **must carry `status`** (FORKS F47); `expiresAt` bounds the
-   relationship's lifetime and is the backstop, never the exit. No
-   mediator either way.
-4. **Ownership is claims-only, and a subject has one owner** (FORKS F47).
-   The ownership verdict is the claim plus the owned DID's attestation —
-   nothing else. Rotation-key seniority belongs to the administration
+   Paired, each side holds its own lever: delete my half, or set one bit
+   on my status list, and the edge is over for any verifier that fetches.
+   Asymmetric, the claimant deletes and every attestation stops resolving;
+   the counterpart revokes through its status list — which is why
+   relationship attestations **must carry `status`** (FORKS F47).
+   `expiresAt` bounds the relationship's lifetime and is the backstop,
+   never the exit; it is required on every record and there is no
+   permanent mode — a far-future date is semantically permanent (F48).
+   No mediator either way. A half gone from a reachable repo is severed;
+   a half in an unreachable repo is *not checkable* — never severed, never
+   in force.
+4. **Ownership is claims-only, and a subject has one owner** (FORKS F47,
+   F48). The ownership verdict is the pair — the owner's `owner` half and
+   the character's `owned` half, same `id`, both in force — nothing else. Rotation-key seniority belongs to the administration
    lane (below): it answers "who can recover this DID", never "who owns
    it", and whoever administers the owned repo could grant or revoke the
    consent regardless, so a key gate would remove no power. A subject has
    at most **one** in-force ownership edge — a user, or an account where
    several humans share it; consumers treat more than one as a conflict
-   state. The humans behind an account-owned character are the
-   character's **owner roster**: one claim in the character's repo
-   listing owner DIDs, each named human attesting their entry. The roster
-   is character-scoped — two of five collective members may own this
-   character — so it is never derived from account membership, and
-   roster-of-one gives every character the same "who owns me" answer
-   from its own repo. Co-owner churn edits the roster: no keys, no
-   transfer, no 72 h window.
+   state. The humans behind an account-owned character need no roster
+   kind (F48): each is an `owner` half paired against the character —
+   character-scoped, so two of five collective members may own this
+   character and it is never derived from account membership; "who owns
+   me" is answered from the character's own repo. Co-owner churn adds or
+   deletes halves: no keys, no transfer, no 72 h window.
 5. **Trust stays at the edge, and meaning stays out of vulpes.** CCS defines
    which party says what; it never ranks attestors. vulpes verifies the
    attestation and never decides what a kind *means* — the seniority
@@ -72,15 +75,22 @@ with the counterpart as attestor — nothing else is added.
 
 ## The verification rule
 
-A consumer accepts a consensual claim of kind *K* between A and B iff:
+A consumer accepts a consensual claim of kind *K* between A and B iff
+**either**:
 
-- A's repo contains a valid ACP claim of kind *K* naming B in `did`, with
-  A's `role`, AND
-- that claim carries an attestation whose attestor is B, **in force** per
-  `docs/acp.md` §Verification (signature, binding, expiry, status, and the
-  consumer's trust policy).
+- *paired* — A's repo holds a valid claim of kind *K* with `subject` B and
+  A's `role`, B's repo holds one with `subject` A and B's `role`, the two
+  `id`s are equal and recompute, and both are **in force** per
+  `docs/acp.md` §Verification (canonical bytes, `claimant` = repo, expiry,
+  status); **or**
+- *asymmetric* — A's repo holds such a claim AND it carries an attestation
+  whose attestor is B, in force (signature, binding, expiry, status, and
+  the consumer's trust policy).
 
-That is the whole verdict, ownership included (FORKS F47). Both checks
+Witness signatures on either half are reported, never required. That is
+the whole verdict, ownership included (FORKS F47, F48); the verifier
+returns a report — which shape held, each half's state, the attestations
+and witnesses seen — not a bare boolean. Both checks
 run against public repos; no service — vulpes included — is in the loop.
 A consumer may additionally consult the administration lane —
 `acp::custody`'s seniority check against the PLC directory — as due
@@ -102,11 +112,10 @@ and what the payload must carry. Per the NQ3 discipline (kinds enumerated,
 instances unbounded). **One kind per relationship**: both sides use it and
 differ only in `role`. The seeds:
 
-| kind | roles | who claims | who attests | consumer rule |
+| kind | roles | who claims | who attests (asymmetric) | consumer rule |
 |---|---|---|---|---|
-| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | the owner (role `owner`, `did` = the owned DID) | the owned DID | at most **one** in force per subject (F47); more is a conflict state. The `owned`-role claim is optional: the attestation is the owned DID's consent. |
-| `net.got-paws.acp.relationship.membership` | `member` / `account` | the member (role `member`, `did` = the account); the account (role `account`, `did` = the member, `grant` = what it granted) | the account; the member | a consumer reads the grant only from the account's claim. |
-| *the owner roster* (name with the kind definitions) | — | the character, listing its owner DIDs | each listed human, their own entry | character-scoped; never derived from account membership (F47). |
+| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | **paired** (F48): the owner writes `{role: owner, subject: <character>}`; the character writes `{role: owned, subject: <owner>}` | — (the pair is the consent; asymmetric still accepted) | at most **one** in force per character (F47); more is a conflict state. N humans behind an account-owned character = N `owner` halves; transfer = sever + new term (new `id`). |
+| `net.got-paws.acp.relationship.membership` | `member` / `account` | paired: the member `{role: member, subject: <account>}`; the account `{role: account, subject: <member>, grant: …}` | — | a consumer reads the grant only from the account's half. |
 | `app.zurfur.acp.identity.character` | — | the character DID | Zurfur | Zurfur's kind, not ACP's: "this DID is a character". |
 
 The identity kinds (`net.got-paws.acp.identity.email`, `….externalAccount`)
@@ -231,8 +240,8 @@ diligence (`acp::custody`, no verdict involved) catches:
 How many owners can a character have: **one edge, any number of humans**
 (FORKS F47). A multi-human character is account-owned — the account DID
 holds the single ownership edge and sits at index 0 of the character's
-rotation list — and the humans are the character's owner roster (rule 4).
-Adding a co-owner edits the roster; the keys and the ownership edge never
+rotation list — and the humans are its N paired `owner` halves (rule 4, F48).
+Adding a co-owner adds a half; the keys and the ownership edge never
 move. Extra owner keys on the character's own list are legal
 administration (the five slots leave room) but express nothing about
 ownership and are not the path the client leads with.
