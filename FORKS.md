@@ -9,7 +9,7 @@ actively wrong for a public library, in which case the reasoning is spelled out.
 Nothing here changes protocol behaviour. The one place where a behavioural fork
 appeared is **F8**, which the Engineer has ruled **strict** (see "Ruled by the
 Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13,
-F32, F36–F46 — is now ruled; no decision is left open.
+F32, F36–F47 — is now ruled; no decision is left open.
 
 Source: `zurfur/backend/crates/{adapter-atproto,adapter-pg,domain,api}`.
 Spec facts cited below were verified against
@@ -35,6 +35,83 @@ instead. Called out here rather than assumed.
 ---
 
 ## Ruled by the Engineer
+
+### F47. Administration and claims are two lanes — ownership is claims-only
+
+**Where:** `docs/acp.md` §Relationships are attestations, §Claim kinds,
+§Status lists, §Privacy and security; `docs/ccs.md` (verification rule,
+kinds, transfer); the pending kind definitions and `acp::custody`.
+
+F45 moved the rotation-key check out of the verifier but kept it in the
+ownership *verdict* — the consumer's third fact. Working the character
+model surfaced what that third fact actually was: an administrative
+answer bolted onto a semantic question. **Ruled (Engineer, 2026-08-23):
+the two lanes separate completely.**
+
+- **The claims lane answers meaning** — who owns, who belongs, who
+  consented. Records, attestations, rosters, status bits; severed by
+  delete or revoke; verified by anyone with public infrastructure.
+- **The administration lane answers mechanism** — who can write the repo,
+  rotate keys, recover the DID, survive a host's death. Layout D (F46),
+  CAR exports, the 72 h window, the watcher; "severed" by key rotation.
+- They touch at exactly one point: the administrative controller holds
+  the *pen* for a subject's side of the claims lane. One direction of
+  influence, zero shared verdicts. A key compromise forges no history;
+  a hostile claim touches no keys.
+
+Consequences, each ruled in the same conversation:
+
+- **Ownership is claims-only.** The verdict is the owner's claim + the
+  counterpart's attestation — two facts, not three. The forgery defense
+  the key check provided was illusory: whoever administers the character's
+  repo can grant, revoke, or delete the consent anyway, so gating on keys
+  misattributed a power it never removed. Dropping it also removes F40's
+  completeness footgun (the silently-fail-open custodian set, F44's
+  reason to exist) from the ownership path. `acp::custody` survives as an
+  **optional administrative-health helper** — "can this owner win a key
+  war" — for consumers that want it (a buyer's due diligence), never as
+  an ownership gate.
+- **Cardinality one.** A character has exactly one in-force ownership
+  edge — a user, or an account when several humans share it. More than
+  one is a conflict state. The protocol cannot forbid it (axiom 3); the
+  kind definition records it as consumer guidance.
+- **The owner roster.** A multi-owned character is account-owned, and the
+  character claims who its owners are — one claim in the character's
+  repo listing owner DIDs, each named human attesting their entry
+  (one claim, N attestations — already the F45 shape). Character-scoped
+  and *not* derivable from account membership: two of five collective
+  members may own this character. Co-owner churn edits the roster —
+  no keys, no transfer, no 72 h window. Roster-of-one makes discovery
+  uniform: every character answers "who owns me" from its own repo.
+- **Direction, pinned by the Rules of Claims** (below): the ownership
+  edge is owner-claims / character-attests (the deed sits with the
+  holder; deletion = renunciation, always instant); the roster is
+  character-claims / humans-attest (N counterparts cannot share one
+  claim in N repos). Symmetric relations carry identical `role`s, so
+  direction carries no semantics — the proposer claims.
+- **The Rules of Claims** — who claims what, for every kind present and
+  future: (1) about yourself → you claim; (2) about a right over
+  something → the holder claims, the thing's side attests; (3) about a
+  circle → the circle's node claims, each named party attests; (4) the
+  generator behind all three: *whose assertion is it — they claim*; no
+  structurally required consent → it's a label, not a claim; (5)
+  severance never waits on the calendar — the claimant deletes, the
+  counterpart revokes; expiry bounds lifetime and is never the severance
+  mechanism. Enforcement of (5): the **relationship category mandates
+  `status`** on its attestations (categories fix mandatory fields, F45),
+  so both sides always hold an instant lever. The cost is stated: a
+  relationship attestor must republish within the freshness horizon
+  (F43's 30 days, tighter `ttl` wins) or go stale — for continued
+  consent, correct.
+- **Status-list residence, reaffirmed while stress-testing this**
+  (research: W3C Bitstring Status List REC 2025, IETF TSL/EUDI, the
+  OCSP retirement): control is the attestor's signature, never the
+  host's. Defaults: org attestors on their own domain, humans on their
+  PDS, the reference instance as publisher-of-convenience and mirror.
+  Two earmarks: the `list` identifier the reference tooling mints is
+  decided with "The first attestor"; the TSL JWT/CWT envelope and its
+  library (impierce's crate) stay deferred to the private lane — the
+  public lane keeps the hand-rolled native artifact (F37 pattern).
 
 ### F46. Rotation-key layout D is the minted default, and the user's key is client-generated
 

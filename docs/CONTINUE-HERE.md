@@ -1,4 +1,31 @@
-# Vulpes — continue here (updated 2026-08-23, post-F43/F45 sync)
+# Vulpes — continue here (updated 2026-08-24, F47 recorded)
+
+## 2026-08-23/24: F47 — administration and claims are two lanes
+
+Ruled in conversation and recorded (FORKS F47; `docs/acp.md` §Relationships
+are attestations + changelog 2026-08-23; `docs/ccs.md` reshaped):
+
+- **Ownership is claims-only** — claim + counterpart attestation, two
+  facts; rotation-key seniority is the administration lane, and
+  `acp::custody` becomes an optional due-diligence helper, never a gate.
+- **One ownership edge per subject**; multi-human characters are
+  account-owned with a character-claimed **owner roster** (each human
+  attests their entry; roster ≠ account membership).
+- **Rules of Claims** adopted (acp.md changelog has the list); direction
+  pinned: owner claims / character attests; roster: character claims /
+  humans attest.
+- **Severance never waits on the calendar** — relationship-category
+  attestations must carry `status`; expiry is lifetime, not exit.
+- Status-list residence stated (control = signature, hosting = nothing);
+  the `list`-identifier sub-fork deferred to "The first attestor"; TSL
+  library earmarked for the private lane, own wheel on the public lane.
+
+The bitmap/status-list design was stress-tested against prior art (W3C
+Bitstring REC, IETF TSL/EUDI, OCSP retirement) and held unchanged.
+Next code work: `acp::custody` (now administrative-health), then the
+kind definitions (ownership, membership, owner roster).
+
+---
 
 ## 2026-08-22: the ACP core is on `main` (PR #10, `dc8be4c`)
 

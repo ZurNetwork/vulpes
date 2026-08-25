@@ -52,26 +52,33 @@ infrastructure down and every issued vouch still verifies.
       checks revocation — and bounds that status age at 30 days
       (F43, ruled 2026-08-22), which retires the soft/hard freshness dial.
 - [ ] **The first attestor** — email challenge → sign → deliver; Kit's story
-      from the explainer running against the local PDS.
+      from the explainer running against the local PDS. Decides the
+      deferred sub-fork (F47): the `list` identifier the reference
+      tooling mints (baked into every signed attestation, so it must
+      outlive hosts).
 - [ ] **Expiry & renewal** — per-kind lifetimes, the auto-renew loop
       (re-runs diligence), human vouches never auto-renew, the
       strand-on-attestor-death test.
-- [ ] **CCS as attestations** (FORKS F45, ruled 2026-08-22), in order:
+- [ ] **CCS as attestations** (FORKS F45, ruled 2026-08-22; lanes
+      separated by F47, 2026-08-23), in order:
       - [x] delete the relationship path — `Relationship`, `RelKind`,
             `verify_relationship`, the counterpart search, the
             `relationship` lexicon, `TrustPolicy::custodian_keys` (PR #17).
-      - [ ] `acp::custody` — the seniority check and custodian discovery as
-            pure helpers a consumer calls after an ownership-class
-            attestation verifies. Until it lands no seniority check exists
-            in the crate; the previous check and its adversarial tests are
-            recoverable from `7045189^`.
+      - [ ] `acp::custody` — the seniority check and custodian discovery
+            as pure **administrative-health** helpers (F47: due diligence,
+            never an ownership gate). Until it lands no seniority check
+            exists in the crate; the previous check and its adversarial
+            tests are recoverable from `7045189^`.
       - [x] `ClaimKind::parse` for five-segment NSIDs and the two v0.1
             categories (`identity`, `relationship`; `consent` deferred);
             lexicon `kind` → `format: nsid`.
-      - [ ] define `relationship.ownership` and `relationship.membership`
-            (roles, who claims, who attests).
-      - [ ] the consumer pattern — verify, then check seniority — in the
-            explainer.
+      - [ ] define `relationship.ownership`, `relationship.membership`,
+            and the owner-roster kind (roles, who claims, who attests —
+            per the Rules of Claims, F47; ownership carries the one-edge
+            cardinality rule; the relationship category mandates `status`
+            on attestations).
+      - [ ] the consumer pattern — verify the attestation, done;
+            `acp::custody` as buyer's due diligence — in the explainer.
       The "unanswered half" fork is dissolved: an unattested claim is a claim.
 - [ ] **Mint layout D** (FORKS F46) — `MintPolicy` mints
       `[user_cold, vulpes_recovery, zurfur_operational]` by default, offers
@@ -84,8 +91,9 @@ infrastructure down and every issued vouch still verifies.
 - [ ] Spec sentence: `attestor == subject` is valid, adds recency +
       exportability, adds no trust (ruled in conversation 2026-08-12). Now
       load-bearing: it is also the answer to self-ownership (F45).
-- [ ] Confluence Ruling Record (49184769): record F45 (CCS is attestations)
-      and F46 (rotation layout D) — they supersede the 2026-08-11
+- [ ] Confluence Ruling Record (49184769): record F45 (CCS is attestations),
+      F46 (rotation layout D), and F47 (two lanes; claims-only ownership;
+      Rules of Claims) — they supersede the 2026-08-11
       `owns ↔ ownedBy + keys` shape.
 
 ## Later (in rough order)
@@ -95,8 +103,9 @@ infrastructure down and every issued vouch still verifies.
   Index-side, independent of the ACP lane.
 - **Zurfur consumes the ACP** — first external consumer; the crate-swap
   ticket (ZMVP, FORKS F9) and characters-on-ATProto (ZMVP-197). Includes
-  the ownership pattern: verify the `owns` attestation, then the seniority
-  helper against a complete custodian set.
+  the ownership pattern (F47): verify the ownership attestation — the
+  whole verdict — with `acp::custody` as due diligence where stakes
+  demand it.
 - **PLC-log watcher** (Zurfur-side) — alert a user to any operation on
   their DID they did not initiate, inside the 72 h window. The window is
   did:plc's; detection is the lever (F46).

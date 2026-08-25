@@ -225,21 +225,36 @@ signature counts.
   its own to assert (an account's grant to a member), it writes its own
   claim of the same kind — its role, its content — attested by the first
   party.
-- **Severance is asymmetric.** The claimant deletes the claim and every
-  attestation of it stops resolving (§Self-claim). The counterpart cannot
-  delete a record in another repo: it revokes (§Status lists) or declines
-  to renew. A human counterpart without infrastructure uses a short
-  `expiresAt` and silence.
-- **Ownership-class kinds** (`net.got-paws.acp.relationship.ownership`)
-  require a third fact the protocol does not check:
-  the owner holds a rotation key on the owned DID senior to every
-  custodian's. The attestation proves consent (the owned DID's signing
-  key agreed — whoever operates that DID holds that key); seniority proves
-  control (no custodian can take the DID). That check is the **consumer's**,
-  run after the attestation verifies, against a custodian set the consumer
-  keeps complete; vulpes provides it as a helper, never as a verification
-  step. The rule, the rotation-key layout it relies on, and the custodian
-  discovery route are in `docs/ccs.md`.
+- **Severance is asymmetric in mechanism, instant on both sides.** The
+  claimant deletes the claim and every attestation of it stops resolving
+  (§Self-claim). The counterpart cannot delete a record in another repo:
+  it revokes — a status-list republish with one bit set, immediate for
+  any verifier that fetches. Severance never waits on the calendar
+  (FORKS F47): `expiresAt` bounds a relationship's *lifetime* and is not
+  its severance mechanism, which is why relationship-category
+  attestations must carry `status` (§Claim kinds). The cost is stated:
+  a relationship attestor must republish within the freshness horizon
+  (§Status lists) or its attestations go stale — for continued consent,
+  correct.
+- **Ownership is claims-only** (ruled 2026-08-23, FORKS F47). The
+  verdict is the owner's claim plus the owned DID's attestation — two
+  facts, both verified as any attestation. Rotation-key seniority is the
+  **administration lane** (who can recover the DID — `docs/ccs.md`), not
+  part of the ownership verdict: whoever administers the owned repo can
+  grant, revoke, or delete the consent anyway, so a key gate removes no
+  power, and administration and claims share no verdicts. vulpes provides
+  the seniority check as an optional administrative-health helper
+  (`acp::custody`) for consumers that want it — a buyer's due diligence —
+  never as a verification step. A subject SHOULD have at most **one**
+  in-force ownership attestation (a user, or an account when several
+  humans share it); consumers treat more than one as a conflict state,
+  never as co-ownership. Multi-human ownership is expressed one level up
+  — the character is owned by an account, and the character claims its
+  **owner roster** (the humans, each attesting their entry; one claim,
+  N attestations), a kind defined alongside `ownership` and
+  `membership`. The roster is character-scoped — not derivable from
+  account membership — and roster-of-one makes "who owns me" answerable
+  from any character's own repo.
 - **Lifetime**: ownership-kind attestations may carry a far-future
   `expiresAt`; the permanent mode stays deferred and additive (§Possible
   future changes).
@@ -265,7 +280,7 @@ The categories, with the invariant each carries:
 | category | payload must carry | claimed by | attested by |
 |---|---|---|---|
 | `identity` | the fact | the subject | a verifier of the fact — anyone; trust policy decides who counts |
-| `relationship` | `did` — the counterpart; `role` — this side's role | either party | **the DID named in `did`** (the CCS rule, `docs/ccs.md`) |
+| `relationship` | `did` — the counterpart; `role` — this side's role | either party | **the DID named in `did`** (the CCS rule, `docs/ccs.md`). Attestations of this category **must carry `status`** — severance never waits on the calendar (FORKS F47) |
 
 A third category, `consent` — a DID agreeing to a specific *record* (`ref`,
 a strongRef) attested by that record's author — is **deferred** (§Possible
@@ -281,8 +296,8 @@ beyond `did` and `role` is for the kind's definition to state.
 **Resolution.** A kind resolves like any lexicon: `_lexicon.<category>.acp.<domain>`
 TXT → the authority's DID → the `com.atproto.lexicon.schema` record keyed by
 the NSID in that repo. That record *is* the kind's definition — payload
-schema, the roles, whether the kind is ownership-class (carries the
-consumer's seniority check), its default lifetime. A verifier validates the
+schema, the roles, its cardinality guidance (ownership's one-edge rule,
+FORKS F47), its default lifetime. A verifier validates the
 five-segment shape and treats the kind as opaque; a consumer acts on the
 kinds it defines or trusts. Records of an unrecognised kind are ignored,
 never rejected (forward compatibility). **Use the generic kind where one
@@ -297,7 +312,7 @@ Seeds:
 |---|---|---|---|
 | `net.got-paws.acp.identity.email` | — | the subject | whoever verified the address |
 | `net.got-paws.acp.identity.externalAccount` | — | the subject | whoever verified the account |
-| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | the owner, naming the owned DID | the owned DID — ownership-class |
+| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | the owner, naming the owned DID | the owned DID. At most one in-force per subject (F47) |
 | `net.got-paws.acp.relationship.membership` | `member` / `account` | the member, naming the account; the account, naming the member, with its `grant` | the account; the member |
 | `app.zurfur.acp.identity.character` | — | the character | Zurfur's kind, not this spec's |
 
@@ -316,7 +331,11 @@ verbatim. Shape, not meaning.
 - The artifact is signed with a key from the attestor's DID document and
   carries its own issuance timestamp.
 - Anyone may mirror status artifacts. Verifiers may accept a mirrored copy;
-  the newest verifiable copy wins.
+  the newest verifiable copy wins. Control is the attestor's signature,
+  never the host's: hosting confers no authority. Typical residence
+  (FORKS F47): an organization on its own domain, a person on their PDS,
+  the reference instance as publisher-of-convenience and mirror — any of
+  which may die without breaking verification.
 - An attestation without a `status` pointer is irrevocable until expiry —
   attestors should size `expiresAt` accordingly.
 
@@ -479,8 +498,10 @@ To verify an attestation, a verifier:
    revoked".
 
 A relationship is verified as the attestation it is — there is no second
-procedure. Kinds that carry a consumer-side check (ownership: rotation-key
-seniority, `docs/ccs.md`) run it *after* the attestation is in force.
+procedure, and no kind adds a verification step (FORKS F47): the
+in-force attestation is the whole relationship verdict. Administrative
+due diligence (rotation-key seniority, `docs/ccs.md`) is a consumer's
+optional extra, run outside any verdict.
 
 ## Conformance
 
@@ -513,10 +534,13 @@ Conformance is per role:
   the number of copies it returns (FORKS F42).
 
 **Consumers** (applications acting on what a kind means)
-- must, before acting on an ownership kind, check that the owner holds a
-  rotation key on the owned DID senior to every custodian's, against a
-  custodian set kept complete for every host in play (`docs/ccs.md`); an
-  attestation alone proves consent, never control;
+- must treat the in-force attestation as the whole relationship verdict,
+  ownership included (FORKS F47) — and must treat more than one in-force
+  ownership attestation on a subject as a conflict state, never as
+  co-ownership;
+- should, where stakes demand it (a purchase), read the administration
+  lane as due diligence — the seniority check, `docs/ccs.md` — knowing
+  it informs recoverability, never ownership;
 - must not mint a rotation layout that places a recovery custodian below the
   operating custodian, or any custodian above the user (FORKS F46).
 
@@ -601,11 +625,13 @@ private layer exists to prevent.
   prospective severance, not retroactive erasure; the CCS finality rules
   (e.g. transfer windows) are designed around this.
 - **Coercion asymmetry in relationships.** Unilateral severance is the
-  safety valve, and it is asymmetric: the claimant deletes; the counterpart
-  revokes or declines to renew — so a counterpart who cannot run a status
-  list must attest with an expiry short enough that silence is a real
-  exit. No party can be held in a relationship they no longer assert.
-  Ownership transfer adds the PLC recovery window as a scam-defense delay.
+  safety valve, and both sides hold an instant lever (FORKS F47): the
+  claimant deletes; the counterpart revokes — and because
+  relationship-category attestations must carry `status`, revocation is
+  always available, with expiry as the backstop rather than the exit. No
+  party can be held in a relationship they no longer assert. Ownership
+  transfer adds the PLC recovery window as a scam-defense delay on the
+  administrative side only.
 
 ## Possible future changes
 
@@ -691,6 +717,20 @@ private layer exists to prevent.
   NSIDs, `<tld>.<domain>.acp.<category>.<name>`, under a closed category
   list; one kind per relationship, both sides differing by `role` in the
   payload (§Claim kinds).
+- **2026-08-23** — **administration and claims are two lanes** (FORKS
+  F47). Ownership verdicts are claims-only — the claim plus the owned
+  DID's attestation; rotation-key seniority moves wholly to the
+  administration lane, with `acp::custody` an optional
+  administrative-health helper. At most one in-force ownership
+  attestation per subject; multi-human ownership is account-owned with a
+  character-claimed owner roster (each human attests their entry). The
+  Rules of Claims adopted (who claims what: yourself → you; a right →
+  its holder; a circle → its node; generically, whose assertion it is;
+  no structurally required consent → a label, not a claim). Severance
+  never waits on the calendar: relationship-category attestations must
+  carry `status` (§Claim kinds, §Status lists, §Privacy and security).
+  Status-list residence stated: control is the signature, hosting
+  confers no authority.
 
 ## References
 
