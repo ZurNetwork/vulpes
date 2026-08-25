@@ -115,8 +115,8 @@ pub struct KeyMaterial {
     /// The `did:plc` rotation keys as `did:key` strings, in **directory
     /// order — most senior first**, exactly as the directory lists them.
     /// Empty for methods without rotation keys (`did:web`). Verification
-    /// never reads them: they exist for the `acp::custody` helpers (the
-    /// next PR, FORKS F45), which a consumer calls *after* an
+    /// never reads them: they exist for the [`acp::custody`](super::custody) helpers
+    /// (FORKS F45, F47), which a consumer calls *after* an
     /// ownership-class attestation verifies.
     ///
     /// The rule those helpers check is `docs/ccs.md`'s senior-key rule

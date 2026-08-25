@@ -38,6 +38,7 @@
 //! [`sign::Repository`] for the type that carries that DID, and
 //! `docs/acp.md` §Signing for the normative text.
 
+pub mod custody;
 pub mod error;
 pub mod kind;
 pub mod policy;
@@ -50,6 +51,7 @@ pub mod verify;
 #[cfg(test)]
 pub(crate) mod memory;
 
+pub use custody::{CustodianKeys, CustodyReport, holds_senior_rotation_key, inspect};
 pub use error::{CodecError, SigError, SignError, SignerError, VerifyError};
 pub use kind::{
     Authority, Category, ClaimAuthority, ClaimKind, ClaimLabel, ClaimName, NSID_MAX_LEN, Name,
