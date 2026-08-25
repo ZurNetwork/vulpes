@@ -51,7 +51,7 @@ pub mod verify;
 #[cfg(test)]
 pub(crate) mod memory;
 
-pub use custody::{CustodianKeys, CustodyReport, holds_senior_rotation_key, inspect};
+pub use custody::{CustodianKeys, CustodyReport, holds_senior_rotation_key};
 pub use error::{CodecError, SigError, SignError, SignerError, VerifyError};
 pub use kind::{
     Authority, Category, ClaimAuthority, ClaimKind, ClaimLabel, ClaimName, NSID_MAX_LEN, Name,

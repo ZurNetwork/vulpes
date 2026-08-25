@@ -44,11 +44,60 @@ impl CustodianKeys {
         Self::default()
     }
 
-    /// Name custodian keys by hand. Entries are verbatim `did:key:z…`
-    /// strings as the PLC directory lists them; anything else matches no
-    /// rotation entry and silently protects nothing, so debug builds assert
-    /// the shape.
-    pub fn from_keys(keys: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    /// Discover a host's custodian keys from the directory (FORKS F44): the
+    /// rotation keys **common to every sample** are the operator's. Name two
+    /// or more unrelated accounts on the host; one sample takes everything on
+    /// it (the documented caveat). An unresolvable sample is `Err`, never a
+    /// quietly empty set; no samples is the empty set. Entries not shaped like
+    /// a `did:key:z…` string are dropped before intersecting.
+    pub async fn discover(
+        resolver: &dyn DidResolver,
+        samples: impl IntoIterator<Item = &Did>,
+    ) -> Result<Self, ResolveError> {
+        // A sample's rotation keys, shaped ones only: a placeholder two
+        // resolvers happen to share must never be "discovered" as a key.
+        async fn rotation_of(
+            resolver: &dyn DidResolver,
+            did: &Did,
+        ) -> Result<BTreeSet<String>, ResolveError> {
+            let Some(keys) = resolver.keys(did).await? else {
+                return Err(ResolveError::new(format!(
+                    "custodian sample {did} does not resolve"
+                )));
+            };
+            Ok(keys
+                .rotation
+                .into_iter()
+                .filter(|k| is_did_key_shaped(k))
+                .collect())
+        }
+        let mut samples = samples.into_iter();
+        let Some(first) = samples.next() else {
+            return Ok(Self::empty());
+        };
+        let mut common = rotation_of(resolver, first).await?;
+        for did in samples {
+            common = &common & &rotation_of(resolver, did).await?;
+        }
+        Ok(Self(common))
+    }
+
+    /// Whether `key` (verbatim) is a custodian's.
+    pub fn contains(&self, key: &str) -> bool {
+        self.0.contains(key)
+    }
+
+    /// The named keys, sorted.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(String::as_str)
+    }
+}
+
+/// Name custodian keys by hand. Entries are verbatim `did:key:z…` strings
+/// as the PLC directory lists them; anything else matches no rotation entry
+/// and silently protects nothing, so debug builds assert the shape.
+impl<S: Into<String>> FromIterator<S> for CustodianKeys {
+    fn from_iter<I: IntoIterator<Item = S>>(keys: I) -> Self {
         let mut set = BTreeSet::new();
         for key in keys {
             let key = key.into();
@@ -60,39 +109,13 @@ impl CustodianKeys {
         }
         Self(set)
     }
+}
 
-    /// Discover a host's custodian keys from the directory (FORKS F44): the
-    /// rotation keys **common to every sample** are the operator's. Name two
-    /// or more unrelated accounts on the host; one sample takes everything on
-    /// it (the documented caveat). An unresolvable sample is `Err`, never a
-    /// quietly empty set; no samples is the empty set.
-    pub async fn discover(
-        resolver: &dyn DidResolver,
-        samples: impl IntoIterator<Item = &Did>,
-    ) -> Result<Self, ResolveError> {
-        let mut common: Option<BTreeSet<String>> = None;
-        for did in samples {
-            let Some(keys) = resolver.keys(did).await? else {
-                return Err(ResolveError::new(format!(
-                    "custodian sample {did} does not resolve"
-                )));
-            };
-            let these: BTreeSet<String> = keys.rotation.into_iter().collect();
-            common = Some(match common {
-                None => these,
-                Some(prior) => prior.intersection(&these).cloned().collect(),
-            });
-        }
-        Ok(Self(common.unwrap_or_default()))
-    }
-
-    /// Whether `key` (verbatim) is a custodian's.
-    pub fn contains(&self, key: &str) -> bool {
-        self.0.contains(key)
-    }
-
-    /// The named keys, sorted.
-    pub fn iter(&self) -> impl Iterator<Item = &str> {
+impl<'a> IntoIterator for &'a CustodianKeys {
+    type Item = &'a str;
+    type IntoIter =
+        std::iter::Map<std::collections::btree_set::Iter<'a, String>, fn(&String) -> &str>;
+    fn into_iter(self) -> Self::IntoIter {
         self.0.iter().map(String::as_str)
     }
 }
@@ -127,7 +150,7 @@ pub fn holds_senior_rotation_key(
     owned: &KeyMaterial,
     custodians: &CustodianKeys,
 ) -> bool {
-    inspect(owner, owned, custodians).owner_senior
+    CustodyReport::inspect(owner, owned, custodians).owner_senior
 }
 
 /// What a due-diligence read sees — enough to name each incomplete-handover
@@ -147,37 +170,35 @@ pub struct CustodyReport {
     pub custodian_floor: Option<usize>,
 }
 
-/// The full read behind [`holds_senior_rotation_key`], for consumers that
-/// present findings rather than a bool.
-pub fn inspect(
-    owner: &KeyMaterial,
-    owned: &KeyMaterial,
-    custodians: &CustodianKeys,
-) -> CustodyReport {
-    // The most senior custodian position in the owned list, if any.
-    let custodian_floor = owned.rotation.iter().position(|k| custodians.contains(k));
-    let mut owner_positions: Vec<usize> = owner
-        .rotation
-        .iter()
-        .filter(|k| is_did_key_shaped(k) && !custodians.contains(k))
-        .filter_map(|k| owned.rotation.iter().position(|o| o == k))
-        .collect();
-    owner_positions.sort_unstable();
-    owner_positions.dedup();
-    let owner_senior = owner_positions
-        .iter()
-        .any(|&idx| custodian_floor.is_none_or(|floor| idx < floor));
-    let non_custodian_keys = owned
-        .rotation
-        .iter()
-        .filter(|k| is_did_key_shaped(k) && !custodians.contains(k))
-        .cloned()
-        .collect();
-    CustodyReport {
-        owner_senior,
-        owner_positions,
-        non_custodian_keys,
-        custodian_floor,
+impl CustodyReport {
+    /// The full read behind [`holds_senior_rotation_key`], for consumers
+    /// that present findings rather than a bool.
+    pub fn inspect(owner: &KeyMaterial, owned: &KeyMaterial, custodians: &CustodianKeys) -> Self {
+        // A *personal* entry: key-shaped and not a custodian's.
+        let personal = |k: &&String| is_did_key_shaped(k) && !custodians.contains(k);
+        // The most senior custodian position in the owned list, if any.
+        let custodian_floor = owned
+            .rotation
+            .iter()
+            .position(|k| is_did_key_shaped(k) && custodians.contains(k));
+        let mut owner_positions: Vec<usize> = owner
+            .rotation
+            .iter()
+            .filter(personal)
+            .filter_map(|k| owned.rotation.iter().position(|o| o == k))
+            .collect();
+        owner_positions.sort_unstable();
+        owner_positions.dedup();
+        let owner_senior = owner_positions
+            .iter()
+            .any(|&idx| custodian_floor.is_none_or(|floor| idx < floor));
+        let non_custodian_keys = owned.rotation.iter().filter(personal).cloned().collect();
+        Self {
+            owner_senior,
+            owner_positions,
+            non_custodian_keys,
+            custodian_floor,
+        }
     }
 }
 
@@ -202,7 +223,7 @@ mod tests {
         }
     }
     fn custodians(keys: &[&Secp256k1Keypair]) -> CustodianKeys {
-        CustodianKeys::from_keys(keys.iter().map(|k| k.did()))
+        keys.iter().map(|k| k.did()).collect()
     }
     fn did(s: &str) -> Did {
         Did::new(s)
@@ -370,6 +391,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discover_drops_malformed_entries() {
+        // Two resolvers emitting the same placeholder must not "discover" it.
+        let host = key(51);
+        let r = MemoryResolver::new();
+        let placeholder = KeyMaterial {
+            verification: vec![],
+            rotation: vec!["did:key:unknown".into(), host.did()],
+        };
+        r.publish(
+            &did("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"),
+            placeholder.clone(),
+        );
+        r.publish(&did("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb"), placeholder);
+        let c = CustodianKeys::discover(
+            &r,
+            [
+                &did("did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"),
+                &did("did:plc:bbbbbbbbbbbbbbbbbbbbbbbb"),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(c, custodians(&[&host]));
+    }
+
+    #[tokio::test]
     async fn discover_no_samples_is_empty() {
         let r = MemoryResolver::new();
         let c = CustodianKeys::discover(&r, []).await.unwrap();
@@ -384,7 +431,7 @@ mod tests {
         let (kit, sam, vulpes, zurfur) = (key(50), key(55), key(52), key(51));
         let c = custodians(&[&vulpes, &zurfur]);
         let fox = rotation(&[&kit, &sam, &vulpes, &zurfur]);
-        let r = inspect(&rotation(&[&sam]), &fox, &c);
+        let r = CustodyReport::inspect(&rotation(&[&sam]), &fox, &c);
         assert!(r.owner_senior); // above the custodians…
         assert_eq!(r.owner_positions, vec![1]); // …but not at the top: Kit can still fire Sam
         assert_eq!(r.non_custodian_keys, vec![kit.did(), sam.did()]);
@@ -395,7 +442,7 @@ mod tests {
     fn inspect_kits_key_left_in_the_list() {
         // [sam, kit, vulpes, zurfur] — two personal keys where one was promised.
         let (kit, sam, vulpes, zurfur) = (key(50), key(55), key(52), key(51));
-        let r = inspect(
+        let r = CustodyReport::inspect(
             &rotation(&[&sam]),
             &rotation(&[&sam, &kit, &vulpes, &zurfur]),
             &custodians(&[&vulpes, &zurfur]),
@@ -408,7 +455,7 @@ mod tests {
     fn inspect_attestation_only_no_rotation() {
         // Sam owns Fox in every verifier's eyes and holds no key on it.
         let (kit, sam, vulpes, zurfur) = (key(50), key(55), key(52), key(51));
-        let r = inspect(
+        let r = CustodyReport::inspect(
             &rotation(&[&sam]),
             &rotation(&[&kit, &vulpes, &zurfur]),
             &custodians(&[&vulpes, &zurfur]),
