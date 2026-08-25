@@ -9,7 +9,7 @@ actively wrong for a public library, in which case the reasoning is spelled out.
 Nothing here changes protocol behaviour. The one place where a behavioural fork
 appeared is **F8**, which the Engineer has ruled **strict** (see "Ruled by the
 Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13,
-F32, F36–F47 — is now ruled; no decision is left open.
+F32, F36–F48 — is now ruled; no decision is left open.
 
 Source: `zurfur/backend/crates/{adapter-atproto,adapter-pg,domain,api}`.
 Spec facts cited below were verified against
@@ -35,6 +35,188 @@ instead. Called out here rather than assumed.
 ---
 
 ## Ruled by the Engineer
+
+### F48. Consent has four shapes — paired claims are the recommended one; witnesses are embedded signatures; the ownership kind is the first paired kind
+
+**Where:** `docs/acp.md` §Self-claim, §Signing, §Relationships are
+consent (four shapes), §Verification, §Conformance; `docs/ccs.md` (rules,
+verification rule, kinds); `lexicons/net.got-paws.acp.claim.json`; the
+code PR that follows (record fields, fixtures, the paired verifier, the
+report).
+
+Defining `relationship.ownership` by writing the two records out surfaced
+a shape the spec did not have: **both** parties write a claim of the same
+kind in their own repo — `{role: owner, subject: fox}` in Kit's, `{role:
+owned, subject: kit}` in Fox's — and the pair is the relationship. No
+attestation record is needed for consent: the other half *existing* is the
+consent, and each half carries its own lifetime and its own severance
+lever. **Ruled (Engineer, 2026-08-25), after steelmanning:**
+
+- **Four shapes, one record model.** A claim is one-sided until something
+  answers it; what answers it is the shape.
+
+  | shape | claims | consent is | pairs by | example |
+  |---|---|---|---|---|
+  | one-sided | one half, no counterpart | none — an assertion (F45: an unattested claim is a claim); required so vulpes can do what a Bluesky follow does | — | Kit claims `identity.email`; nobody has vouched. Kit "follows" Fox; Fox signs nothing. |
+  | asymmetric | one half | the counterpart's attestation | strongRef | Kit's email claim + the attestor's attestation in Kit's repo — Kit's story. |
+  | symmetric (**paired**) | two halves | the other half existing, ids equal | `id` | Kit writes `ownership {owner, fox}`; Fox writes `ownership {owned, kit}`; same `id`. Either deletes → severed. |
+  | witnessed | any of the above | + witness signatures **embedded in each half** | `witnesses[].sig` | The sale went through Zurfur: Zurfur signs both halves before they are written. A buyer's policy may require it. |
+
+  Contrast with the ecosystem: a Bluesky follow is one-sided; a label is a
+  third party nobody invited. ACP's addition is not the paired shape alone
+  — it is consent in every row past the first.
+
+- **Paired is the recommended shape for relationship kinds.** Asymmetric
+  stays valid and unchanged (F45's claim + counterpart attestation), so
+  nothing already specified breaks. What paired buys: symmetry kills the
+  per-kind direction rule (F47's "who claims / who attests" collapses to
+  "each party claims its own side in its own repo"); each side holds its
+  own lever natively — delete severs my half, `status` revokes it without
+  deleting — so Rule §5 is satisfied by construction rather than by a
+  mandate on attestations; the owner roster falls out (N `owner` halves
+  against one character) and needs no kind of its own; and the kill test
+  is trivial — two repos, two status lists, no third party to die.
+
+- **The claim record grows, and `expiresAt` becomes required.**
+  `net.got-paws.acp.claim` gains, top-level: `id` · `nonce` · `claimant` ·
+  `expiresAt` (all **required**) and `witnesses` · `status` (optional).
+  There is no `Option<expiresAt>` and no permanent mode: a far-future date
+  is semantically permanent (the "permanent" future-change entry is
+  retired). `claimant` is the repo DID **written into the record and
+  checked against the repo it was fetched from — never read as the repo
+  DID** (F36 stands); it gives claims the transplant check attestations
+  already have and makes an exported claim self-contained.
+
+- **The edge id.**
+  `id = hex(sha256(min(a,b) ‖ "\n" ‖ max(a,b) ‖ "\n" ‖ expiresAt ‖ "\n" ‖ nonce))`
+  with `a` the claimant and `b` the payload's counterpart DID if the kind
+  names one, else `a` (an identity claim is a self-edge — F45's degenerate
+  case, so every claim has an id). Byte-wise order of the full DID
+  strings makes it order-independent; hashing the *strings* makes it
+  method-agnostic (`did:web` has no integer to add — arithmetic on decoded
+  `did:plc` bytes was considered and rejected for that reason); `expiresAt`
+  is the canonical string both sides wrote, so `Z` vs `+00:00` cannot fork
+  the id; `\n` cannot occur in a DID or an RFC 3339 datetime. A DID is
+  immutable for the identity's life (handles, hosts and keys all change
+  around it), so the id survives every migration. Renewal = a new
+  `expiresAt` = a new id = a new term, never an edit. The `nonce` (16
+  random bytes, hex, agreed in the handshake like `expiresAt`) is why a
+  re-established edge — sell Fox, buy it back, same lifetime — cannot
+  inherit the dead edge's id and a consumer's memory of that id's
+  revocation. `witnesses` are per-half and outside the id: Kit's side may
+  be witnessed, Fox's not.
+
+- **Witnesses are embedded signatures, not records.** A witness is a
+  notary: "I saw it happen, or it went through me — here is my
+  signature." It is also the delegation answer: when a client writes on
+  a user's behalf, the witness signature is what a verifier's policy
+  weighs to believe the half at all. Each entry is `{did, sig, status?}`;
+  the witness signs the half's pre-image CID with the injected `{$type,
+  repository}` exactly as an attestor does (F36), the claimant collects
+  the signatures and writes the record with them inside. The claim
+  pre-image is the record minus the `witnesses` field entirely (plus the
+  injected `$sig`), so witnesses sign before the write and party and
+  witness signatures cannot disagree. No extra record, no witness repo that can die —
+  kill-test-proof by construction. The optional per-witness `status` ref
+  is the witness's revocation lever, since an embedded signature cannot
+  otherwise be withdrawn. **No verdict requires a witness**; a policy may.
+  A witness `sig` that fails to verify makes the half *visibly
+  incomplete* in the report, not invalid.
+
+- **The verdict is a report, not a bool.** `in_force`; `paired {verified,
+  halves, ids_match, lifetime_agreed}`; per half `{repo, role, status,
+  expires_at, witnesses [{did, sig_valid, status}]}`; `attestations
+  [{attestor, on, in_force}]`; `custody: null` unless the consumer asked
+  (F47 intact). A consumer that wants a bool reads `in_force`; one that
+  wants to know *how* reads the rest. A one-sided claim reports `paired:
+  none, attestations: []` — true, and proving nothing.
+
+- **The ownership kind.** `relationship.ownership` is paired; roles
+  `owner` / `owned`; at most one in-force edge per character (more is a
+  conflict state — consumer guidance, axiom 3); the multi-owner roster is
+  N `owner` halves against the character, so the separate roster kind is
+  dropped; transfer = sever + a new term (new id).
+
+**Steelman, and where it is weakest** (recorded so the next reader does
+not rediscover it):
+
+- *Strongest case* — symmetry, native levers, a public recomputable
+  pairing key (a verifier recomputes the id from the two DIDs, the
+  lifetime and the nonce and gets the agreed-lifetime check for free),
+  trivial kill test, and "it is only referencing" — no semantics enter
+  the protocol; `role` and `subject` remain the kind's.
+- *Weakest* — a mirrored claim is a self-attestation, which changes what
+  "claim" means; the spec therefore grows a **shape**, it does not
+  redefine the word. `expiresAt` and `nonce` must be agreed before either
+  write — a handshake, which is the Claim Handshake of the derivation and
+  not new, but the reference tooling must carry the exchange. Third-party
+  attestations still exist (an org vouching for Kit's half) and the text
+  must say so, or "paired" will be read as "no attestations".
+
+**Prior art** (researched 2026-08-25, cited not recalled):
+
+- **Symmetric consent held by both sides** — XMPP RFC 6121 §2.1.2.5/§3:
+  each roster carries its own `subscription` state, `both` = mutual,
+  either side's cancel downgrades both — the closest precedent to "each
+  side stores its half; either severs"
+  (<https://www.rfc-editor.org/rfc/rfc6121.html>). ActivityPub §7.5–7.6
+  (W3C REC 2018): Follow + Accept, each side updating its own collection
+  — consent as a second artifact, activity-shaped rather than mirrored
+  (<https://www.w3.org/TR/activitypub/>). Matrix room membership is one
+  shared state event, not per-party — the contrast.
+- **Unordered-pair id** — canonical-order-then-hash is the standard
+  technique for hashing unordered pairs (XOR-combining the known weak
+  alternative): O'Keefe, *How to Hash a Set* (2017),
+  <https://www.preprints.org/manuscript/201710.0192/v1/download>. Nonce
+  for replay: OIDC Core §15.5.2 "sufficient entropy MUST be present"
+  (<https://openid.net/specs/openid-connect-core-1_0.html>); RFC 7519 §4.1.7
+  `jti` (<https://www.rfc-editor.org/rfc/rfc7519.html>). Expiry as a hash
+  *input* to an identifier has no found precedent (JWT keeps `jti` and
+  `exp` independent) — novel, deliberate: renewal is a new term.
+- **Several signatures, one payload** — W3C Data Integrity 1.0 *proof
+  sets* (REC 2025-05-15): "the same data … secured by multiple entities",
+  each proof computed with the `proof` attribute removed — the exact shape
+  of `witnesses[]` over record-minus-signatures
+  (<https://www.w3.org/TR/vc-data-integrity/>). JWS General Serialization
+  RFC 7515 §7.2.1 (<https://www.rfc-editor.org/rfc/rfc7515.html>); DAG-JOSE
+  (<https://ipld.io/specs/codecs/dag-jose/spec/>); COSE_Sign RFC 9052 §4.1,
+  whose external-AAD slot is the analogue of the injected binding
+  (<https://www.rfc-editor.org/rfc/rfc9052.html>). CMS RFC 5652 `SignerInfos`
+  (parallel co-signers) vs `Countersignature` — ACP witnesses co-sign the
+  pre-image (proof set), they do not countersign the parties' signatures.
+- **One-sided assertions** — `app.bsky.graph.follow`: `subject` +
+  `createdAt` in the follower's repo, nothing from the followed
+  (<https://atproto.com/specs/repository>). Labels: signed third-party
+  assertions with no subject consent, retracted via `neg`
+  (<https://atproto.com/specs/label>) — the witness-nobody-invited.
+- **Structured verifier result** — W3C VCALM `VerifyCredentialResult`:
+  `verified` + `problemDetails[]` + per-check `results{…}`
+  (<https://github.com/w3c/vcalm>).
+
+**Cautions the research raised, answered in the ruling:**
+
+1. *Witness key rotation.* Same rule as attestors (§Verification step 4):
+   current keys only, no historical-key verification. A rotated witness
+   key makes its `sig` fail → the half is *visibly incomplete*, never
+   invalid; the witness re-signs and the claimant rewrites the record
+   (new CID; the `id` is unaffected, attestations by strongRef are not —
+   attest the new version or live without, as §Binding already says).
+2. *The subject controls the container* and can drop a witness entry (or
+   the whole record). Correct and intended: a witness signature exists for
+   the **subject's** benefit (a stronger half), not the witness's. A
+   witness that needs proof it signed keeps its own copy — or writes an
+   attestation, which is the record it controls.
+3. *Canonicalization.* Already fixed by F37/F38 (canonical DAG-CBOR, pinned
+   fixtures). The claim pre-image is the record **minus the `witnesses`
+   field entirely**, plus the injected `$sig` — one rule, no per-entry
+   stripping, so party and witness signatures cannot disagree.
+4. *Expiry in the id* is intended (renewal = new term) and leaks nothing:
+   `expiresAt` is a public field of the record.
+5. *Delete = sever vs. unreachable repo.* A half whose record is **gone
+   from a reachable repo** is severed; a half whose repo is **unreachable**
+   is *not checkable* — never severed, never in force (the kill-test
+   distinction §Status lists already draws for lists). The report says
+   which.
 
 ### F47. Administration and claims are two lanes — ownership is claims-only
 
