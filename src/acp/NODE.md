@@ -26,6 +26,9 @@ fs:
   - name: error.rs
     role: one closed enum per concern
     node: false
+  - name: custody.rs
+    role: administrative-health helpers — custodian discovery (F44), the seniority read (F40 rule), CustodyReport; never a gate (F47)
+    node: false
   - name: memory.rs
     role: in-memory port fakes, test-only (F19)
     node: false

@@ -1,4 +1,16 @@
-# Vulpes — continue here (updated 2026-08-24, F47 recorded)
+# Vulpes — continue here (updated 2026-08-25, `acp::custody` landed)
+
+## 2026-08-25: `acp::custody` — the administration lane's helpers
+
+`src/acp/custody.rs`: `CustodianKeys` (`empty` / `from_keys` /
+`discover` — F44's live intersection over the `DidResolver`),
+`holds_senior_rotation_key` (the F40 rule, recovered from `7045189^` with
+its adversarial tests), and `inspect` → `CustodyReport` for the ccs.md
+handover checklist. `verify.rs` gains
+`ownership_verdict_never_consults_custody` — F47 as a test. Next roadmap
+line: the kind definitions (ownership, membership, owner roster).
+
+---
 
 ## 2026-08-23/24: F47 — administration and claims are two lanes
 
