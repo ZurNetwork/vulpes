@@ -39,7 +39,7 @@ features:
 
 # CI's `advisories` job (needs cargo-deny: `cargo install cargo-deny`).
 deny:
-    cargo deny check advisories --all-features
+    cargo deny --all-features check advisories
 
 # CI's `docs` job: broken intra-doc links are errors.
 doc:
