@@ -73,12 +73,21 @@ infrastructure down and every issued vouch still verifies.
       - [x] `ClaimKind::parse` for five-segment NSIDs and the two v0.1
             categories (`identity`, `relationship`; `consent` deferred);
             lexicon `kind` → `format: nsid`.
-      - [ ] define `relationship.ownership`, `relationship.membership`,
-            and the owner-roster kind (roles, who claims, who attests —
-            per the Rules of Claims, F47; ownership carries the one-edge
-            cardinality rule; the relationship category mandates `status`
-            on attestations).
-      - [ ] the consumer pattern — verify the attestation, done;
+      - [x] **F48 ruled and recorded** (2026-08-25): consent has four
+            shapes; paired claims recommended; the edge `id`; witnesses
+            as embedded signatures; the verdict is a report; `expiresAt`
+            required, permanent mode retired; the roster kind dropped.
+      - [ ] the claim record catches up with F48 — `Claim` gains `id`,
+            `nonce`, `claimant`, `expiresAt`, `status`, `witnesses`;
+            `edge_id()`; the claim pre-image + witness signing in
+            `sign.rs`; **fixtures bump** (canonical bytes change).
+      - [ ] paired verification + the report — `verify_claim` (any
+            shape), `verify_pair`, `Report` replacing the bare verdict
+            for consumers; the four-shapes tests; kill test re-run.
+      - [ ] kind definitions as lexicon schema records —
+            `relationship.ownership` (paired, one edge, roster = N
+            halves), `relationship.membership` (paired, `grant`).
+      - [ ] the consumer pattern — verify, read the report;
             `acp::custody` as buyer's due diligence — in the explainer.
       The "unanswered half" fork is dissolved: an unattested claim is a claim.
 - [ ] **Mint layout D** (FORKS F46) — `MintPolicy` mints
@@ -93,8 +102,9 @@ infrastructure down and every issued vouch still verifies.
       exportability, adds no trust (ruled in conversation 2026-08-12). Now
       load-bearing: it is also the answer to self-ownership (F45).
 - [ ] Confluence Ruling Record (49184769): record F45 (CCS is attestations),
-      F46 (rotation layout D), and F47 (two lanes; claims-only ownership;
-      Rules of Claims) — they supersede the 2026-08-11
+      F46 (rotation layout D), F47 (two lanes; claims-only ownership;
+      Rules of Claims) and F48 (four shapes; paired claims; the edge id;
+      witnesses) — they supersede the 2026-08-11
       `owns ↔ ownedBy + keys` shape.
 
 ## Later (in rough order)

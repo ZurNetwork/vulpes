@@ -22,8 +22,8 @@
 //! - [`policy`] — [`TrustPolicy`], the verifier's own judgment (step 6,
 //!   ahead of the status fetch it gates).
 //! - [`verify`] — [`Verifier::verify_attestation`], the spec's seven steps.
-//!   Relationships are attestations whose attestor is the counterpart
-//!   (FORKS F45); there is no second path.
+//!   Relationships are consent in four shapes (FORKS F45, F48); the
+//!   paired path and the report are the next code lines on the roadmap.
 //! - [`error`] — one closed error enum per concern.
 //!
 //! # The binding, in one paragraph

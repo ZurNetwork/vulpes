@@ -1,4 +1,26 @@
-# Vulpes — continue here (updated 2026-08-25, `acp::custody` landed)
+# Vulpes — continue here (updated 2026-08-25, F48 recorded)
+
+## 2026-08-25, later: F48 — consent has four shapes
+
+Ruled in conversation while defining the ownership kind, researched
+(XMPP 6121 mutual subscription, Data Integrity proof sets, VCALM result
+shape — cited in FORKS F48) and recorded (`FORKS.md` F48; `docs/acp.md`
+§Self-claim, §Signing, §Relationships are consent, §Verification,
+§Conformance, changelog; `docs/ccs.md`; the claim lexicon):
+
+- **Four shapes** — one-sided · asymmetric · **paired** (recommended) ·
+  witnessed. Paired = both parties write the same kind in their own
+  repos, sharing an edge `id = sha256(sorted DIDs ‖ expiresAt ‖ nonce)`.
+- The claim record gains `id` · `nonce` · `claimant` · `expiresAt`
+  (required) · `status` · `witnesses` (embedded third-party signatures
+  over the claim pre-image = record minus `witnesses` + `$sig`).
+- The verdict is a **report**. Permanent mode retired. Roster kind
+  dropped (N `owner` halves).
+
+Next code work, in order: the claim record catch-up (fixtures bump),
+paired verification + the report, then kind definitions as schema records.
+
+---
 
 ## 2026-08-25: `acp::custody` — the administration lane's helpers
 

@@ -3,7 +3,7 @@
 //! **Never an ownership gate.** `verify_attestation` does not call this
 //! module and nothing here changes a verdict: ownership is the owner's claim
 //! plus the owned DID's attestation, two facts, verified as any attestation
-//! (FORKS F45, F47; `docs/acp.md` §Relationships are attestations). What this
+//! (FORKS F45, F47; `docs/acp.md` §Relationships are consent). What this
 //! module answers is the *other* lane's question — "can this owner win a key
 //! war over the owned DID?" (`docs/ccs.md` §The senior-key custody rule) — for
 //! a consumer that wants it: a buyer's due diligence before a transfer settles,
