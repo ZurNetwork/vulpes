@@ -9,11 +9,32 @@
       "record": {
         "type": "object",
         "required": [
+          "id",
+          "nonce",
+          "claimant",
           "kind",
           "payload",
-          "createdAt"
+          "createdAt",
+          "expiresAt"
         ],
         "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "description": "The edge id: hex(sha256(min(a,b) + '\\n' + max(a,b) + '\\n' + expiresAt + '\\n' + nonce)), a = claimant, b = the payload's counterpart DID or a itself. Recomputed by verifiers (ACP spec, Self-claim; FORKS F48)."
+          },
+          "nonce": {
+            "type": "string",
+            "minLength": 32,
+            "maxLength": 32,
+            "description": "16 random bytes, lowercase hex; shared by both halves of a paired claim."
+          },
+          "claimant": {
+            "type": "string",
+            "format": "did",
+            "description": "The repo owner's DID. Checked against the repo the record was fetched from; never read as it."
+          },
           "kind": {
             "type": "string",
             "format": "nsid",
@@ -32,7 +53,47 @@
           "createdAt": {
             "type": "string",
             "format": "datetime"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Required. No permanent claim exists; a far-future date is semantically permanent."
+          },
+          "status": {
+            "type": "ref",
+            "ref": "net.got-paws.acp.attestation#statusRef",
+            "description": "The claimant's own revocation lever (ACP spec, Status lists)."
+          },
+          "witnesses": {
+            "type": "array",
+            "items": {
+              "type": "ref",
+              "ref": "#witness"
+            },
+            "description": "Third parties who signed this record's pre-image (record minus `witnesses`, plus the $sig binding). Optional; no verdict requires one."
           }
+        }
+      }
+    },
+    "witness": {
+      "type": "object",
+      "required": [
+        "did",
+        "sig"
+      ],
+      "properties": {
+        "did": {
+          "type": "string",
+          "format": "did"
+        },
+        "sig": {
+          "type": "bytes",
+          "description": "Signature over the CIDv1 of the claim pre-image (ACP spec, Signing)."
+        },
+        "status": {
+          "type": "ref",
+          "ref": "net.got-paws.acp.attestation#statusRef",
+          "description": "The witness's revocation lever."
         }
       }
     }
