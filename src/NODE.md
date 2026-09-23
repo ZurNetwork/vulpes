@@ -1,6 +1,6 @@
 ---
 path: src
-charted: 2026-08-21
+charted: 2026-09-12
 fs:
   - name: lib.rs
     role: crate root — module map, feature gates, public re-exports

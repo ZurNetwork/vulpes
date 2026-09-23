@@ -1,9 +1,9 @@
 ---
 path: docs
-charted: 2026-08-23
+charted: 2026-09-12
 fs:
   - name: acp.md
-    role: THE spec — record shapes, signing, status lists, verification, conformance + kill test, trust model
+    role: THE spec — record shapes, kind NSIDs, signing, status lists, verification, conformance + kill test, trust model; relationships are consent (F45, F47, F48)
     node: false
   - name: explainer.md
     role: worked walkthrough (Kit's story)
@@ -18,10 +18,10 @@ fs:
     role: design interview record (DRAFT); NQ1 holder-held pivot
     node: false
   - name: ccs.md
-    role: Consensual Claims System — claims + counterpart attestations (F45); rotation-key layout (F46)
+    role: Consensual Claims System — the five rules, the kind catalog, the two lanes (F47); consent in four shapes, paired halves + edge id + witnesses (F48); rotation layout (F46)
     node: false
   - name: characters-atproto.md
-    role: characters as ATProto subjects via CCS (ruled 2026-08-11, re-based on F45 2026-08-22)
+    role: characters as ATProto subjects via CCS (ruled 2026-08-11, re-based on F45 2026-08-22, amended 2026-09-12); source of record for Zurfur DD 54427650
     node: false
   - name: ROADMAP.md
     role: the live plan — dependency-ordered checkboxes; replaces Jira tickets since 2026-08-12
@@ -32,6 +32,6 @@ fs:
 ---
 **Is:** the documents that rule the repo — spec, rationale, plan, handoff.
 
-**Conventions:** spec changes land in `acp.md` with a Changelog entry; judgment calls go to `FORKS.md`, not here; rulings' source of truth is Confluence VU.
+**Conventions:** spec changes land in `acp.md` with a Changelog entry; judgment calls go to `FORKS.md`, not here; rulings' source of truth is Confluence VU. `acp.md` fixes the *shapes* (the closed category list and its invariants); kinds under `<tld>.<domain>` belong to their authority, so a Zurfur-minted kind is expected, not a deviation.
 
 **Entry points:** `ROADMAP.md` → `CONTINUE-HERE.md` → `acp.md` headings.
