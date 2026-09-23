@@ -1,21 +1,21 @@
 ---
 path: src/acp
-charted: 2026-08-21
+charted: 2026-09-12
 fs:
   - name: record.rs
-    role: Claim / Attestation + canonical DAG-CBOR, pinned byte fixtures (F37, F38)
+    role: Claim / Attestation + canonical DAG-CBOR, pinned byte fixtures (F37, F38); still pre-F48 — the claim's id/nonce/claimant/expiresAt/status/witnesses are owed
     node: false
   - name: kind.rs
-    role: ClaimKind — the five-segment NSID, typed per segment; Other holds the checked newtype (F45)
+    role: ClaimKind — the five-segment NSID, typed per segment; Other holds the checked newtype (F45); categories identity + relationship, consent deferred
     node: false
   - name: sign.rs
     role: attestation pre-image, sign, verify — key signs the pre-image CID (F36); negatives incl. transplant
     node: false
   - name: verify.rs
-    role: verify_attestation — the spec's seven steps; the kill_test
+    role: verify_attestation — the spec's seven steps; Verdict vs VerifyError never conflated; the kill_test
     node: false
   - name: ports.rs
-    role: RepoReader / DidResolver / StatusSource async_trait ports (F40)
+    role: RepoReader / DidResolver / StatusSource async_trait ports (F40) — no attestor port, by the law
     node: false
   - name: status.rs
     role: net.got-paws.acp.statusList artifact, ACP-native DAG-CBOR (F39)
@@ -27,7 +27,7 @@ fs:
     role: one closed enum per concern
     node: false
   - name: custody.rs
-    role: administrative-health helpers — custodian discovery (F44), the seniority read (F40 rule), CustodyReport; never a gate (F47)
+    role: administrative-health helpers — custodian discovery (F44), the seniority read, CustodyReport; the administration lane, never an ownership gate (F47)
     node: false
   - name: memory.rs
     role: in-memory port fakes, test-only (F19)
@@ -35,8 +35,10 @@ fs:
 ---
 **Is:** the ACP reference implementation, pure and I/O-free — everything a verifier needs except the transport, which arrives through the three ports.
 
-**Conventions:** the repository DID is always an explicit parameter, never read from a record. Canonical bytes are pinned by fixtures cross-checked against an independent encoder. The attestor is *not* a port — its death must not matter (the kill test).
+**Conventions:** the repository DID is always an explicit parameter, never read from a record. Canonical bytes are pinned by fixtures cross-checked against an independent encoder. The attestor is *not* a port — its death must not matter (the kill test). Ownership is decided in the claims lane alone; `custody.rs` informs recoverability and never a verdict (F47).
+
+**In flight:** F48 is ruled but not yet coded — the claim record's F48 fields + `edge_id()` + witness signing, then `verify_claim` / `verify_pair` and the `Report` that replaces the bare verdict. Fixtures bump when that lands.
 
 **Entry points:** `verify.rs::verify_attestation`, then `sign.rs`, then `record.rs`.
 
-**Refs:** `docs/acp.md` §Record types, §Status lists, §Verification, §The kill test; `docs/ROADMAP.md` "ACP v0.1"; FORKS F36–F41.
+**Refs:** `docs/acp.md` §Record types, §Status lists, §Verification, §The kill test; `docs/ccs.md` rules 1–4; `docs/ROADMAP.md` "CCS as attestations"; FORKS F36–F48.

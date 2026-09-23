@@ -1,6 +1,6 @@
 ---
 path: .
-charted: 2026-08-23
+charted: 2026-09-12
 fs:
   - name: src/
     role: the vulpes crate — did:plc substrate + the ACP reference implementation
