@@ -65,7 +65,11 @@ with the counterpart as attestor — nothing else is added.
    character-scoped, so two of five collective members may own this
    character and it is never derived from account membership; "who owns
    me" is answered from the character's own repo. Co-owner churn adds or
-   deletes halves: no keys, no transfer, no 72 h window.
+   deletes halves: no keys, no transfer, no 72 h window. The pattern is
+   available, not obligatory: Zurfur does not emit it (Engineer,
+   2026-09-12) — its shared characters keep one character ↔ user edge and
+   put the account in the rotation list's owner slot instead, which is the
+   administration lane, not this one.
 5. **Trust stays at the edge, and meaning stays out of vulpes.** CCS defines
    which party says what; it never ranks attestors. vulpes verifies the
    attestation and never decides what a kind *means* — the seniority
