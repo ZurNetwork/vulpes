@@ -1,0 +1,39 @@
+{
+  "path": "src/postgres",
+  "charted": "2026-09-19",
+  "short": "The three sqlx-backed stores, each built from a caller-owned PgPool",
+  "is": "The three sqlx-backed stores, each built from a caller-owned `PgPool`; cheap to clone, own no runtime.",
+  "conventions": [
+    "SQL lives in `queries/<store>/<op>.sql`, not inline; migrations come from `build.rs`'s embedded set.",
+    "sqlx surface is `derive` only — never enable `macros`."
+  ],
+  "entry_points": [
+    "src/postgres/mod.rs"
+  ],
+  "fs": [
+    {
+      "name": "key_store.rs",
+      "role": "PgKeyStore",
+      "node": false
+    },
+    {
+      "name": "mod.rs",
+      "role": "module docs, schema notes, re-exports",
+      "node": false
+    },
+    {
+      "name": "oauth_state.rs",
+      "role": "PgOAuthStateStore",
+      "node": false
+    },
+    {
+      "name": "plc_log.rs",
+      "role": "PgPlcOperationLog",
+      "node": false
+    }
+  ],
+  "refs": [],
+  "notes": [
+    "`tests/postgres/` exercises every store."
+  ]
+}

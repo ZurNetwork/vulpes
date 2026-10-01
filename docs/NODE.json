@@ -1,0 +1,64 @@
+{
+  "path": "docs",
+  "charted": "2026-09-19",
+  "short": "The documents that rule the repo — spec, rationale, plan, handoff",
+  "is": "The documents that rule the repo — spec, rationale, plan, handoff.",
+  "conventions": [
+    "Spec changes land in `acp.md` with a Changelog entry; judgment calls go to `FORKS.md`, not here; rulings' source of truth is Confluence VU.",
+    "`acp.md` fixes the *shapes* (the closed category list and its invariants); kinds under `<tld>.<domain>` belong to their authority, so a Zurfur-minted kind is expected, not a deviation."
+  ],
+  "entry_points": [
+    "docs/ROADMAP.md",
+    "docs/CONTINUE-HERE.md",
+    "docs/acp.md (headings)"
+  ],
+  "fs": [
+    {
+      "name": "CONTINUE-HERE.md",
+      "role": "session handoff; single-writer",
+      "node": false
+    },
+    {
+      "name": "ROADMAP.md",
+      "role": "the live plan — dependency-ordered checkboxes; replaces Jira tickets since 2026-08-12",
+      "node": false
+    },
+    {
+      "name": "acp.md",
+      "role": "THE spec — record shapes, kind NSIDs, signing, status lists, verification, conformance + kill test, trust model; relationships are consent (F45, F47, F48)",
+      "node": false
+    },
+    {
+      "name": "ccs.md",
+      "role": "Consensual Claims System — the five rules, the kind catalog, the two lanes (F47); consent in four shapes, paired halves + edge id + witnesses (F48); rotation layout (F46)",
+      "node": false
+    },
+    {
+      "name": "characters-atproto.md",
+      "role": "characters as ATProto subjects via CCS (ruled 2026-08-11, re-based on F45 2026-08-22)",
+      "node": false
+    },
+    {
+      "name": "explainer.md",
+      "role": "worked walkthrough (Kit's story)",
+      "node": false
+    },
+    {
+      "name": "identity-model.md",
+      "role": "design interview record (DRAFT); NQ1 holder-held pivot",
+      "node": false
+    },
+    {
+      "name": "manifesto.md",
+      "role": "why the design choices look the way they do",
+      "node": false
+    },
+    {
+      "name": "the-claim-handshake.md",
+      "role": "the first-principles derivation (Supernote transcription); source of the spec's six axioms",
+      "node": false
+    }
+  ],
+  "refs": [],
+  "notes": []
+}

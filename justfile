@@ -44,3 +44,15 @@ deny:
 # CI's `docs` job: broken intra-doc links are errors.
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
+
+# --- the node tree (NODE.json, via github.com/ZurNetwork/nodes) ---
+
+# Pass-through to the `nodes` tool: `just nodes tree`, `just nodes chain src/acp`.
+[positional-arguments]
+nodes *ARGS:
+    nodes "$@"
+
+# Validate every NODE.json: the schema, path ↔ location, fs ↔ child nodes.
+# Not in `gate` yet — CI has no `nodes` job to mirror.
+nodes-check:
+    nodes check
