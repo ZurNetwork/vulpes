@@ -1,8 +1,8 @@
 //! PostgreSQL implementations of every vulpes storage trait, plus the schema they
 //! need.
 //!
-//! Three ready stores — [`PgKeyStore`], [`PgPlcOperationLog`] and
-//! [`PgOAuthStateStore`] — each built from an `sqlx::PgPool` you already have.
+//! Two ready stores — [`PgKeyStore`] and [`PgPlcOperationLog`] — each built
+//! from an `sqlx::PgPool` you already have.
 //! None of them owns a connection or a runtime; they are cheap to clone and to
 //! share.
 //!
@@ -54,18 +54,16 @@ use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
 use crate::StorageError;
 
 mod key_store;
-mod oauth_state;
 mod plc_log;
 
 pub use key_store::PgKeyStore;
-pub use oauth_state::{DEFAULT_AUTH_REQUEST_TTL, PgOAuthStateStore};
 pub use plc_log::PgPlcOperationLog;
 
 // `static EMBEDDED_MIGRATIONS: &[(i64, &str, &str)] = &[(version, description, sql), …];`
 include!(concat!(env!("OUT_DIR"), "/embedded_migrations.rs"));
 
-/// Run vulpes's migrations — key custody, the operation log, and the OAuth state
-/// tables.
+/// Run vulpes's migrations — key custody and the operation log (the OAuth state
+/// tables still ship in the migration set until Postgres leaves, FORKS F49).
 ///
 /// Already-applied migrations are skipped, so this is safe to call on every
 /// boot. Errors if a migration fails or the recorded history has diverged from

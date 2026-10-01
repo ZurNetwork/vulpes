@@ -67,8 +67,8 @@ pub struct Handle(String);
 /// Deserialization is a **parse**, not a wrapper — and here that is a security
 /// boundary, not just tidiness.
 ///
-/// A `Handle` is what [`Authenticator::start`](crate::oauth::Authenticator::start)
-/// takes *instead of* a string, precisely so the resolver's
+/// A `Handle` is what an API that resolves identities should take *instead of*
+/// a string, precisely so an atproto resolver's
 /// "an input beginning `https://` is a service URL, fetch it directly" branch
 /// cannot be reached. That guarantee is only worth anything if **every** door
 /// into the type validates. A derived `Deserialize` is not a door that

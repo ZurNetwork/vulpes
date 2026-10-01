@@ -1,6 +1,6 @@
 {
   "path": "tests",
-  "charted": "2026-09-19",
+  "charted": "2026-10-01",
   "short": "The integration suite — everything here needs Docker",
   "is": "The integration suite; everything here needs Docker (testcontainers boots one Postgres per test process via `pg.rs`).",
   "type": "code",
@@ -17,7 +17,7 @@
   "fs": [
     {
       "name": "postgres/",
-      "role": "one integration binary (main.rs) — pg.rs shared-container harness; migrations, key_store, plc_log, oauth_state, oauth_bridge, minter suites",
+      "role": "one integration binary (main.rs) — pg.rs shared-container harness; migrations, key_store, plc_log, minter suites",
       "node": false
     }
   ],

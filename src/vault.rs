@@ -1,14 +1,10 @@
 //! [`SecretVault`] — envelope encryption of at-rest secrets under a **root key**.
 //!
-//! vulpes holds two families of secret on your users' behalf, and both are sealed
-//! by this one type before they touch a database:
-//!
-//! - **custody keys** — the secp256k1 private halves behind a minted `did:plc`
-//!   ([`CustodyKeys`](crate::CustodyKeys)). Whoever holds these operates the
-//!   identity.
-//! - **OAuth state** — an established session's DPoP private signing key plus
-//!   its refresh and access tokens, and an in-flight request's PKCE verifier.
-//!   Reading those in the clear is a *renewable* PDS-session takeover.
+//! vulpes holds one family of secret on your users' behalf, and seals it with
+//! this type before any store sees it: the **custody keys** — the secp256k1
+//! private halves behind a minted `did:plc`
+//! ([`CustodyKeys`](crate::CustodyKeys)). Whoever holds these operates the
+//! identity.
 //!
 //! The envelope model is one 32-byte root key, held **outside** the database,
 //! wrapping every per-row secret with an AEAD (XChaCha20-Poly1305). A database
@@ -260,7 +256,7 @@ impl SecretVault {
 mod tests {
     use super::*;
 
-    const AAD: &[u8] = b"oauth.client_session\0did:plc:alice";
+    const AAD: &[u8] = b"example.row\0did:plc:alice";
     const PLAINTEXT: &[u8] = b"{\"refresh_token\":\"refresh-token\"}";
 
     fn vault() -> SecretVault {
@@ -311,7 +307,7 @@ mod tests {
     fn blob_cannot_be_opened_under_a_different_aad() {
         let blob = vault().seal(AAD, PLAINTEXT).unwrap();
         assert!(matches!(
-            vault().open(b"oauth.client_session\0did:plc:mallory", &blob),
+            vault().open(b"example.row\0did:plc:mallory", &blob),
             Err(VaultError::Open)
         ));
     }

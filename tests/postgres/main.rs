@@ -13,11 +13,7 @@ mod pg;
 
 mod key_store;
 mod migrations;
-mod oauth_state;
 mod plc_log;
 
 #[cfg(feature = "minter")]
 mod minter;
-
-#[cfg(feature = "oauth")]
-mod oauth_bridge;

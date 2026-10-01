@@ -13,7 +13,7 @@ use crate::{Did, KeyStore, SealedKeys, StorageResult};
 /// It holds **no vault** and never opens a blob — sealing and opening live with
 /// the [`Minter`](crate::Minter), which owns the [`SecretVault`](crate::SecretVault).
 /// This store round-trips opaque bytes, so a plaintext custody store is not a
-/// thing it can be (the custody-side mirror of [`PgOAuthStateStore`](crate::postgres::PgOAuthStateStore)).
+/// thing it can be.
 ///
 /// The write is a single-row insert performed *during minting*, before any row
 /// of yours can exist — the identity's DID is derived from the very operation

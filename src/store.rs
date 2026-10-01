@@ -1,12 +1,12 @@
-//! The storage seam — the three traits vulpes persists through, and the record
+//! The storage seam — the two traits vulpes persists through, and the record
 //! shape the operation log carries.
 //!
 //! vulpes owns no database. It names the *roles* it needs and lets you supply
-//! them; ready [PostgreSQL implementations](crate::postgres) of all three ship
+//! them; ready [PostgreSQL implementations](crate::postgres) of both ship
 //! behind the `postgres` feature, and an in-memory fake is a dozen lines when
 //! you need one for tests.
 //!
-//! All three are `async` object-safe traits (via `async_trait`), so a
+//! Both are `async` object-safe traits (via `async_trait`), so a
 //! `dyn KeyStore` can be shared behind an `Arc` — which is how the
 //! [`Minter`](crate::Minter) holds them.
 //!
@@ -70,9 +70,10 @@ impl PlcOperationRecord {
     /// at read time. The sort is done by hand, not left to serde_json: with
     /// default features serde_json happens to sort map keys, but any crate in
     /// the build graph can flip on `preserve_order` for the whole binary
-    /// (Cargo features unify globally — the `vc` pins did exactly that), and
+    /// (Cargo features unify globally — a since-removed dependency did exactly
+    /// that, FORKS F35), and
     /// this MAC must not care. Each field is length-prefixed, so no field
-    /// boundary is ambiguous (the same trick the OAuth AAD uses).
+    /// boundary is ambiguous.
     ///
     /// `op_type` is deliberately not covered here: it is redundant with the
     /// operation's own `type`, which *is* covered, and the values a reader
@@ -135,8 +136,7 @@ fn canonicalize(value: serde_json::Value) -> serde_json::Value {
 /// opening live with whoever holds the [`SecretVault`](crate::SecretVault), the
 /// [`Minter`](crate::Minter); a `KeyStore` persists opaque bytes and hands them
 /// back. So a store that writes plaintext custody is not a store you can *write*
-/// against this trait — the mirror of how the OAuth bridge keeps a token out of
-/// [`OAuthStateStore`]. What a store still owns is the storage contract below.
+/// against this trait. What a store still owns is the storage contract below.
 #[async_trait]
 pub trait KeyStore: Send + Sync {
     /// Persist the sealed `keys` for `did`.
@@ -191,87 +191,6 @@ pub trait PlcOperationLog: Send + Sync {
     async fn latest_op(&self, did: &Did) -> StorageResult<Option<PlcOperationRecord>>;
 }
 
-/// Durable storage for the AT Protocol OAuth handshake's two tiers of state.
-///
-/// Blobs are **opaque** here on purpose: the [`oauth`](crate::oauth) layer
-/// serializes and seals them, so an implementation of this trait stores bytes
-/// and never sees a token. That split is what lets a storage backend be written
-/// without any OAuth knowledge — and keeps the sealing in exactly one place.
-///
-/// The two row families mirror the handshake:
-///
-/// - **client session** — an established grant (token set + DPoP key), keyed by
-///   `(account_did, session_id)`. Persisting it is what lets a grant survive a
-///   restart, lets refresh write rotated tokens durably, and lets two replicas
-///   serve the same user.
-/// - **auth request** — an in-flight authorization (PKCE verifier + DPoP key),
-///   keyed by the OAuth `state`. Short-lived: written at sign-in, read and
-///   deleted at the callback. Persisting it is what lets the redirect land on a
-///   different process than the one that started the flow.
-#[async_trait]
-pub trait OAuthStateStore: Send + Sync {
-    /// Read an established session's sealed blob.
-    async fn get_session(
-        &self,
-        account_did: &str,
-        session_id: &str,
-    ) -> StorageResult<Option<Vec<u8>>>;
-
-    /// Insert or replace an established session's sealed blob. Replacement is
-    /// load-bearing: every token refresh overwrites the prior row, so a later
-    /// request on any replica reads the freshest grant.
-    async fn upsert_session(
-        &self,
-        account_did: &str,
-        session_id: &str,
-        data: &[u8],
-    ) -> StorageResult<()>;
-
-    /// Delete an established session — the "this grant ended honestly" path,
-    /// called when refresh fails permanently.
-    async fn delete_session(&self, account_did: &str, session_id: &str) -> StorageResult<()>;
-
-    /// Read an in-flight authorization request's sealed blob by its `state`,
-    /// **consuming it**.
-    ///
-    /// # Single-use is part of the contract
-    ///
-    /// A successful read must make every later read of the same `state` return
-    /// `Ok(None)`, and the consumption must be **atomic** — one statement, one
-    /// row lock, not a read followed by a delete. The blob holds the PKCE
-    /// verifier and the DPoP key for one authorization; two concurrent
-    /// callbacks carrying the same `state` must not both come away with it.
-    ///
-    /// Implementing this as a plain lookup and leaning on
-    /// [`delete_auth_request`](OAuthStateStore::delete_auth_request) to clean up
-    /// leaves exactly that window open, because the protocol library's own
-    /// get-then-delete is two round trips. A `DELETE … RETURNING` (or the
-    /// backend's equivalent) is the shape to reach for.
-    async fn get_auth_request(&self, state: &str) -> StorageResult<Option<Vec<u8>>>;
-
-    /// Insert or replace an in-flight authorization request's sealed blob.
-    async fn save_auth_request(&self, state: &str, data: &[u8]) -> StorageResult<()>;
-
-    /// Delete an in-flight authorization request.
-    ///
-    /// Belt to [`get_auth_request`](OAuthStateStore::get_auth_request)'s braces:
-    /// the read already consumed the row, so on the happy path this deletes
-    /// nothing. It stays because an abandoned flow — a visitor who never
-    /// returns from the PDS — is dropped here, and because deleting an absent
-    /// row must never be an error.
-    async fn delete_auth_request(&self, state: &str) -> StorageResult<()>;
-}
-
-/// Resolves an atproto handle to the DID it belongs to.
-///
-/// The read half of handle resolution: serving `/.well-known/atproto-did` for a
-/// namespace you operate (see [`crate::axum`]) is one lookup through this trait.
-#[async_trait]
-pub trait HandleResolver: Send + Sync {
-    /// The DID `handle` currently resolves to, or `None` if nothing holds it.
-    async fn did_for_handle(&self, handle: &crate::Handle) -> StorageResult<Option<Did>>;
-}
-
 #[cfg(test)]
 mod mac_message_tests {
     use super::*;
@@ -291,8 +210,8 @@ mod mac_message_tests {
 
     /// The `jsonb` round-trip (and a `preserve_order`-unified serde_json) may
     /// hand back the same document with any key order; the MAC message must
-    /// not move. This is the regression test for the B2 tag surviving the
-    /// `vc` pins' global feature unification.
+    /// not move. This is the regression test for the B2 tag surviving global
+    /// feature unification (FORKS F35).
     #[test]
     fn key_order_does_not_change_the_mac_message() {
         let a = record(r#"{"type":"plc_operation","sig":"s","services":{"b":1,"a":2}}"#);

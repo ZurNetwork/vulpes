@@ -3,47 +3,29 @@ name = "vulpes"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "AT Protocol identity for Rust servers: the did:plc write path (mint, update handle, tombstone), envelope-encrypted key custody, and durable OAuth state."
+description = "The ACP (Attested Claims Protocol) on AT Protocol: claim and attestation records, signing and verification, status lists, and the did:plc write path with envelope-encrypted key custody."
 repository = "https://github.com/ZurNetwork/vulpes"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-keywords = ["atproto", "did", "plc", "oauth", "bluesky"]
-categories = ["authentication", "cryptography", "web-programming"]
+keywords = ["atproto", "did", "plc", "attestation", "bluesky"]
+categories = ["authentication", "cryptography"]
 # Consumed as a tag-pinned git dependency; deliberately NOT published to
 # crates.io (Engineer ruling, 2026-08-09).
 publish = false
 
 [features]
-# The did:plc write path is the crate's reason to exist, so it is on by default.
+# The did:plc write path is on by default; `acp` is opt-in.
 # `--no-default-features` leaves the pure protocol core (no crypto, no I/O).
-default = ["minter", "directory"]
+# vulpes carries no transport or framework of its own (FORKS F49).
+default = ["minter"]
 # Key generation and the mint / update-handle / tombstone operations.
 minter = ["dep:atrium-crypto", "dep:rand", "dep:base64"]
-# The HTTP client that submits signed operations to a PLC directory.
-directory = ["dep:reqwest", "dep:tracing"]
-# The atproto OAuth authenticator (jacquard) and its durable state bridge.
-oauth = [
-  "dep:jacquard",
-  "dep:jacquard-oauth",
-  "dep:jacquard-common",
-  "dep:fluent-uri",
-  "dep:smol_str",
-  "dep:reqwest",
-]
 # sqlx implementations of every vulpes storage trait, plus the migration SQL.
 postgres = ["dep:sqlx", "dep:chrono"]
-# The `/.well-known/atproto-did` resolution handler as a mountable router.
-axum = ["dep:axum", "dep:http"]
-# The wrapped SpruceID credential stack (VC 2.0 / JOSE / SD-JWT) — the private
-# lane's foundation. Excludable by construction; BBS and every non-atproto
-# curve stay OUT of the build (unused crypto is attack surface). The two
-# protocol libraries ride along pinned-but-uncalled so CI proves the chosen
-# set stays buildable together (VUL-2's version-locking checkbox).
-vc = ["dep:ssi", "dep:openid4vp", "dep:oid4vci"]
 # The ACP reference verifier: the record types with canonical DAG-CBOR bytes,
 # the attestation pre-image / sign / verify heart, status lists, and the
 # seven-step verifier over three caller-implemented I/O ports. No transport
-# of its own; the PDS/directory/mirror clients arrive with "Talk to a PDS".
+# of its own: the consumer implements the ports (FORKS F49).
 acp = ["dep:atrium-crypto", "dep:serde_bytes"]
 
 [dependencies]
@@ -83,20 +65,6 @@ base64 = { version = "0.22", optional = true }
 # encodes `Vec<u8>` as an array of integers — canonical, but wrong on the wire.
 serde_bytes = { version = "0.11", optional = true }
 
-# --- directory / oauth ---
-reqwest = { version = "0.12", default-features = false, features = [
-  "rustls-tls",
-  "json",
-], optional = true }
-tracing = { version = "0.1", optional = true }
-
-# --- oauth ---
-jacquard = { version = "0.12.0", features = ["loopback", "derive"], optional = true }
-jacquard-oauth = { version = "0.12.0", optional = true }
-jacquard-common = { version = "0.12.0", optional = true }
-fluent-uri = { version = "0.4.1", features = ["std"], optional = true }
-smol_str = { version = "0.3.6", optional = true }
-
 # --- postgres ---
 sqlx = { version = "0.9.0", default-features = false, features = [
   "runtime-tokio",
@@ -107,27 +75,6 @@ sqlx = { version = "0.9.0", default-features = false, features = [
   "json",
 ], optional = true }
 chrono = { version = "0.4", optional = true }
-
-# --- axum ---
-axum = { version = "0.8.8", optional = true }
-http = { version = "1", optional = true }
-
-# --- vc ---
-# The wrapped VC stack. default-features OFF, then only the W3C claims
-# machinery and the two atproto curves — no BBS, no rsa/ed25519/eip712/
-# ripemd: what isn't in the build can't be an attack surface, and the
-# private lane that needs more re-opens this list deliberately.
-ssi = { version = "0.16", default-features = false, features = [
-  "w3c",
-  "secp256r1",
-  "secp256k1",
-], optional = true }
-# The private lane's protocol pair (presentation + issuance), version-locked
-# today at exact revisions so that lane later builds on versions chosen
-# together, not whatever's newest. Nothing calls them yet — being in the
-# `vc` build is deliberate: it keeps the pins honest (they must compile).
-openid4vp = { git = "https://github.com/spruceid/openid4vp", rev = "e5f29b85f14ca0b3c6eb6852e4d2d158f601fd63", optional = true }
-oid4vci = { git = "https://github.com/spruceid/oid4vci-rs", rev = "7cfd5a012229de08aac363b27a41e226b494f9cc", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.49.0", features = ["full"] }

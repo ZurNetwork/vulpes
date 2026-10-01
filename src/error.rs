@@ -5,8 +5,7 @@
 //! ([`HandleError`](crate::HandleError), [`VaultError`](crate::VaultError),
 //! [`PlcError`](crate::PlcError), …). Storage and directory errors cannot be
 //! closed: the whole point of [`KeyStore`](crate::KeyStore),
-//! [`PlcOperationLog`](crate::PlcOperationLog),
-//! [`OAuthStateStore`](crate::OAuthStateStore) and
+//! [`PlcOperationLog`](crate::PlcOperationLog) and
 //! [`PlcDirectory`](crate::PlcDirectory) is that *you* supply the implementation,
 //! and its failures are its own. Both types are therefore thin opaque wrappers
 //! that preserve the underlying error as a [`source`](std::error::Error::source)
@@ -53,15 +52,14 @@ pub(crate) use opaque_error;
 
 opaque_error!(
     /// A failure inside a storage implementation ([`KeyStore`](crate::KeyStore),
-    /// [`PlcOperationLog`](crate::PlcOperationLog),
-    /// [`OAuthStateStore`](crate::OAuthStateStore)).
+    /// [`PlcOperationLog`](crate::PlcOperationLog)).
     ///
     /// Deliberately opaque: vulpes never branches on *why* a store failed, only on
     /// whether it did. The one behavioural contract callers rely on is that a store
     /// error is **not** "absent" — a missing row is `Ok(None)`, a broken database is
-    /// `Err`. Conflating them would let a read failure read as "no session"
-    /// (fail-open); keeping them apart is what makes the OAuth and custody paths
-    /// fail closed.
+    /// `Err`. Conflating them would let a read failure read as "no keys"
+    /// (fail-open); keeping them apart is what makes the custody path fail
+    /// closed.
     ///
     /// ```
     /// # use vulpes::StorageError;

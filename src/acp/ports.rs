@@ -180,9 +180,9 @@ pub trait DidResolver: Send + Sync {
 ///   non-global address — loopback, link-local, private, CGNAT, ULA,
 ///   IPv4-mapped — *at connect time*, against the resolved addresses, not
 ///   the name (DNS rebinding);
-/// - **SHOULD** run behind an egress guard the deployment injects (the
-///   `with_client` pattern of `HttpPlcDirectory`), so the network says no
-///   even if the code is wrong;
+/// - **SHOULD** run behind an egress guard the deployment injects (a
+///   caller-built HTTP client), so the network says no even if the code is
+///   wrong;
 /// - **SHOULD** cap the response at
 ///   [`MAX_STATUS_LIST_BYTES`](super::status::MAX_STATUS_LIST_BYTES) and
 ///   bound the copies it returns — the verifier skips oversize copies, but

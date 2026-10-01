@@ -135,8 +135,8 @@ pub enum CustodyEnvelope {
     /// families sharing an associated-data value means a blob from one opens as
     /// the other, and "which family is this blob?" is then answered by whichever
     /// code path happened to read it. A per-family tag makes the collision
-    /// unrepresentable rather than merely unlikely — the same reason
-    /// [`JacquardAuthStore`](crate::oauth::JacquardAuthStore) prefixes its own.
+    /// unrepresentable rather than merely unlikely, for any family a caller
+    /// seals under the same root key.
     V2,
 }
 
@@ -300,9 +300,8 @@ impl CustodyKeys {
 /// Custody keys **sealed** — the opaque form a [`KeyStore`](crate::KeyStore)
 /// stores and returns, never the plaintext [`CustodyKeys`].
 ///
-/// A store trafficking only in this type is the custody-side mirror of the OAuth
-/// bridge's byte-blob split: no `KeyStore` implementation can see a private
-/// scalar, so a store that writes plaintext custody is not something the API can
+/// A store trafficking only in this type stores bytes and nothing else: no
+/// `KeyStore` implementation can see a private scalar, so a store that writes plaintext custody is not something the API can
 /// express. Sealing and opening live with whoever holds the
 /// [`SecretVault`](crate::SecretVault) — the [`Minter`](crate::Minter).
 ///

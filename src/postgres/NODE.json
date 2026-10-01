@@ -1,8 +1,8 @@
 {
   "path": "src/postgres",
-  "charted": "2026-09-19",
-  "short": "The three sqlx-backed stores, each built from a caller-owned PgPool",
-  "is": "The three sqlx-backed stores, each built from a caller-owned `PgPool`; cheap to clone, own no runtime.",
+  "charted": "2026-10-01",
+  "short": "The two sqlx-backed stores, each built from a caller-owned PgPool",
+  "is": "The two sqlx-backed stores, each built from a caller-owned `PgPool`; cheap to clone, own no runtime. Leaving with the rest of Postgres (F49).",
   "type": "code",
   "tags": [
     "category:source"
@@ -23,11 +23,6 @@
     {
       "name": "mod.rs",
       "role": "module docs, schema notes, re-exports",
-      "node": false
-    },
-    {
-      "name": "oauth_state.rs",
-      "role": "PgOAuthStateStore",
       "node": false
     },
     {

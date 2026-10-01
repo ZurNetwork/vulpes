@@ -1,15 +1,16 @@
 {
   "path": "src",
-  "charted": "2026-09-19",
+  "charted": "2026-10-01",
   "short": "The crate body — feature-free substrate, each I/O or crypto surface behind a feature",
-  "is": "The crate body — a feature-free substrate (`plc`, `did`, `handle`, `keys`, `vault`, `policy`, `store`, `error`) with each I/O or crypto surface behind its own feature.",
+  "is": "The crate body — a feature-free substrate (`plc`, `did`, `handle`, `keys`, `vault`, `policy`, `store`, `directory`, `error`) with the minter, the ACP and the Postgres stores behind features.",
   "type": "code",
   "tags": [
     "category:source"
   ],
   "conventions": [
-    "Private modules are re-exported from `lib.rs`; only `plc`, `acp`, `axum`, `oauth`, `postgres`, `vc` are `pub mod`.",
-    "Unit tests live beside the code and use `memory.rs` fakes."
+    "Private modules are re-exported from `lib.rs`; only `plc`, `acp`, `postgres` are `pub mod`.",
+    "Unit tests live beside the code and use `memory.rs` fakes.",
+    "No transport, framework or RNG of its own: each resource arrives as a trait or parameter (F49)."
   ],
   "entry_points": [
     "src/lib.rs (the module + feature map)"
@@ -26,23 +27,13 @@
       "node": true
     },
     {
-      "name": "axum.rs",
-      "role": "`axum` feature — /.well-known/atproto-did router",
-      "node": false
-    },
-    {
-      "name": "broker.rs",
-      "role": "the toolkit layer — future credential behavior home",
-      "node": false
-    },
-    {
       "name": "did.rs",
       "role": "the Did newtype (F2)",
       "node": false
     },
     {
       "name": "directory.rs",
-      "role": "`directory` feature — HTTP submit to a PLC directory",
+      "role": "the `PlcDirectory` seam + `NoopPlcDirectory`; the consumer implements the client",
       "node": false
     },
     {
@@ -76,11 +67,6 @@
       "node": false
     },
     {
-      "name": "oauth/",
-      "role": "`oauth` feature — jacquard-backed atproto OAuth (mod.rs) + durable state store trait/bridge (store.rs)",
-      "node": false
-    },
-    {
       "name": "plc.rs",
       "role": "did:plc operations — build, sign, hash (byte-exact core, always on)",
       "node": false
@@ -97,17 +83,12 @@
     },
     {
       "name": "store.rs",
-      "role": "the storage seam — three persistence traits + records",
+      "role": "the storage seam — `KeyStore`, `PlcOperationLog` + the op-log record",
       "node": false
     },
     {
       "name": "vault.rs",
       "role": "SecretVault — envelope encryption under a root key (F4)",
-      "node": false
-    },
-    {
-      "name": "vc.rs",
-      "role": "`vc` feature — curated SpruceID ssi 0.16 wrap; private lane only, excludable",
       "node": false
     }
   ],
