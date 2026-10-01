@@ -9,7 +9,7 @@ actively wrong for a public library, in which case the reasoning is spelled out.
 Nothing here changes protocol behaviour. The one place where a behavioural fork
 appeared is **F8**, which the Engineer has ruled **strict** (see "Ruled by the
 Engineer" below). Every fork raised for the Engineer — B2, S3, S7, F8, F13,
-F32, F36–F48 — is now ruled; no decision is left open.
+F32, F36–F49 — is now ruled; no decision is left open.
 
 Source: `zurfur/backend/crates/{adapter-atproto,adapter-pg,domain,api}`.
 Spec facts cited below were verified against
@@ -35,6 +35,94 @@ instead. Called out here rather than assumed.
 ---
 
 ## Ruled by the Engineer
+
+### F49. vulpes is a pure ACP library — the consumer owns storage, transport and randomness
+
+**Where:** the whole crate: `Cargo.toml` features, `src/lib.rs`, and the PRs
+that carry it out (cut the non-ACP shells, cut Postgres, inject randomness);
+`docs/ROADMAP.md`.
+
+**Ruled (Engineer, 2026-10-01):** "Vulpes as a library is only meant to
+enforce the ACP as we designed it. Zurfur, the consumer, is the one that
+will dictate how to store stuff."
+
+Every kept module was tested against that sentence. One question decided
+each: does the ACP, or one of its conformance clauses, need it?
+
+- **Stays:**
+  - `acp` and `lexicons/`: the protocol itself.
+  - `plc`: the ACP's record CID is the same construction as a PLC
+    operation's (`plc::cid_bytes`).
+  - `did`, `handle`, `error`: the record types use them.
+  - The minter (`minter`, `policy`, `keys`, `vault`). §Conformance binds
+    minting ("must not mint a rotation layout that places a recovery
+    custodian below the operating custodian, or any custodian above the
+    user", F46), and `MintPolicy` is where that rule is enforced by
+    construction. Handing minting to each consumer would make the kill test
+    depend on every consumer re-implementing the senior-key rule correctly.
+- **Goes:**
+  - `postgres`: the sqlx stores, `migrations/`, `queries/`, `build.rs` and
+    the testcontainers suite.
+  - `oauth` (jacquard), `axum` (the `/.well-known/atproto-did` router) and
+    `vc` (the ssi wrap).
+  - `broker`, an empty placeholder.
+  - The reqwest `HttpPlcDirectory`. The `PlcDirectory` trait and
+    `NoopPlcDirectory` stay.
+- **Resources come from the caller, through traits:**
+
+  | Resource | Arrives as |
+  |---|---|
+  | storage | `KeyStore`, `PlcOperationLog` |
+  | the PLC directory | `PlcDirectory` |
+  | the verifier's transport | `RepoReader`, `DidResolver`, `StatusSource` (F40) |
+  | time | `now` |
+  | a signing key | `&impl Signer` |
+  | randomness | per-call `rng: &mut impl CryptoRngCore` on `SecretVault::seal`, `CustodyKeys::seal` / `seal_current` and `Minter::mint` |
+
+  Randomness was the one resource the library still created itself (an
+  `OsRng` nonce, a `thread_rng` for keys).
+  - **Ruled:** a per-call parameter, over construction-time injection.
+  - **Precedent for the per-call shape:** the crates vulpes already wraps,
+    aead's `generate_nonce(rng)` and atrium-crypto's `Keypair::create(&mut
+    rng)`.
+  - **The rejected shape:** a vulpes-owned `Entropy` trait (ring's
+    `SecureRandom` shape) held at construction, the way rustls's
+    `CryptoProvider` holds its RNG.
+  - **Compile-time enforcement:** `chacha20poly1305` loses `getrandom`, so
+    vulpes has no RNG of its own to reach for.
+- **The kill test is unaffected.** Verification never depended on where an
+  operator stores anything. Storage, transport and the services around the
+  ACP belong to the consumer, and its death is the consumer's inconvenience.
+- **The roadmap follows.** "Talk to a PDS" shrinks to the port traits, plus
+  a `RepoWriter` port when a writer needs one. These move to "Zurfur
+  consumes the ACP":
+  - the jacquard implementations and the Docker PDS test bed;
+  - the email attestor;
+  - the auto-renew loop.
+
+  The kill test stays here, against in-memory ports. F42's rules for a
+  status fetcher still bind whoever implements `StatusSource`.
+
+**Retired** (kept as history; they describe code that no longer exists):
+- F9, F10, F11, F12, F31: tables, migrations, `build.rs`, SQL files.
+- F13, F14, F15, F29: OAuth.
+- F22, F26: the `axum` route.
+- F25: default features are now `minter` alone.
+- F34: `vc`.
+
+**Narrowed:**
+- F1 loses `oauth::AuthError`.
+- F4 is down to one vault caller.
+- F17/F18/F19 lose `MemoryOAuthStateStore` and `oauth_bridge.rs`.
+- F24 keeps `NoopPlcDirectory`; the HTTP directory is the consumer's.
+- F27/F28 lose the `PgKeyStore` and `Authenticator` additions.
+- F32: MSRV 1.88 stays for let-chains, now that testcontainers is gone.
+- F33 keeps `KeyStore`; `PgKeyStore` goes.
+- F35: the MAC still sorts keys itself, because a consumer's store may
+  reorder them just as jsonb did.
+- F39 loses the JOSE path behind `vc`.
+- F40/F42 keep the ports and the rules; the implementations are the
+  consumer's.
 
 ### F48. Consent has four shapes — paired claims are the recommended one; witnesses are embedded signatures; the ownership kind is the first paired kind
 

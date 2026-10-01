@@ -1,4 +1,40 @@
-# Vulpes — continue here (updated 2026-08-25, F48 recorded)
+# Vulpes — continue here (updated 2026-10-01, F49 recorded)
+
+## 2026-10-01: F49 — vulpes is a pure ACP library
+
+Ruled by the Engineer: "Vulpes as a library is only meant to enforce the
+ACP as we designed it. Zurfur, the consumer, is the one that will dictate
+how to store stuff." Recorded as `FORKS.md` F49 and in `docs/ROADMAP.md`.
+
+- **Stays:** `acp` and the lexicons, `plc`, `did` / `handle` / `error`, and
+  the minter (`minter`, `policy`, `keys`, `vault`). The minter stays because
+  §Conformance binds minting (F46), and `MintPolicy` enforces that rule.
+- **Goes:** `oauth`, `axum`, `vc`, `broker`, the reqwest
+  `HttpPlcDirectory`, and all of Postgres (stores, migrations, queries,
+  `build.rs`, the testcontainers suite).
+- **Resources come from the caller.** Randomness is the last one: a
+  per-call `rng: &mut impl CryptoRngCore` on `seal` and `mint`.
+- **Moved to "Zurfur consumes the ACP":** the jacquard ports, the Docker
+  PDS test bed, the first attestor, and the auto-renew loop.
+
+Also landed today:
+- **The node tree is `NODE.json`** (Zurfur's format, through `nodes` 0.6;
+  `NODE.toml` seeded).
+- **`advisories` is green again** (rustls 0.23.45, chacha20 0.10.2).
+
+PR #30 (the characters-atproto amendments) needs a rebase onto the
+NODE.json tree. Resolve it by deleting the `NODE.md` files, then add the
+2026-09-12 amendment to the `docs` node's `characters-atproto.md` role.
+
+Next code work, in order (one PR each; plan in the session that ruled
+F49):
+1. Cut the non-ACP shells.
+2. Cut Postgres.
+3. Randomness from the caller.
+
+Then back to the F48 claim-record catch-up below.
+
+---
 
 ## 2026-08-25, later: F48 — consent has four shapes
 
