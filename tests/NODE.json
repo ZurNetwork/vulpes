@@ -3,6 +3,10 @@
   "charted": "2026-09-19",
   "short": "The integration suite — everything here needs Docker",
   "is": "The integration suite; everything here needs Docker (testcontainers boots one Postgres per test process via `pg.rs`).",
+  "type": "code",
+  "tags": [
+    "category:tests"
+  ],
   "conventions": [
     "Each file is a feature's end-to-end story against a real database; unit tests stay in `src/`.",
     "Run by `just test` (`cargo test --all-features --locked`)."

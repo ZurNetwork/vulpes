@@ -3,6 +3,10 @@
   "charted": "2026-09-19",
   "short": "The ACP reference implementation — pure, I/O-free; transport arrives through three ports",
   "is": "The ACP reference implementation, pure and I/O-free — everything a verifier needs except the transport, which arrives through the three ports.",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
   "conventions": [
     "The repository DID is always an explicit parameter, never read from a record.",
     "Canonical bytes are pinned by fixtures cross-checked against an independent encoder.",

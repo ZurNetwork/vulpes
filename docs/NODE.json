@@ -3,6 +3,11 @@
   "charted": "2026-09-19",
   "short": "The documents that rule the repo — spec, rationale, plan, handoff",
   "is": "The documents that rule the repo — spec, rationale, plan, handoff.",
+  "type": "document",
+  "tags": [
+    "category:docs",
+    "category:design"
+  ],
   "conventions": [
     "Spec changes land in `acp.md` with a Changelog entry; judgment calls go to `FORKS.md`, not here; rulings' source of truth is Confluence VU.",
     "`acp.md` fixes the *shapes* (the closed category list and its invariants); kinds under `<tld>.<domain>` belong to their authority, so a Zurfur-minted kind is expected, not a deviation."

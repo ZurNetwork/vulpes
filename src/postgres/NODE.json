@@ -3,6 +3,10 @@
   "charted": "2026-09-19",
   "short": "The three sqlx-backed stores, each built from a caller-owned PgPool",
   "is": "The three sqlx-backed stores, each built from a caller-owned `PgPool`; cheap to clone, own no runtime.",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
   "conventions": [
     "SQL lives in `queries/<store>/<op>.sql`, not inline; migrations come from `build.rs`'s embedded set.",
     "sqlx surface is `derive` only — never enable `macros`."

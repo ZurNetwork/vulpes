@@ -1,0 +1,31 @@
+# NODE.toml — project-specific configuration for the skills that run here.
+# Each table is seeded once by the skill that owns it; edit freely, nothing is overwritten.
+
+[tool]
+run = "just nodes"       # how the `nodes` binary is invoked here (e.g. "just nodes")
+install = "cargo install --git https://github.com/ZurNetwork/nodes --locked"
+check = "just nodes-check" # must be green before /chart reports
+fmt_on_write = false     # true when a hook already runs `nodes fmt` after each write
+
+[refs]
+index = ""               # file listing the citable page ids (id → status + title); "" = this project has no refs
+kind = ""                # what a page is here (e.g. "design page")
+on_superseded = ""       # how a ref to a superseded page gets re-pointed (a command, a skill, or a sentence)
+
+[root]
+notes = [                # tree-wide conventions, pinned verbatim as the root node's first notes
+  "Confluence VU: Ruling Record 49184769, ACP pointer page 49905665.",
+]
+
+[tickets]
+tracker = ""             # "jira" | "github" | "linear" | …; "" = no tracker (tickets retired 2026-08-12 — the plan is docs/ROADMAP.md)
+key = ""                 # ticket key prefix ("ABC" for ABC-123); "" = no ticket keys — commit subjects carry an `[area]` prefix instead ([acp], [docs], [chore])
+branch = "feature/{slug}" # how a branch is named (lowercase); bug/, chore/, docs/, hotfix/ per CLAUDE.md
+
+[pr]
+base = "main"            # the branch PRs target — `main` below means this
+ci_env = [               # ways CI's environment differs from a dev machine + how to reproduce each locally, one per entry
+  "docs job sets RUSTDOCFLAGS=-D warnings — `just doc` sets it too",
+  "advisories runs cargo-deny against a freshly fetched advisory DB with --all-features — `just deny` mirrors it; a new RUSTSEC entry turns it red with no code change",
+]
+reviewer = "copilot-pull-request-reviewer[bot]"   # review bot requested on PRs with real review surface; "" = none

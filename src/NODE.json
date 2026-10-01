@@ -3,6 +3,10 @@
   "charted": "2026-09-19",
   "short": "The crate body — feature-free substrate, each I/O or crypto surface behind a feature",
   "is": "The crate body — a feature-free substrate (`plc`, `did`, `handle`, `keys`, `vault`, `policy`, `store`, `error`) with each I/O or crypto surface behind its own feature.",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
   "conventions": [
     "Private modules are re-exported from `lib.rs`; only `plc`, `acp`, `axum`, `oauth`, `postgres`, `vc` are `pub mod`.",
     "Unit tests live beside the code and use `memory.rs` fakes."
