@@ -1,8 +1,9 @@
 # vulpes
 
-AT Protocol identity for Rust servers, and the reference implementation of the
-**ACP (Attested Claims Protocol)**. The `v0.1.0` substrate (did:plc write path,
-key custody, OAuth state) is shipped; current work is the ACP public lane —
+The reference implementation of the **ACP (Attested Claims Protocol)** on AT
+Protocol, as a pure library: it enforces the ACP, and the consumer owns
+storage and transport (FORKS F49). The `v0.1.0` substrate (did:plc write
+path, key custody) is shipped; current work is the ACP public lane —
 the plan is `docs/ROADMAP.md` (tickets retired 2026-08-12; elaborate roadmap
 lines in conversation, not Jira).
 

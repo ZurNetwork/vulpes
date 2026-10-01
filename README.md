@@ -1,6 +1,6 @@
 # vulpes
 
-**AT Protocol identity for Rust servers — the `did:plc` write path.**
+**The ACP (Attested Claims Protocol) on AT Protocol, and the `did:plc` write path it binds.**
 
 Reading an atproto identity is well served in Rust. *Operating* one is not.
 Minting a `did:plc`, custodying its keys, re-pointing its handle and tombstoning
@@ -8,10 +8,12 @@ it are a byte-exact signing problem with a durability problem wrapped around it,
 and every server that has needed it so far has written its own. vulpes is that
 code, extracted from a production service and made reusable.
 
-It is deliberately narrow. vulpes does identity — mint, update, tombstone, custody,
-handle syntax, OAuth session storage — and nothing else. It holds no product
-policy: no reserved-name lists, no rate limits, no quarantine windows. Those are
-yours.
+It is deliberately narrow. vulpes enforces the ACP — claim and attestation
+records, signing, status lists, verification — and does the identity work the
+protocol binds: mint, update, tombstone, custody, handle syntax. It carries no
+transport or framework of its own: storage and the network arrive through traits
+you implement. And it holds no product policy: no reserved-name lists, no rate
+limits, no quarantine windows. Those are yours.
 
 ```toml
 [dependencies]
@@ -53,12 +55,10 @@ fails before anything ships.
 
 | feature | default | brings |
 |---|---|---|
-| *(core)* | always | the `did:plc` operation format, `Did`, `Handle`, `SecretVault`, `CustodyKeys`, the storage traits, `MintPolicy`, `NoopPlcDirectory` |
+| *(core)* | always | the `did:plc` operation format, `Did`, `Handle`, `SecretVault`, `CustodyKeys`, the storage traits, `MintPolicy`, `PlcDirectory` / `NoopPlcDirectory` |
 | `minter` | ✅ | `Minter` — key generation, mint / update-handle / tombstone |
-| `directory` | ✅ | `HttpPlcDirectory` — submission over HTTP (`reqwest`) |
-| `oauth` | | `oauth::Authenticator` and the sealed, durable state bridge (`jacquard`) |
 | `postgres` | | sqlx implementations of every storage trait, plus the migration SQL |
-| `axum` | | `/.well-known/atproto-did` as a mountable router |
+| `acp` | | the Attested Claims Protocol — records, signing, status lists, the verifier over caller-implemented ports |
 
 Every feature compiles alone, and `--no-default-features` leaves a pure
 protocol core with no crypto and no I/O.
@@ -100,15 +100,14 @@ tombstone* detectable (it collides on `UNIQUE(cid)`) and a blind retry safe:
 both treat "the identical operation already landed" as success, so a caller
 unsure whether an append committed can retry without erroring or double-writing.
 
-### `directory` — submitting operations
+### Submitting operations
 
-```rust
-let directory = vulpes::HttpPlcDirectory::canonical();   // https://plc.directory
-```
-
-Or `NoopPlcDirectory` while you are building — it accepts every operation and
-publishes nothing, so you can exercise the whole path without registering
-identities you do not mean to keep.
+`PlcDirectory` is the seam a signed operation goes out through. Implement it over
+your own HTTP client — its timeouts and egress policy are yours; vulpes ships no
+client. A `did` reaches `submit` as a `&str`: parse it as a `Did` before it goes
+into a URL. `NoopPlcDirectory` accepts every operation and publishes nothing, so
+you can exercise the whole path without registering identities you do not mean
+to keep.
 
 ### `postgres` — storage, included
 
@@ -116,8 +115,7 @@ identities you do not mean to keep.
 vulpes::postgres::migrate(&pool).await?;
 
 let keys = Arc::new(vulpes::postgres::PgKeyStore::new(pool.clone())); // holds no vault: sealing lives in the minter
-let log  = Arc::new(vulpes::postgres::PgPlcOperationLog::new(pool.clone()));
-let oauth_state = vulpes::postgres::PgOAuthStateStore::new(pool);
+let log  = Arc::new(vulpes::postgres::PgPlcOperationLog::new(pool));
 ```
 
 The migrations ship two ways: embedded (call `migrate`) or as files under
@@ -130,65 +128,6 @@ EXISTS` would record that collision as a *successful* migration that created
 nothing — after which vulpes reads and writes a schema it does not control. Each
 migration runs in a transaction, so a collision fails the call, records nothing,
 and leaves your table untouched.
-
-### `oauth` — sign-in over atproto
-
-```rust
-let auth = vulpes::oauth::Authenticator::new(
-    vulpes::oauth::OAuthConfig::loopback(redirect_uri)?,   // http://127.0.0.1 or http://[::1]
-    oauth_state,
-    vault,
-)?;
-
-let handle = Handle::try_new("alice.example.com")?;
-let url = auth.start(&handle).await?;                                  // redirect here
-let did = auth.complete(code, state, iss).await?;                      // at your callback
-```
-
-`jacquard` does the protocol; vulpes makes its state durable *and* encrypted, and
-keeps the protocol library behind one seam. It builds a **loopback** client —
-deliberate for v0.1.0; a hosted public/confidential client is an additive change
-gated on a consumer needing it (see [FORKS.md](FORKS.md) F13). A callback with no
-`iss` is rejected before the token exchange (the atproto profile requires it).
-
-> **⚠ SSRF: install a guarded connector.** `start` takes a validated `Handle`,
-> never a string, so an attacker cannot pass `https://169.254.169.254/…` and
-> reach the resolver's "this input is a service URL, fetch it" branch. That is
-> the only part vulpes closes. Once a handle is accepted, `jacquard` fetches
-> `https://<handle>/.well-known/atproto-did`, then whatever `serviceEndpoint`
-> the DID document names — **with no host or scheme guard of its own**, on names
-> the visitor controls and which may resolve to a loopback or link-local address
-> (including on a re-resolve, i.e. DNS rebinding). vulpes's default client sets
-> connect and request timeouts but filters no addresses. Supply your own via
-> `Authenticator::with_client(config, store, vault, client)` — a `reqwest::Client`
-> whose connector refuses private, loopback, link-local and unique-local
-> destinations. Which ranges are private is a deployment fact this crate cannot
-> know, so it does not guess.
-
-### `axum` — serving handle resolution
-
-```rust
-Router::new()
-    .merge(vulpes::axum::atproto_did_router(resolver, HandleDomain::try_new("example.com")?))
-```
-
-Serves `GET /.well-known/atproto-did`, answering only for subdomains of the
-namespace you name — at a real label boundary, so `evil-example.com` is not a
-subdomain of `example.com`. Mount it outside your CSRF and session layers; a
-resolver carries neither.
-
-The authority is read from the request URI (HTTP/2 and HTTP/3 send no `Host`
-header — it rides `:authority`) with the `Host` header as the fallback, so the
-same handle resolves over every protocol version. Because the answer depends on
-the authority rather than the path, every response carries `Cache-Control:
-no-store` and `Vary: Host`.
-
-Note that the authority is **client-supplied**, not the authority the connection
-was opened to — an HTTP/1.1 absolute-form request-target carries its own, and per
-RFC 9112 §3.2.2 that one wins. Harmless here (the route is public,
-unauthenticated, and holds no per-handle secret), but it means `Vary: Host` is
-best-effort — `no-store` is what actually protects you, so **don't put a
-Host-keyed cache in front of this route**.
 
 ---
 
@@ -231,26 +170,25 @@ rather than rebuilding a default that would silently drop a service binding.
 
 ## Security posture
 
-**Envelope encryption.** One 32-byte root key (`SecretVault`) wraps every at-rest
-secret with XChaCha20-Poly1305 — custody keys and OAuth state alike. A database
-compromise alone yields nothing usable. **The root key's custody is yours**: a
+**Envelope encryption.** One 32-byte root key (`SecretVault`) wraps custody keys
+at rest with XChaCha20-Poly1305. A database compromise alone yields nothing
+usable. **The root key's custody is yours**: a
 config or environment variable is fine for development and is *not* a hardware
 boundary. For real identities, keep it in a KMS or HSM. The seam is one type
 wide, so that swap is not a schema change.
 
-**Associated data binds a blob to its row, and each family is tagged.** Custody
-is sealed under `vulpes.custody\0` + its DID; OAuth state under a table-name tag
-+ its primary key, length-prefixed so the same bytes cannot be re-split into a
-different key. An attacker with database *write* access cannot lift one
-identity's keys onto another DID, one user's session onto another row, or a blob
-of one family onto another — the tag check fails. Which scheme sealed a custody
+**Associated data binds a blob to its row, and the family is tagged.** Custody
+is sealed under `vulpes.custody\0` + its DID. An attacker with database *write*
+access cannot lift one identity's keys onto another DID, or a blob sealed for
+another purpose under the same root key onto a custody row — the tag check
+fails. Which scheme sealed a custody
 blob is recorded per row (`key_version`) and **read back**: an unknown version is
 an error, never a guess.
 
 **Fails closed.** A value that will not open is an error, never a `None`. A
 legacy plaintext row, a tampered blob, the wrong root key — all error at the
 read. Absence and failure are kept apart on purpose: conflating them turns a
-database fault into "this session does not exist".
+database fault into "these keys do not exist".
 
 **Keys are zeroized and redacted.** `SecretKey` wipes on drop, and so does
 `SecretVault`'s root key — every clone independently, since each holds its own
@@ -282,10 +220,9 @@ serializes onto the new tip.
 **No unsafe code**, enforced by `#![forbid(unsafe_code)]`.
 
 **Dependency advisories are a CI gate.** `cargo deny --all-features check
-advisories` runs on every PR. The advisories that fire against today's lockfile
-are allow-listed in `deny.toml` — each with why it is not exploitable here and
-what would retire the entry — so the job is green for written-down reasons, and
-a new advisory fails it.
+advisories` runs on every PR, and nothing is allow-listed today. A new advisory
+fails the job until it is fixed, or allow-listed in `deny.toml` with why it is
+not exploitable here and what would retire the entry.
 
 ---
 
@@ -293,7 +230,7 @@ a new advisory fails it.
 
 ```bash
 cargo test --all-features     # needs a container runtime for the PostgreSQL suite
-cargo test                    # core + minter + directory, no containers
+cargo test                    # core + minter, no containers
 ```
 
 The PostgreSQL suite boots throwaway containers via `testcontainers` (pinned to
