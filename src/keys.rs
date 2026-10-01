@@ -14,6 +14,7 @@
 //! the directory's recovery window. Which role sits where is
 //! [policy](crate::MintPolicy), not a hard-coded fact.
 
+use rand_core::CryptoRngCore;
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -224,7 +225,8 @@ impl CustodyKeys {
     }
 
     /// Seal this bundle under `vault`, binding it to `did` as associated data,
-    /// using [`CustodyEnvelope::CURRENT`].
+    /// using [`CustodyEnvelope::CURRENT`]. The nonce is drawn from `rng` (see
+    /// [`SecretVault::seal`]).
     ///
     /// The DID is bound in as AEAD `aad`, so a sealed bundle is
     /// cryptographically tied to its row: an attacker with database write
@@ -234,7 +236,12 @@ impl CustodyKeys {
     /// **Record [`CustodyEnvelope::CURRENT`] beside the blob** (the
     /// `key_version` column), and pass it back to `open`. Writes are pinned to
     /// the current scheme deliberately; there is no way to ask for an older one.
-    pub fn seal(&self, vault: &SecretVault, did: &Did) -> Result<Vec<u8>, VaultError> {
+    pub fn seal(
+        &self,
+        rng: &mut impl CryptoRngCore,
+        vault: &SecretVault,
+        did: &Did,
+    ) -> Result<Vec<u8>, VaultError> {
         // `Zeroizing` wipes the concatenated plaintext bundle on drop, so raw
         // key bytes do not linger in the heap after sealing.
         let mut plaintext =
@@ -249,7 +256,7 @@ impl CustodyKeys {
             }
             plaintext.extend_from_slice(bytes);
         }
-        vault.seal(&CustodyEnvelope::CURRENT.aad(did), &plaintext)
+        vault.seal(rng, &CustodyEnvelope::CURRENT.aad(did), &plaintext)
     }
 
     /// Open a blob produced by [`seal`](CustodyKeys::seal). `did` must be the
@@ -288,8 +295,13 @@ impl CustodyKeys {
     /// bound to `did` (see [`seal`](CustodyKeys::seal)). This is the seam that
     /// makes a plaintext custody store *unrepresentable*: a store never receives
     /// a `CustodyKeys`, only the opaque result of this.
-    pub fn seal_current(&self, vault: &SecretVault, did: &Did) -> Result<SealedKeys, VaultError> {
-        let blob = self.seal(vault, did)?;
+    pub fn seal_current(
+        &self,
+        rng: &mut impl CryptoRngCore,
+        vault: &SecretVault,
+        did: &Did,
+    ) -> Result<SealedKeys, VaultError> {
+        let blob = self.seal(rng, vault, did)?;
         Ok(SealedKeys::from_parts(
             CustodyEnvelope::CURRENT.into(),
             blob,
@@ -351,6 +363,7 @@ impl std::fmt::Debug for SealedKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::OsRng;
 
     fn keys() -> CustodyKeys {
         CustodyKeys {
@@ -373,7 +386,7 @@ mod tests {
     // This is the shape a `KeyStore` holds — never plaintext.
     #[test]
     fn sealed_keys_round_trip_under_the_stamped_version() {
-        let sealed = keys().seal_current(&vault(), &did()).unwrap();
+        let sealed = keys().seal_current(&mut OsRng, &vault(), &did()).unwrap();
         assert_eq!(sealed.version(), i32::from(CustodyEnvelope::CURRENT));
 
         let envelope = CustodyEnvelope::try_from(sealed.version()).unwrap();
@@ -385,7 +398,7 @@ mod tests {
     // round-trip a storage adapter performs.
     #[test]
     fn sealed_keys_from_parts_reassembles() {
-        let sealed = keys().seal_current(&vault(), &did()).unwrap();
+        let sealed = keys().seal_current(&mut OsRng, &vault(), &did()).unwrap();
         let rebuilt = SealedKeys::from_parts(sealed.version(), sealed.blob().to_vec());
         assert_eq!(rebuilt, sealed);
     }
@@ -393,7 +406,7 @@ mod tests {
     // The Debug of a SealedKeys shows its shape, not its ciphertext bytes.
     #[test]
     fn sealed_keys_debug_shows_no_bytes() {
-        let sealed = keys().seal_current(&vault(), &did()).unwrap();
+        let sealed = keys().seal_current(&mut OsRng, &vault(), &did()).unwrap();
         let shown = format!("{sealed:?}");
         assert!(shown.contains("bytes"), "shows a length, got: {shown}");
         assert!(
@@ -496,7 +509,9 @@ mod tests {
         for role in KeyRole::ALL {
             plaintext.extend_from_slice(keys().role(role).expose());
         }
-        let legacy = vault().seal(did().as_str().as_bytes(), &plaintext).unwrap();
+        let legacy = vault()
+            .seal(&mut OsRng, did().as_str().as_bytes(), &plaintext)
+            .unwrap();
 
         assert_eq!(
             CustodyKeys::open(&vault(), &did(), &legacy, CustodyEnvelope::V1).unwrap(),
@@ -516,7 +531,7 @@ mod tests {
     // so a row mislabelled as legacy fails closed rather than opening.
     #[test]
     fn a_current_bundle_does_not_open_under_v1() {
-        let blob = keys().seal(&vault(), &did()).unwrap();
+        let blob = keys().seal(&mut OsRng, &vault(), &did()).unwrap();
         assert!(matches!(
             CustodyKeys::open(&vault(), &did(), &blob, CustodyEnvelope::V1),
             Err(VaultError::Open)
@@ -533,7 +548,7 @@ mod tests {
 
     #[test]
     fn seal_open_round_trips() {
-        let blob = keys().seal(&vault(), &did()).unwrap();
+        let blob = keys().seal(&mut OsRng, &vault(), &did()).unwrap();
         assert_eq!(
             CustodyKeys::open(&vault(), &did(), &blob, CustodyEnvelope::CURRENT).unwrap(),
             keys()
@@ -543,7 +558,7 @@ mod tests {
     // The sealed blob must NOT contain the plaintext key bytes.
     #[test]
     fn sealed_bundle_is_not_plaintext() {
-        let blob = keys().seal(&vault(), &did()).unwrap();
+        let blob = keys().seal(&mut OsRng, &vault(), &did()).unwrap();
         for byte in [0xAAu8, 0xBB, 0xCC] {
             let run = vec![byte; SECRET_KEY_LEN];
             assert!(
@@ -557,7 +572,7 @@ mod tests {
     // cannot be opened under another, so custody rows cannot be swapped.
     #[test]
     fn bundle_cannot_be_opened_under_a_different_did() {
-        let blob = keys().seal(&vault(), &did()).unwrap();
+        let blob = keys().seal(&mut OsRng, &vault(), &did()).unwrap();
         let other = Did::new("did:plc:mallory");
         assert!(matches!(
             CustodyKeys::open(&vault(), &other, &blob, CustodyEnvelope::CURRENT),
@@ -572,7 +587,7 @@ mod tests {
             ..keys()
         };
         assert!(matches!(
-            malformed.seal(&vault(), &did()),
+            malformed.seal(&mut OsRng, &vault(), &did()),
             Err(VaultError::PlaintextLength {
                 expected: 32,
                 actual: 16
@@ -587,7 +602,7 @@ mod tests {
     #[test]
     fn a_short_authenticated_bundle_is_refused() {
         let aad = CustodyEnvelope::CURRENT.aad(&did());
-        let blob = vault().seal(&aad, &[0u8; 64]).unwrap();
+        let blob = vault().seal(&mut OsRng, &aad, &[0u8; 64]).unwrap();
         assert!(matches!(
             CustodyKeys::open(&vault(), &did(), &blob, CustodyEnvelope::CURRENT),
             Err(VaultError::PlaintextLength {

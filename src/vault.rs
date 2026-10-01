@@ -33,6 +33,15 @@
 //! [`SecretVault`] type and the seal/open seam are deliberately narrow so that
 //! swap is a change of *one* type, not a schema migration.
 //!
+//! # The nonce comes from the caller too
+//!
+//! [`seal`](SecretVault::seal) takes the RNG it draws its nonce from: vulpes
+//! has no source of randomness of its own. Pass the operating system's
+//! (`rand_core::OsRng` with its `getrandom` feature, or `rand::rngs::OsRng`) or
+//! a CSPRNG seeded from it. A **seeded, reproducible** RNG is for tests only: two
+//! seals that draw the same nonce under one root key break the AEAD's
+//! confidentiality for both.
+//!
 //! # Associated data binds a blob to its row
 //!
 //! Every seal takes an `aad` — associated data that is authenticated but **not**
@@ -42,10 +51,11 @@
 //! sealed secret onto another row. That is defense in depth on top of the core
 //! property (a read alone yields nothing).
 
-use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
+use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
+use rand_core::CryptoRngCore;
 use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
@@ -117,8 +127,10 @@ pub enum VaultError {
 ///
 /// ```
 /// # use vulpes::SecretVault;
+/// use rand::rngs::OsRng;
+///
 /// let vault = SecretVault::from_bytes(&[7u8; 32]).unwrap();
-/// let blob = vault.seal(b"row-key", b"a secret").unwrap();
+/// let blob = vault.seal(&mut OsRng, b"row-key", b"a secret").unwrap();
 /// assert_eq!(vault.open(b"row-key", &blob).unwrap().as_slice(), b"a secret");
 /// // The same blob will not open under a different row key.
 /// assert!(vault.open(b"other-row", &blob).is_err());
@@ -157,15 +169,25 @@ impl SecretVault {
         XChaCha20Poly1305::new((&self.0).into())
     }
 
-    /// Seal `plaintext` into an opaque blob: a fresh random nonce followed by
-    /// the AEAD ciphertext. Only a holder of this root key can [`open`] it.
+    /// Seal `plaintext` into an opaque blob: a fresh nonce drawn from `rng`,
+    /// followed by the AEAD ciphertext. Only a holder of this root key can
+    /// [`open`] it.
+    ///
+    /// `rng` must be a CSPRNG — the operating system's, or one seeded from it.
+    /// A reproducible RNG repeats nonces, and a repeated nonce under one root
+    /// key breaks confidentiality; see the module docs.
     ///
     /// `aad` is bound in as AEAD associated data — not stored, but required
     /// identically on open. Pass the row's primary key; see the module docs.
     ///
     /// [`open`]: SecretVault::open
-    pub fn seal(&self, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, VaultError> {
-        let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    pub fn seal(
+        &self,
+        rng: &mut impl CryptoRngCore,
+        aad: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, VaultError> {
+        let nonce = XChaCha20Poly1305::generate_nonce(&mut *rng);
         let payload = Payload {
             msg: plaintext,
             aad,
@@ -255,6 +277,8 @@ impl SecretVault {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
+    use rand::rngs::{OsRng, StdRng};
 
     const AAD: &[u8] = b"example.row\0did:plc:alice";
     const PLAINTEXT: &[u8] = b"{\"refresh_token\":\"refresh-token\"}";
@@ -265,7 +289,7 @@ mod tests {
 
     #[test]
     fn seal_open_round_trips() {
-        let blob = vault().seal(AAD, PLAINTEXT).unwrap();
+        let blob = vault().seal(&mut OsRng, AAD, PLAINTEXT).unwrap();
         assert_eq!(vault().open(AAD, &blob).unwrap().as_slice(), PLAINTEXT);
     }
 
@@ -273,7 +297,7 @@ mod tests {
     // the plaintext bytes.
     #[test]
     fn sealed_blob_is_not_plaintext() {
-        let blob = vault().seal(AAD, PLAINTEXT).unwrap();
+        let blob = vault().seal(&mut OsRng, AAD, PLAINTEXT).unwrap();
         assert_ne!(blob.as_slice(), PLAINTEXT);
         let needle = b"refresh-token";
         assert!(
@@ -286,17 +310,36 @@ mod tests {
     // yields different bytes — no ciphertext equality oracle across rows.
     #[test]
     fn each_seal_uses_a_fresh_nonce() {
-        let first = vault().seal(AAD, PLAINTEXT).unwrap();
-        let second = vault().seal(AAD, PLAINTEXT).unwrap();
+        let first = vault().seal(&mut OsRng, AAD, PLAINTEXT).unwrap();
+        let second = vault().seal(&mut OsRng, AAD, PLAINTEXT).unwrap();
         assert_ne!(
             first, second,
             "identical plaintext must not seal to identical bytes"
         );
     }
 
+    // The nonce is the caller's: the vault draws it from the RNG it is handed
+    // and from nowhere else. Two RNGs in the same state give the same blob;
+    // a different state gives a different one.
+    #[test]
+    fn the_nonce_comes_from_the_callers_rng() {
+        let seal = |seed| {
+            vault()
+                .seal(&mut StdRng::seed_from_u64(seed), AAD, PLAINTEXT)
+                .unwrap()
+        };
+        assert_eq!(seal(1), seal(1), "the same RNG state, the same nonce");
+        assert_ne!(seal(1), seal(2), "another RNG state, another nonce");
+        assert_eq!(
+            vault().open(AAD, &seal(1)).unwrap().as_slice(),
+            PLAINTEXT,
+            "a caller-supplied nonce opens like any other"
+        );
+    }
+
     #[test]
     fn wrong_root_key_cannot_open() {
-        let blob = vault().seal(AAD, PLAINTEXT).unwrap();
+        let blob = vault().seal(&mut OsRng, AAD, PLAINTEXT).unwrap();
         let other = SecretVault::from_bytes(&[8u8; ROOT_KEY_LEN]).unwrap();
         assert!(matches!(other.open(AAD, &blob), Err(VaultError::Open)));
     }
@@ -305,7 +348,7 @@ mod tests {
     // another, so sealed secrets cannot be swapped across rows.
     #[test]
     fn blob_cannot_be_opened_under_a_different_aad() {
-        let blob = vault().seal(AAD, PLAINTEXT).unwrap();
+        let blob = vault().seal(&mut OsRng, AAD, PLAINTEXT).unwrap();
         assert!(matches!(
             vault().open(b"example.row\0did:plc:mallory", &blob),
             Err(VaultError::Open)
@@ -314,7 +357,7 @@ mod tests {
 
     #[test]
     fn tampered_blob_fails() {
-        let mut blob = vault().seal(AAD, PLAINTEXT).unwrap();
+        let mut blob = vault().seal(&mut OsRng, AAD, PLAINTEXT).unwrap();
         let last = blob.len() - 1;
         blob[last] ^= 0xFF;
         assert!(matches!(vault().open(AAD, &blob), Err(VaultError::Open)));
@@ -433,7 +476,7 @@ mod tests {
         assert_zeroize_on_drop::<SecretVault>();
 
         let mut vault = vault();
-        let blob = vault.seal(AAD, PLAINTEXT).unwrap();
+        let blob = vault.seal(&mut OsRng, AAD, PLAINTEXT).unwrap();
         vault.zeroize();
         assert!(
             matches!(vault.open(AAD, &blob), Err(VaultError::Open)),
@@ -447,7 +490,7 @@ mod tests {
     #[test]
     fn dropping_a_clone_leaves_the_original_usable() {
         let vault = vault();
-        let blob = vault.seal(AAD, PLAINTEXT).unwrap();
+        let blob = vault.seal(&mut OsRng, AAD, PLAINTEXT).unwrap();
 
         drop(vault.clone());
 

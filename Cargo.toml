@@ -19,7 +19,7 @@ publish = false
 # vulpes carries no transport or framework of its own (FORKS F49).
 default = ["minter"]
 # Key generation and the mint / update-handle / tombstone operations.
-minter = ["dep:atrium-crypto", "dep:rand", "dep:base64"]
+minter = ["dep:atrium-crypto", "dep:base64"]
 # The ACP reference verifier: the record types with canonical DAG-CBOR bytes,
 # the attestation pre-image / sign / verify heart, status lists, and the
 # seven-step verifier over three caller-implemented I/O ports. No transport
@@ -38,8 +38,15 @@ serde_ipld_dagcbor = "0.6"
 sha2 = "0.10"
 # base32 for the DID suffix and the multibase CID.
 data-encoding = "2"
-# Envelope encryption of secrets at rest (AEAD under a root key).
-chacha20poly1305 = "0.10"
+# Envelope encryption of secrets at rest (AEAD under a root key). vulpes asks
+# for no `getrandom`: the nonce comes from the caller's RNG (FORKS F49).
+chacha20poly1305 = { version = "0.10", default-features = false, features = [
+  "alloc",
+  "rand_core",
+] }
+# The RNG traits (`CryptoRngCore`) every randomness-drawing call takes — the
+# same rand_core the AEAD and atrium-crypto use. Traits only; no RNG.
+rand_core = "0.6"
 # HKDF-SHA256 derives a dedicated MAC subkey from the vault root key, and
 # HMAC-SHA256 is the operation-log integrity tag — so the root key stays
 # single-purpose (AEAD) and the MAC uses its own domain-separated key.
@@ -54,7 +61,6 @@ subtle = "2"
 # secp256k1 keygen + atproto-canonical ECDSA-SHA256 sign (low-S, 64-byte r‖s) +
 # did:key multikey formatting. The vetted primitive, not hand-rolled k256.
 atrium-crypto = { version = "0.1.3", optional = true }
-rand = { version = "0.8", optional = true }
 # base64url (no pad) for the operation signature.
 base64 = { version = "0.22", optional = true }
 
@@ -67,6 +73,9 @@ serde_bytes = { version = "0.11", optional = true }
 tokio = { version = "1.49.0", features = ["macros", "rt"] }
 # Assert signatures are low-S (Signature::normalize_s) in tests.
 k256 = { version = "0.13", features = ["ecdsa"] }
+# Test RNGs: `OsRng` for ordinary runs, a seeded `StdRng` where a test needs
+# reproducible keys or nonces.
+rand = "0.8"
 serde_json = "1.0"
 
 [package.metadata.docs.rs]
