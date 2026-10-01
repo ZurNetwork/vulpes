@@ -47,9 +47,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # The PostgreSQL suite boots throwaway containers via testcontainers;
-      # ubuntu-latest runners ship a Docker daemon, so no service block is
-      # needed (and none would do — each test clones its own database).
       - run: cargo test --all-features --locked
 
   features:
@@ -64,10 +61,8 @@ jobs:
         features:
           - ""
           - "minter"
-          - "postgres"
           - "acp"
           - "acp,minter"
-          - "minter,postgres"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

@@ -48,7 +48,7 @@ feature must pass it before shipping.
 
 - `just gate` runs everything CI runs (fmt-check, clippy, test, features
   matrix, cargo-deny advisories, docs). Green locally = green in CI.
-- Tests that need Postgres boot testcontainers; Docker must be running.
+- No test needs a service or a container: storage is the consumer's (F49).
 - MSRV 1.88 · edition 2024 · not published to crates.io (git-dep only, by
   ruling).
 

@@ -22,8 +22,7 @@ fmt-check:
 lint:
     cargo clippy --all-features --all-targets --locked -- -D warnings
 
-# CI's `test` job. The Postgres suite boots throwaway containers via
-# testcontainers — a running Docker daemon is the only prerequisite.
+# CI's `test` job. Pure unit tests — no services, no containers.
 test:
     cargo test --all-features --locked
 
@@ -31,7 +30,7 @@ test:
 features:
     #!/usr/bin/env bash
     set -euo pipefail
-    for f in "" "minter" "postgres" "acp" "acp,minter" "minter,postgres"; do
+    for f in "" "minter" "acp" "acp,minter"; do
         echo "--- features: '${f}'"
         cargo check --no-default-features --features "${f}" --all-targets --locked
     done
