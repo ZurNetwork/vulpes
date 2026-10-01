@@ -3,8 +3,9 @@
 //! vulpes enforces the ACP as designed: claim and attestation records with
 //! canonical bytes, signing and verification, status lists, and the
 //! `did:plc` write path whose rotation layout the protocol's conformance
-//! clauses bind. It carries no transport or framework of its own: storage and
-//! the network arrive from the caller, through traits.
+//! clauses bind. It carries no transport, framework or randomness of its own:
+//! storage and the network arrive from the caller through traits, and every
+//! call that needs randomness takes the caller's RNG.
 //!
 //! # What is here
 //!
@@ -41,6 +42,7 @@
 //! #     vault: vulpes::SecretVault,
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
 //! use std::sync::Arc;
+//! use rand::rngs::OsRng; // or rand_core::OsRng — any CSPRNG
 //! use vulpes::{Handle, MintPolicy, Minter, NoopPlcDirectory};
 //!
 //! // `keys` and `log` are your storage: implementations of `KeyStore` and
@@ -56,7 +58,7 @@
 //! )?;
 //!
 //! let handle = Handle::try_new("alice.example.com")?;
-//! let did = minter.mint(&handle).await?;
+//! let did = minter.mint(&mut OsRng, &handle).await?;
 //! println!("minted {did}");
 //!
 //! // Later: re-point the handle, or retire the identity.

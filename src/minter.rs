@@ -33,6 +33,7 @@ use std::sync::Arc;
 
 use atrium_crypto::keypair::{Did as _, Export as _, Secp256k1Keypair};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand_core::CryptoRngCore;
 
 use crate::plc::{
     OP_TYPE_OPERATION, OP_TYPE_TOMBSTONE, PlcDocument, PlcError, PlcOperation, PlcService,
@@ -146,19 +147,16 @@ struct RoleKeypairs {
 }
 
 impl RoleKeypairs {
-    /// Generate one independent secp256k1 keypair per role.
+    /// Generate one independent secp256k1 keypair per role, from `rng`.
     ///
     /// All three are generated even when the policy does not reference every
     /// role, so the custody bundle's on-disk shape is fixed and a later policy
     /// change can use a key that already exists rather than needing a rotation.
-    fn generate() -> Self {
-        // Generated inside one block so the non-`Send` `ThreadRng` is dropped
-        // before any `.await` in the caller (the keypairs themselves are `Send`).
-        let mut rng = rand::thread_rng();
+    fn generate(rng: &mut impl CryptoRngCore) -> Self {
         Self {
-            cold_recovery: Secp256k1Keypair::create(&mut rng),
-            operational: Secp256k1Keypair::create(&mut rng),
-            signing: Secp256k1Keypair::create(&mut rng),
+            cold_recovery: Secp256k1Keypair::create(rng),
+            operational: Secp256k1Keypair::create(rng),
+            signing: Secp256k1Keypair::create(rng),
         }
     }
 
@@ -196,13 +194,14 @@ impl RoleKeypairs {
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use vulpes::{Minter, MintPolicy, NoopPlcDirectory, Handle, SecretVault};
+/// # use rand::rngs::OsRng;
 /// # async fn example(
 /// #     keys: Arc<dyn vulpes::KeyStore>,
 /// #     log: Arc<dyn vulpes::PlcOperationLog>,
 /// #     vault: SecretVault,
 /// # ) -> Result<(), Box<dyn std::error::Error>> {
 /// let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only(), vault)?;
-/// let did = minter.mint(&Handle::try_new("alice.example.com")?).await?;
+/// let did = minter.mint(&mut OsRng, &Handle::try_new("alice.example.com")?).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -238,8 +237,13 @@ impl Minter {
 
     /// Seal `keys` for `did` and hand the store the opaque [`SealedKeys`] — the
     /// Minter's half of "a store never sees plaintext custody".
-    fn seal_custody(&self, did: &Did, keys: &CustodyKeys) -> Result<SealedKeys, MintError> {
-        Ok(keys.seal_current(&self.vault, did)?)
+    fn seal_custody(
+        &self,
+        rng: &mut impl CryptoRngCore,
+        did: &Did,
+        keys: &CustodyKeys,
+    ) -> Result<SealedKeys, MintError> {
+        Ok(keys.seal_current(rng, &self.vault, did)?)
     }
 
     /// Open a [`SealedKeys`] the store returned back into [`CustodyKeys`].
@@ -304,7 +308,8 @@ impl Minter {
 
     /// Mint a new `did:plc` bound to `handle`.
     ///
-    /// In order: (1) generate one secp256k1 keypair per [`KeyRole`]; (2) build
+    /// In order: (1) generate one secp256k1 keypair per [`KeyRole`] from
+    /// `rng`; (2) build
     /// the genesis operation from the [`MintPolicy`] — `rotationKeys` in the
     /// policy's order, its verification methods and services, and
     /// `alsoKnownAs = ["at://<handle>"]`; (3) sign the operation's no-`sig`
@@ -315,8 +320,18 @@ impl Minter {
     ///
     /// Steps 5–7 are independent writes, never one transaction. Keys land
     /// before publication so a submission retry can never orphan them.
-    pub async fn mint(&self, handle: &Handle) -> Result<Did, MintError> {
-        let keypairs = RoleKeypairs::generate();
+    ///
+    /// `rng` is the only randomness a mint uses — the keys and the custody
+    /// seal's nonce both come from it — so it must be a CSPRNG: the operating
+    /// system's, or one seeded from it. A reproducible RNG mints reproducible
+    /// keys; that is for tests. Updates and tombstones take none: their
+    /// signatures are RFC 6979 deterministic.
+    pub async fn mint(
+        &self,
+        rng: &mut (impl CryptoRngCore + Send),
+        handle: &Handle,
+    ) -> Result<Did, MintError> {
+        let keypairs = RoleKeypairs::generate(rng);
 
         let rotation_keys = self
             .policy
@@ -346,7 +361,7 @@ impl Minter {
         let operation_json = signed.to_json()?;
 
         // (5) Custody first: sealed here, so the store only ever holds ciphertext.
-        let sealed = self.seal_custody(&did, &keypairs.to_custody())?;
+        let sealed = self.seal_custody(rng, &did, &keypairs.to_custody())?;
         self.key_store.put(&did, &sealed).await?;
         // (6) Then the chain, so a later operation knows its `prev` — MAC'd, so
         //     a later read can trust the fields it carries forward.
@@ -669,6 +684,8 @@ mod tests {
     use async_trait::async_trait;
     use atrium_crypto::verify::verify_signature;
     use k256::ecdsa::Signature;
+    use rand::SeedableRng;
+    use rand::rngs::{OsRng, StdRng};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -827,7 +844,7 @@ mod tests {
     async fn mint_produces_a_well_formed_did_and_stores_keys() {
         let (minter, keys, _log) = minter();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
 
         assert!(did.is_plc());
         assert_eq!(
@@ -854,8 +871,8 @@ mod tests {
     async fn distinct_mints_are_independent() {
         let (minter, keys, _log) = minter();
 
-        let first = minter.mint(&handle()).await.unwrap();
-        let second = minter.mint(&handle()).await.unwrap();
+        let first = minter.mint(&mut OsRng, &handle()).await.unwrap();
+        let second = minter.mint(&mut OsRng, &handle()).await.unwrap();
 
         assert_ne!(first, second);
         let first_keys = custody(&keys, &first).await;
@@ -863,6 +880,26 @@ mod tests {
         assert_ne!(
             first_keys.operational, second_keys.operational,
             "per-identity keys, never shared"
+        );
+    }
+
+    // The RNG is the mint's only randomness: the same RNG state mints the same
+    // identity (fresh stores, so the second mint is not a replay), and another
+    // state mints another.
+    #[tokio::test]
+    async fn the_callers_rng_decides_the_keys() {
+        let mint = |seed| async move {
+            let (minter, _keys, _log) = minter();
+            minter
+                .mint(&mut StdRng::seed_from_u64(seed), &handle())
+                .await
+                .unwrap()
+        };
+        assert_eq!(mint(7).await, mint(7).await, "same RNG state, same DID");
+        assert_ne!(
+            mint(7).await,
+            mint(8).await,
+            "another RNG state, another DID"
         );
     }
 
@@ -882,7 +919,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         let custody = custody(&keys, &did).await;
         let cold = Secp256k1Keypair::import(custody.cold_recovery.expose()).unwrap();
         let operational = Secp256k1Keypair::import(custody.operational.expose()).unwrap();
@@ -910,7 +947,7 @@ mod tests {
         let (minter, keys, _log) = minter();
         let handle = handle();
 
-        let did = minter.mint(&handle).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle).await.unwrap();
         let custody = custody(&keys, &did).await;
 
         // Rebuild the exact operation the minter signed, from the stored keys.
@@ -942,7 +979,7 @@ mod tests {
         let (minter, keys, _log) = minter();
         let handle = handle();
 
-        let did = minter.mint(&handle).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle).await.unwrap();
         let custody = custody(&keys, &did).await;
 
         let cold = Secp256k1Keypair::import(custody.cold_recovery.expose()).unwrap();
@@ -980,7 +1017,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = minter.mint(&handle()).await;
+        let result = minter.mint(&mut OsRng, &handle()).await;
 
         assert!(result.is_err(), "mint fails when submission fails");
         let did = directory
@@ -1009,7 +1046,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = minter.mint(&handle()).await;
+        let result = minter.mint(&mut OsRng, &handle()).await;
 
         assert!(result.is_err(), "mint fails when the key write fails");
         assert!(
@@ -1037,7 +1074,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         let genesis_cid = log.latest_cid(&did).await.unwrap().expect("genesis logged");
 
         minter.tombstone(&did).await.unwrap();
@@ -1092,7 +1129,7 @@ mod tests {
     async fn a_tombstone_rejects_an_already_tombstoned_did() {
         let (minter, _keys, log) = minter();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         minter.tombstone(&did).await.unwrap();
         let tombstone_cid = log.latest_cid(&did).await.unwrap().unwrap();
 
@@ -1133,7 +1170,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
 
         log.armed.store(true, Ordering::SeqCst);
         minter
@@ -1165,7 +1202,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         let genesis_cid = log.latest_cid(&did).await.unwrap().unwrap();
 
         minter.update_handle(&did, &new_handle()).await.unwrap();
@@ -1191,7 +1228,7 @@ mod tests {
     async fn an_update_appends_a_plc_operation_record() {
         let (minter, keys, log) = minter();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         let genesis_cid = log.latest_cid(&did).await.unwrap().unwrap();
 
         minter.update_handle(&did, &new_handle()).await.unwrap();
@@ -1235,9 +1272,9 @@ mod tests {
     #[tokio::test]
     async fn an_update_uses_only_the_signer_key_and_carries_public_fields_forward() {
         // A genesis operation signed with REAL keys, logged as the only op.
-        let cold = Secp256k1Keypair::create(&mut rand::thread_rng());
-        let operational = Secp256k1Keypair::create(&mut rand::thread_rng());
-        let signing = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let cold = Secp256k1Keypair::create(&mut OsRng);
+        let operational = Secp256k1Keypair::create(&mut OsRng);
+        let signing = Secp256k1Keypair::create(&mut OsRng);
         let document = PlcDocument::identity_only(
             vec![cold.did(), operational.did()],
             signing.did(),
@@ -1258,7 +1295,7 @@ mod tests {
             operational: SecretKey::new(operational.export()),
             signing: SecretKey::new(vec![0u8; 32]),
         };
-        let sealed = custody.seal_current(&vault(), &did).unwrap();
+        let sealed = custody.seal_current(&mut OsRng, &vault(), &did).unwrap();
         keys.put(&did, &sealed).await.unwrap();
 
         let log = Arc::new(MemoryPlcOperationLog::new());
@@ -1315,7 +1352,7 @@ mod tests {
             vault(),
         )
         .unwrap();
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         let genesis_cid = log.latest_cid(&did).await.unwrap().unwrap();
 
         let failing = Minter::new(
@@ -1377,7 +1414,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         minter.update_handle(&did, &new_handle()).await.unwrap();
         let first_update_cid = log.latest_cid(&did).await.unwrap().unwrap();
 
@@ -1411,7 +1448,7 @@ mod tests {
     async fn a_minted_operation_is_logged_with_a_valid_mac() {
         let (minter, _keys, log) = minter();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
 
         let genesis = log.latest_op(&did).await.unwrap().expect("genesis logged");
         assert_eq!(genesis.op_mac.len(), crate::OPLOG_MAC_LEN, "a 32-byte tag");
@@ -1439,7 +1476,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
 
         // Rewrite the genesis row's operation_json — a valid but ATTACKER-CHOSEN
         // rotation-key set — WITHOUT updating the MAC (the attacker cannot).
@@ -1476,7 +1513,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         let genesis = log.latest_op(&did).await.unwrap().unwrap();
         // Flip a byte of the stored tag: the row itself is intact, the tag is not.
         let mut bad_mac = genesis.op_mac.clone();
@@ -1527,7 +1564,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         let genesis = log.latest_op(&did).await.unwrap().unwrap();
         let reordered = reorder_keys(&genesis.operation_json);
         assert_ne!(
@@ -1603,7 +1640,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
 
         log.armed.store(true, Ordering::SeqCst);
         minter
@@ -1665,7 +1702,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         let genesis_cid = log.latest_cid(&did).await.unwrap().unwrap();
 
         // A DIFFERENT concurrent winner (a change to a THIRD handle) chaining the
@@ -1737,7 +1774,7 @@ mod tests {
     async fn an_update_rejects_a_tombstoned_did() {
         let (minter, _keys, _log) = minter();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         minter.tombstone(&did).await.unwrap();
 
         let error = minter
@@ -1948,13 +1985,13 @@ mod tests {
         // Real custody, so the update gets past the signer load and reaches the
         // directory with the document it built.
         let keys = Arc::new(MemoryKeyStore::new());
-        let operational = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let operational = Secp256k1Keypair::create(&mut OsRng);
         let custody = CustodyKeys {
             cold_recovery: SecretKey::new(vec![0u8; 32]),
             operational: SecretKey::new(operational.export()),
             signing: SecretKey::new(vec![0u8; 32]),
         };
-        let sealed = custody.seal_current(&vault(), &did).unwrap();
+        let sealed = custody.seal_current(&mut OsRng, &vault(), &did).unwrap();
         keys.put(&did, &sealed).await.unwrap();
 
         let directory = Arc::new(CapturingDirectory::default());
@@ -2026,7 +2063,7 @@ mod tests {
         )
         .unwrap();
 
-        let did = minter.mint(&handle()).await.unwrap();
+        let did = minter.mint(&mut OsRng, &handle()).await.unwrap();
         minter
             .update_handle(&did, &new_handle())
             .await

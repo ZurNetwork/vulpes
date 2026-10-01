@@ -11,8 +11,9 @@ code, extracted from a production service and made reusable.
 It is deliberately narrow. vulpes enforces the ACP — claim and attestation
 records, signing, status lists, verification — and does the identity work the
 protocol binds: mint, update, tombstone, custody, handle syntax. It carries no
-transport or framework of its own: storage and the network arrive through traits
-you implement. And it holds no product policy: no reserved-name lists, no rate
+transport, framework or randomness of its own: storage and the network arrive
+through traits you implement, and every call that needs randomness takes your
+RNG. And it holds no product policy: no reserved-name lists, no rate
 limits, no quarantine windows. Those are yours.
 
 ```toml
@@ -28,17 +29,18 @@ Not published to crates.io; consume it as a tag-pinned git dependency.
 
 ```rust
 use std::sync::Arc;
+use rand::rngs::OsRng; // any CSPRNG: the OS's, or one seeded from it
 use vulpes::{Handle, MintPolicy, Minter, NoopPlcDirectory};
 
 // `vault` is the SecretVault: the minter seals custody and MACs the log with it.
 let minter = Minter::new(keys, log, Arc::new(NoopPlcDirectory), MintPolicy::identity_only(), vault)?;
 
-let did = minter.mint(&Handle::try_new("alice.example.com")?).await?;
+let did = minter.mint(&mut OsRng, &Handle::try_new("alice.example.com")?).await?;
 minter.update_handle(&did, &Handle::try_new("alice.example.org")?).await?;
 minter.tombstone(&did).await?;
 ```
 
-Under that: three secp256k1 keypairs generated, a canonical DAG-CBOR genesis
+Under that: three secp256k1 keypairs generated from your RNG, a canonical DAG-CBOR genesis
 operation built from an explicit policy and signed with the right rotation key,
 the DID derived from that operation's own hash, the private halves sealed and
 stored, the operation logged so the next one knows its `prev`, and the whole
