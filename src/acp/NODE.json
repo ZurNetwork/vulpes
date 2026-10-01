@@ -1,0 +1,78 @@
+{
+  "path": "src/acp",
+  "charted": "2026-09-19",
+  "short": "The ACP reference implementation — pure, I/O-free; transport arrives through three ports",
+  "is": "The ACP reference implementation, pure and I/O-free — everything a verifier needs except the transport, which arrives through the three ports.",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "The repository DID is always an explicit parameter, never read from a record.",
+    "Canonical bytes are pinned by fixtures cross-checked against an independent encoder.",
+    "The attestor is *not* a port — its death must not matter (the kill test).",
+    "Ownership is decided in the claims lane alone; `custody.rs` informs recoverability and never a verdict (F47)."
+  ],
+  "entry_points": [
+    "src/acp/verify.rs (verify_attestation)",
+    "src/acp/sign.rs",
+    "src/acp/record.rs"
+  ],
+  "fs": [
+    {
+      "name": "custody.rs",
+      "role": "administrative-health helpers — custodian discovery (F44), the seniority read, CustodyReport; the administration lane, never an ownership gate (F47)",
+      "node": false
+    },
+    {
+      "name": "error.rs",
+      "role": "one closed enum per concern",
+      "node": false
+    },
+    {
+      "name": "kind.rs",
+      "role": "ClaimKind — the five-segment NSID, typed per segment; Other holds the checked newtype (F45); categories identity + relationship, consent deferred",
+      "node": false
+    },
+    {
+      "name": "memory.rs",
+      "role": "in-memory port fakes, test-only (F19)",
+      "node": false
+    },
+    {
+      "name": "policy.rs",
+      "role": "TrustPolicy — step 6, the verifier's judgment, ahead of the status fetch it gates",
+      "node": false
+    },
+    {
+      "name": "ports.rs",
+      "role": "RepoReader / DidResolver / StatusSource async_trait ports (F40) — no attestor port, by the law",
+      "node": false
+    },
+    {
+      "name": "record.rs",
+      "role": "Claim / Attestation + canonical DAG-CBOR, pinned byte fixtures (F37, F38); still pre-F48 — the claim's id/nonce/claimant/expiresAt/status/witnesses are owed",
+      "node": false
+    },
+    {
+      "name": "sign.rs",
+      "role": "attestation pre-image, sign, verify — key signs the pre-image CID (F36); negatives incl. transplant",
+      "node": false
+    },
+    {
+      "name": "status.rs",
+      "role": "net.got-paws.acp.statusList artifact, ACP-native DAG-CBOR (F39)",
+      "node": false
+    },
+    {
+      "name": "verify.rs",
+      "role": "verify_attestation — the spec's seven steps; Verdict vs VerifyError never conflated; the kill_test",
+      "node": false
+    }
+  ],
+  "refs": [],
+  "notes": [
+    "In flight: F48 is ruled but not yet coded — the claim record's F48 fields + `edge_id()` + witness signing, then `verify_claim` / `verify_pair` and the `Report` that replaces the bare verdict. Fixtures bump when that lands.",
+    "Governed by `docs/acp.md` §Record types, §Status lists, §Verification, §The kill test; `docs/ccs.md` rules 1–4; `docs/ROADMAP.md` \"CCS as attestations\"; FORKS F36–F48."
+  ]
+}

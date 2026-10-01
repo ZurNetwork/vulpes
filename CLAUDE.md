@@ -27,6 +27,16 @@ code. Prefer worksheets, skeletons, and reviews over unprompted finished code.
 - `docs/CONTINUE-HERE.md` — session handoff state; single-writer (one session
   maintains it).
 
+## The node tree
+
+Every directory that carries information beyond its parent has a `NODE.json`
+— *what/where*, while this file is *how to behave*. Same format and tool as
+Zurfur (github.com/ZurNetwork/nodes). Read it through the tool, never by
+guessing a path: `just nodes tree` (the whole tree), `just nodes chain <path>`
+(root → … → node — what `/familiarize` loads), `just nodes find <term>`.
+Write through it too (`just nodes set` · `add-ref` · `touch`), then
+`just nodes-check`. `/chart` refreshes the tree.
+
 ## The one law
 
 **The kill test**: the death of any operator — attestor, custodian, or the
