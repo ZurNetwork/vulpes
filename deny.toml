@@ -12,8 +12,8 @@
 # it; that trades a loud reminder for a red build when somebody else's upstream
 # fix lands, which is a workflow call, not a security one.
 #
-# Run it the way CI does — the feature-gated dependencies (jacquard, sqlx,
-# reqwest, axum) are not in the default graph at all:
+# Run it the way CI does — feature-gated dependencies are not in the default
+# graph at all:
 #
 #     cargo deny --all-features check advisories
 
@@ -24,57 +24,11 @@ unmaintained = "all"
 yanked = "deny"
 
 ignore = [
-  # --- rsa 0.9.x: Marvin Attack (timing sidechannel on PKCS#1 v1.5 decrypt) ---
-  # NO FIXED VERSION EXISTS upstream. Reached only through jacquard's JOSE
-  # stack, which uses RSA to VERIFY signatures on authorization-server metadata
-  # and to sign DPoP proofs — never to decrypt an attacker-chosen ciphertext,
-  # which is what the attack requires. Drops out if the advisory is fixed or if
-  # every authorization server we speak to is EC.
-  { id = "RUSTSEC-2023-0071", reason = "no fixed version upstream; the vulnerable PKCS#1 v1.5 decrypt path is not reachable — jacquard verifies and signs, never decrypts" },
-
-  # --- hickory-proto 0.24.x: O(n^2) name compression on message ENCODING ---
-  # No fix in the 0.24 line, and jacquard-identity pins `hickory-resolver ^0.24`,
-  # so this cannot be lifted by a lockfile bump. vulpes is a DNS *client*: it
-  # encodes the queries it composes itself (`_atproto.<handle>`, bounded by the
-  # 253-char handle limit), and never encodes attacker-supplied messages.
-  # Drops out when jacquard moves to hickory 0.25+.
-  { id = "RUSTSEC-2026-0119", reason = "no fix in the 0.24 line jacquard pins; the O(n^2) path is message ENCODING, and vulpes only encodes its own bounded queries" },
-
-  # RUSTSEC-2026-0009 (time, RFC 2822 stack exhaustion) was here and is now
-  # FIXED — the lockfile pins time 0.3.47 and the MSRV is 1.88 (Engineer ruled,
-  # FORKS F32). The entry was removed rather than kept: an ignore for something
-  # that no longer fires is stale, and cargo-deny warns on it.
-
-  # --- atomic-polyfill: unmaintained ---
-  # Pulled in transitively and used on targets vulpes does not build for; there
-  # is no advisory of a defect, only that the crate is no longer maintained.
-  # Drops out when the crate holding it migrates to `portable-atomic`.
-  { id = "RUSTSEC-2023-0089", reason = "unmaintained, not vulnerable; transitive, and the polyfill is for targets vulpes does not build for" },
-
-  # --- the ssi 0.16 luggage: seven unmaintained crates, zero vulnerabilities ---
-  # All pulled transitively by the wrapped VC stack (feature `vc`, OFF by
-  # default — nothing in vulpes calls any of this yet; the private lane will).
-  # Accepted 2026-08-12 (Engineer ruled, VUL-2 / FORKS F34) with open eyes:
-  # these are "author walked away" notices, not defects. EXIT for the whole
-  # block: re-check when ssi ≥ 0.17 lands, and again when the private lane
-  # ships — if the luggage is still here then, weigh replacing the wrap.
-  #
-  # serde_cbor — CBOR encoding inside ssi-data-integrity-suites.
-  { id = "RUSTSEC-2021-0127", reason = "unmaintained, not vulnerable; ssi 0.16 luggage behind the off-by-default vc feature" },
-  # proc-macro-error — build-time macro helper, compile-time only.
-  { id = "RUSTSEC-2024-0370", reason = "unmaintained, not vulnerable; compile-time proc-macro helper in ssi's tree" },
-  # derivative — build-time derive helper, compile-time only.
-  { id = "RUSTSEC-2024-0388", reason = "unmaintained, not vulnerable; compile-time derive helper in ssi's tree" },
-  # The `im` immutable-collections family, via ssi's JSON-LD stack
-  # (linked-data → im → bitmaps/sized-chunks/smallstr).
-  { id = "RUSTSEC-2026-0215", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
-  { id = "RUSTSEC-2026-0247", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
-  { id = "RUSTSEC-2026-0248", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
-  { id = "RUSTSEC-2026-0251", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
-  # clear_on_drop — via ssi-jws (did-ion → ssi-dids → ssi). No maintained
-  # release exists. EXIT: the `vc` feature is being removed (vulpes becomes a
-  # pure ACP library, 2026-10-01); this entry goes with it.
-  { id = "RUSTSEC-2026-0283", reason = "unmaintained, not vulnerable; ssi 0.16 luggage behind the off-by-default vc feature, which is being removed" },
+  # Empty since FORKS F49 (2026-10-01): every entry that stood here belonged
+  # to a dependency of a removed feature — jacquard (rsa, hickory,
+  # atomic-polyfill), the ssi stack behind `vc` (seven unmaintained crates and
+  # clear_on_drop). A new entry needs the same three things they had: why it
+  # fires, why it is not exploitable here, and what makes it go away.
 
   # NOTE: the 2026-08-09 review also listed GHSA-7gcf-g7xr-8hxj (serde_with).
   # It does NOT fire against this lockfile — cargo-deny reads the RustSec

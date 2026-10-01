@@ -64,16 +64,10 @@ jobs:
         features:
           - ""
           - "minter"
-          - "directory"
-          - "oauth"
           - "postgres"
-          - "axum"
-          - "vc"
           - "acp"
           - "acp,minter"
           - "minter,postgres"
-          - "oauth,postgres"
-          - "axum,postgres"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -88,9 +82,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # --all-features is load-bearing: jacquard, sqlx, reqwest and axum are all
-      # optional, so the DEFAULT crate graph does not contain the dependencies
-      # most worth auditing.
+      # --all-features is load-bearing: optional dependencies are not in the
+      # DEFAULT crate graph, and every one of them must be audited.
       #
       # The advisories that fire against today's lockfile are allow-listed in
       # deny.toml, each with a reason and an exit condition — so this job is
