@@ -71,6 +71,10 @@ ignore = [
   { id = "RUSTSEC-2026-0247", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
   { id = "RUSTSEC-2026-0248", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
   { id = "RUSTSEC-2026-0251", reason = "unmaintained, not vulnerable; im-family luggage of ssi's JSON-LD stack" },
+  # clear_on_drop — via ssi-jws (did-ion → ssi-dids → ssi). No maintained
+  # release exists. EXIT: the `vc` feature is being removed (vulpes becomes a
+  # pure ACP library, 2026-10-01); this entry goes with it.
+  { id = "RUSTSEC-2026-0283", reason = "unmaintained, not vulnerable; ssi 0.16 luggage behind the off-by-default vc feature, which is being removed" },
 
   # NOTE: the 2026-08-09 review also listed GHSA-7gcf-g7xr-8hxj (serde_with).
   # It does NOT fire against this lockfile — cargo-deny reads the RustSec
