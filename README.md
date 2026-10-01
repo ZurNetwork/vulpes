@@ -57,7 +57,6 @@ fails before anything ships.
 |---|---|---|
 | *(core)* | always | the `did:plc` operation format, `Did`, `Handle`, `SecretVault`, `CustodyKeys`, the storage traits, `MintPolicy`, `PlcDirectory` / `NoopPlcDirectory` |
 | `minter` | ✅ | `Minter` — key generation, mint / update-handle / tombstone |
-| `postgres` | | sqlx implementations of every storage trait, plus the migration SQL |
 | `acp` | | the Attested Claims Protocol — records, signing, status lists, the verifier over caller-implemented ports |
 
 Every feature compiles alone, and `--no-default-features` leaves a pure
@@ -109,25 +108,14 @@ into a URL. `NoopPlcDirectory` accepts every operation and publishes nothing, so
 you can exercise the whole path without registering identities you do not mean
 to keep.
 
-### `postgres` — storage, included
+### Storage — yours
 
-```rust
-vulpes::postgres::migrate(&pool).await?;
-
-let keys = Arc::new(vulpes::postgres::PgKeyStore::new(pool.clone())); // holds no vault: sealing lives in the minter
-let log  = Arc::new(vulpes::postgres::PgPlcOperationLog::new(pool));
-```
-
-The migrations ship two ways: embedded (call `migrate`) or as files under
-`migrations/`, to copy into your own directory if you would rather own the
-versioning. Pick one.
-
-The DDL is plain `CREATE TABLE`, not `CREATE TABLE IF NOT EXISTS`: vulpes's names
-are unprefixed and could collide with a table you already own, and `IF NOT
-EXISTS` would record that collision as a *successful* migration that created
-nothing — after which vulpes reads and writes a schema it does not control. Each
-migration runs in a transaction, so a collision fails the call, records nothing,
-and leaves your table untouched.
+vulpes owns no database. `KeyStore` and `PlcOperationLog` are the two roles it
+persists through; implement them over whatever you store with. A `KeyStore` only
+ever receives `SealedKeys` — sealing lives in the minter — so it stores bytes. A
+`PlcOperationLog` must enforce the two integrity properties its trait documents;
+in SQL that is a `UNIQUE(cid)` constraint and a partial
+`UNIQUE(did, prev) WHERE prev IS NOT NULL` index.
 
 ---
 
@@ -200,8 +188,8 @@ stays sealed.
 
 **The operation log is authenticated.** An update carries a prior operation's
 rotation keys, verification methods and services forward into an operation the
-custody key then *signs* — so an attacker who can *write* the `plc_operations`
-table could otherwise choose what gets signed. Every row carries an HMAC-SHA256
+custody key then *signs* — so an attacker who can *write* your operation log
+could otherwise choose what gets signed. Every row carries an HMAC-SHA256
 tag over its `(did, cid, prev, operation)`, keyed by a subkey HKDF-derived from
 the root key (so the AEAD key stays single-purpose), and the minter verifies it
 before trusting a prior row. The tag key is not in the database, so a write-access
@@ -213,9 +201,9 @@ signed. Custody itself is never trusted from a store either — it is sealed
 tip, build *different* operations (different CIDs, so uniqueness on `cid` does
 not catch them) and both land — after which your log permanently disagrees with
 the directory, which accepted only the first, and every future handle change is
-wedged. A partial `UNIQUE(did, prev) WHERE prev IS NOT NULL` index makes that
-unrepresentable; the loser's write fails, the error propagates, and the retry
-serializes onto the new tip.
+wedged. The `PlcOperationLog` contract has your store refuse a second operation
+chaining the same `prev`, which makes that unrepresentable; the loser's write
+fails, the error propagates, and the retry serializes onto the new tip.
 
 **No unsafe code**, enforced by `#![forbid(unsafe_code)]`.
 
@@ -229,14 +217,12 @@ not exploitable here and what would retire the entry.
 ## Testing
 
 ```bash
-cargo test --all-features     # needs a container runtime for the PostgreSQL suite
-cargo test                    # core + minter, no containers
+cargo test --all-features
 ```
 
-The PostgreSQL suite boots throwaway containers via `testcontainers` (pinned to
-`postgres:16-alpine`) and clones a migrated template per test, so every test gets
-a pristine database for tens of milliseconds. `DOCKER_HOST` is honored — podman
-works.
+Pure unit tests: no services, no containers. The storage contract is exercised
+against in-memory fakes that enforce the same integrity properties a real store
+must.
 
 ---
 

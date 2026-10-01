@@ -8,8 +8,7 @@
     "category:project",
     "category:source",
     "category:schema",
-    "category:docs",
-    "category:tests"
+    "category:docs"
   ],
   "conventions": [
     "The one law is the kill test — no operator's death may be a breaking factor.",
@@ -44,7 +43,7 @@
     },
     {
       "name": "Cargo.toml",
-      "role": "MSRV 1.88 · edition 2024 · features: minter default; acp, postgres",
+      "role": "MSRV 1.88 · edition 2024 · features: minter default; acp",
       "node": false
     },
     {
@@ -60,11 +59,6 @@
     {
       "name": "README.md",
       "role": "the public face — what it does, the feature map, the policy preset, security posture, status",
-      "node": false
-    },
-    {
-      "name": "build.rs",
-      "role": "embeds migrations/ into the binary",
       "node": false
     },
     {
@@ -88,23 +82,8 @@
       "node": false
     },
     {
-      "name": "migrations/",
-      "role": "four numbered SQL migrations, embedded by build.rs (F10, F11)",
-      "node": false
-    },
-    {
-      "name": "queries/",
-      "role": "SQL files per store/<op> (F12) — key_store, plc_log",
-      "node": false
-    },
-    {
       "name": "src/",
       "role": "the vulpes crate — did:plc substrate + the ACP reference implementation",
-      "node": true
-    },
-    {
-      "name": "tests/",
-      "role": "the Postgres-backed integration suite (testcontainers; Docker required)",
       "node": true
     }
   ],
