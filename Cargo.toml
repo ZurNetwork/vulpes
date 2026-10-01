@@ -20,8 +20,6 @@ publish = false
 default = ["minter"]
 # Key generation and the mint / update-handle / tombstone operations.
 minter = ["dep:atrium-crypto", "dep:rand", "dep:base64"]
-# sqlx implementations of every vulpes storage trait, plus the migration SQL.
-postgres = ["dep:sqlx", "dep:chrono"]
 # The ACP reference verifier: the record types with canonical DAG-CBOR bytes,
 # the attestation pre-image / sign / verify heart, status lists, and the
 # seven-step verifier over three caller-implemented I/O ports. No transport
@@ -65,26 +63,10 @@ base64 = { version = "0.22", optional = true }
 # encodes `Vec<u8>` as an array of integers — canonical, but wrong on the wire.
 serde_bytes = { version = "0.11", optional = true }
 
-# --- postgres ---
-sqlx = { version = "0.9.0", default-features = false, features = [
-  "runtime-tokio",
-  "postgres",
-  "migrate",
-  "derive",
-  "chrono",
-  "json",
-], optional = true }
-chrono = { version = "0.4", optional = true }
-
 [dev-dependencies]
-tokio = { version = "1.49.0", features = ["full"] }
+tokio = { version = "1.49.0", features = ["macros", "rt"] }
 # Assert signatures are low-S (Signature::normalize_s) in tests.
 k256 = { version = "0.13", features = ["ecdsa"] }
-# Throwaway Postgres for the storage round-trips, pinned to the same major
-# version production runs.
-testcontainers = "0.27"
-testcontainers-modules = { version = "0.15", features = ["postgres"] }
-uuid = { version = "1.20.0", features = ["v7"] }
 serde_json = "1.0"
 
 [package.metadata.docs.rs]

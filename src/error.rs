@@ -27,8 +27,8 @@ macro_rules! opaque_error {
         pub struct $name($crate::error::BoxError);
 
         impl $name {
-            /// Wrap any thread-safe error. `anyhow::Error`, `sqlx::Error`,
-            /// `std::io::Error` and `String` all convert.
+            /// Wrap any thread-safe error. `anyhow::Error`, a database driver's
+            /// error, `std::io::Error` and `String` all convert.
             pub fn new(source: impl Into<$crate::error::BoxError>) -> Self {
                 Self(source.into())
             }

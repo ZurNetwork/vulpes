@@ -183,7 +183,8 @@ impl Datetime {
     ///
     /// Syntax *and* calendar: a value that passes here means the same
     /// instant to this crate's [`to_unix`](Self::to_unix), to chrono, and
-    /// to Postgres, so a verifier never compares a nonsense number.
+    /// to a database's timestamp type, so a verifier never compares a
+    /// nonsense number.
     pub fn parse(raw: &str) -> Result<Self, CodecError> {
         fn err(detail: &str) -> CodecError {
             CodecError::InvalidField {

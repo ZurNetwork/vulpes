@@ -3,7 +3,8 @@
 //! They mirror the two integrity constraints the
 //! [`PlcOperationLog`](crate::PlcOperationLog) contract requires of a real
 //! backend — `UNIQUE(cid)` and the no-chain-fork `UNIQUE(did, prev)` — so a
-//! minter test that passes here would also pass against PostgreSQL.
+//! minter test that passes here holds against any store that keeps the
+//! contract.
 //!
 //! Test-only on purpose: shipping fakes in the public API is a separate
 //! decision, and a real backend is the thing worth testing against.

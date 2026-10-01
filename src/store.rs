@@ -2,9 +2,8 @@
 //! shape the operation log carries.
 //!
 //! vulpes owns no database. It names the *roles* it needs and lets you supply
-//! them; ready [PostgreSQL implementations](crate::postgres) of both ship
-//! behind the `postgres` feature, and an in-memory fake is a dozen lines when
-//! you need one for tests.
+//! them over whatever it persists with. An in-memory fake is a dozen lines
+//! when you need one for tests.
 //!
 //! Both are `async` object-safe traits (via `async_trait`), so a
 //! `dyn KeyStore` can be shared behind an `Arc` — which is how the
@@ -65,9 +64,9 @@ impl PlcOperationRecord {
     ///
     /// The operation is canonicalized by re-parsing its stored JSON and
     /// re-serializing it **with explicitly sorted keys**, so the encoding is
-    /// stable across the `jsonb` round-trip a Postgres backend performs — the
-    /// tag computed at write time verifies against the same message recovered
-    /// at read time. The sort is done by hand, not left to serde_json: with
+    /// stable across a store that hands the document back with its keys
+    /// reordered (a Postgres `jsonb` column does) — the tag computed at write
+    /// time verifies against the same message recovered at read time. The sort is done by hand, not left to serde_json: with
     /// default features serde_json happens to sort map keys, but any crate in
     /// the build graph can flip on `preserve_order` for the whole binary
     /// (Cargo features unify globally — a since-removed dependency did exactly
@@ -170,8 +169,7 @@ pub trait KeyStore: Send + Sync {
 ///    which the log permanently disagrees with the directory, which accepted
 ///    only the first.
 ///
-/// The shipped [PostgreSQL implementation](crate::postgres::PgPlcOperationLog)
-/// enforces both with a `UNIQUE(cid)` constraint and a partial
+/// In SQL that is a `UNIQUE(cid)` constraint and a partial
 /// `UNIQUE(did, prev) WHERE prev IS NOT NULL` index.
 #[async_trait]
 pub trait PlcOperationLog: Send + Sync {

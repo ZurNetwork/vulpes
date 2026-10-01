@@ -1498,6 +1498,68 @@ mod tests {
         );
     }
 
+    /// `json` re-serialized with its top-level keys in reverse order: the same
+    /// document, as a store that does not keep key order (Postgres `jsonb`)
+    /// hands it back.
+    fn reorder_keys(json: &str) -> String {
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let object = value.as_object().expect("an operation is a JSON object");
+        let fields: Vec<String> = object
+            .iter()
+            .rev()
+            .map(|(key, field)| format!("{}:{field}", serde_json::Value::from(key.as_str())))
+            .collect();
+        format!("{{{}}}", fields.join(","))
+    }
+
+    // The F35 regression, without a database: a store may return a logged
+    // operation with its keys reordered. The MAC covers the document, not its
+    // spelling, so update and tombstone both still trust the reordered prior.
+    #[tokio::test]
+    async fn a_prior_returned_with_its_keys_reordered_still_verifies() {
+        let log = Arc::new(MemoryPlcOperationLog::new());
+        let minter = Minter::new(
+            Arc::new(MemoryKeyStore::new()),
+            log.clone(),
+            Arc::new(NoopPlcDirectory),
+            MintPolicy::identity_only(),
+            vault(),
+        )
+        .unwrap();
+
+        let did = minter.mint(&handle()).await.unwrap();
+        let genesis = log.latest_op(&did).await.unwrap().unwrap();
+        let reordered = reorder_keys(&genesis.operation_json);
+        assert_ne!(
+            reordered, genesis.operation_json,
+            "the test must actually change the spelling"
+        );
+        log.replace_latest(
+            &did,
+            PlcOperationRecord {
+                operation_json: reordered,
+                ..genesis
+            },
+        );
+        minter
+            .update_handle(&did, &new_handle())
+            .await
+            .expect("a reordered genesis is the same operation");
+
+        let update = log.latest_op(&did).await.unwrap().unwrap();
+        log.replace_latest(
+            &did,
+            PlcOperationRecord {
+                operation_json: reorder_keys(&update.operation_json),
+                ..update
+            },
+        );
+        minter
+            .tombstone(&did)
+            .await
+            .expect("a reordered update is the same operation");
+    }
+
     /// A log that simulates losing the append race ONCE: while armed, the next
     /// `append` first lands the IDENTICAL record — as a concurrent retry of the
     /// same deterministic update would — so the minter's own append then hits

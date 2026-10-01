@@ -1,15 +1,15 @@
 {
   "path": "src",
   "charted": "2026-10-01",
-  "short": "The crate body — feature-free substrate, each I/O or crypto surface behind a feature",
-  "is": "The crate body — a feature-free substrate (`plc`, `did`, `handle`, `keys`, `vault`, `policy`, `store`, `directory`, `error`) with the minter, the ACP and the Postgres stores behind features.",
+  "short": "The crate body — feature-free substrate, with the minter and the ACP behind features",
+  "is": "The crate body — a feature-free substrate (`plc`, `did`, `handle`, `keys`, `vault`, `policy`, `store`, `directory`, `error`) with the minter and the ACP behind features.",
   "type": "code",
   "tags": [
     "category:source"
   ],
   "conventions": [
-    "Private modules are re-exported from `lib.rs`; only `plc`, `acp`, `postgres` are `pub mod`.",
-    "Unit tests live beside the code and use `memory.rs` fakes.",
+    "Private modules are re-exported from `lib.rs`; only `plc` and `acp` are `pub mod`.",
+    "Unit tests live beside the code and use `memory.rs` fakes; nothing needs a service or a container.",
     "No transport, framework or RNG of its own: each resource arrives as a trait or parameter (F49)."
   ],
   "entry_points": [
@@ -75,11 +75,6 @@
       "name": "policy.rs",
       "role": "MintPolicy — identity shape as data (F8 strict updates)",
       "node": false
-    },
-    {
-      "name": "postgres/",
-      "role": "`postgres` feature — sqlx impls of the three storage traits",
-      "node": true
     },
     {
       "name": "store.rs",

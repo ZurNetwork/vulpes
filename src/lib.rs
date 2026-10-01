@@ -29,7 +29,6 @@
 //! |---|---|
 //! | *(core, always on)* | [`plc`], [`Did`], [`Handle`], [`SecretVault`], [`CustodyKeys`], the storage traits, [`MintPolicy`], [`PlcDirectory`] |
 //! | `minter` *(default)* | [`Minter`] — key generation and the write path |
-//! | `postgres` | [`postgres`] — sqlx stores plus the migration SQL |
 //! | `acp` | [`acp`] — the Attested Claims Protocol: records, signing, status lists, the verifier |
 //!
 //! # Quickstart
@@ -101,8 +100,6 @@ mod minter;
 
 #[cfg(feature = "acp")]
 pub mod acp;
-#[cfg(feature = "postgres")]
-pub mod postgres;
 
 pub use did::{Did, DidError};
 pub use directory::{NoopPlcDirectory, PlcDirectory};
