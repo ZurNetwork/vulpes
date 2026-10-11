@@ -133,7 +133,7 @@ record net.got-paws.acp.claim {
   kind:      string    // a five-segment NSID naming the claim kind, e.g.
                        // net.got-paws.acp.identity.email (see Claim kinds)
   payload:   object    // kind-defined content, e.g. { "address": "a@b.c" }
-                       // or { "role": "owner", "subject": did }
+                       // or { "role": "owner", "did": did }
   createdAt: datetime
   expiresAt: datetime  // REQUIRED — there is no permanent claim; a
                        // far-future date is semantically permanent
@@ -153,7 +153,7 @@ id = hex( sha256( min(a, b) ‖ "\n" ‖ max(a, b) ‖ "\n" ‖ expiresAt ‖ "\
 ```
 
 `a` is the claimant's DID; `b` is the counterpart DID the payload names
-(`subject`, for the `relationship` category) or `a` itself when the kind
+(`did`, for the `relationship` category) or `a` itself when the kind
 names none — so every claim has an id and an identity claim is a
 self-edge. `min`/`max` are byte-wise over the full DID strings (order-
 independent, method-agnostic — no decoding of any DID method); `expiresAt`
@@ -263,7 +263,7 @@ without.
 A relationship between two DIDs is **not a separate record type**
 (ruled 2026-08-22, FORKS F45): it is a `relationship`-category self-claim
 (`net.got-paws.acp.relationship.ownership`, …) carrying the counterpart's
-DID as `subject` and this side's `role` — answered, or not, by something
+DID as `did` and this side's `role` — answered, or not, by something
 that proves consent. What answers it is the **shape** (ruled 2026-08-25,
 FORKS F48):
 
@@ -271,7 +271,7 @@ FORKS F48):
 |---|---|---|---|---|
 | **one-sided** | one half, no counterpart | none — an assertion (F45: an unattested claim is a claim). Valid; proves nothing; the shape of a Bluesky follow | — | Kit "follows" Fox; Fox signs nothing. Kit claims her email; nobody has vouched yet. |
 | **asymmetric** | one half | the counterpart's attestation, in the claimant's repo | strongRef | Kit's email claim + the attestor's attestation — Kit's story (`explainer.md`). |
-| **symmetric (paired)** | two halves, one in each repo | the other half existing, with an equal `id` | `id` | Kit writes `ownership {role: owner, subject: fox}`; Fox writes `ownership {role: owned, subject: kit}`; both carry the same `id`. Either deletes its half → severed. |
+| **symmetric (paired)** | two halves, one in each repo | the other half existing, with an equal `id` | `id` | Kit writes `ownership {role: owner, did: fox}`; Fox writes `ownership {role: owned, did: kit}`; both carry the same `id`. Either deletes its half → severed. |
 | **witnessed** | any of the above | + witness signatures embedded in each half (§Signing) | `witnesses[].sig` per half | The sale went through Zurfur: Zurfur signed both halves before they were written. A buyer's policy may require it; no verdict does. |
 
 **Paired is the recommended shape for relationship kinds.** Asymmetric
@@ -576,7 +576,7 @@ result — a failing witness makes the half *incomplete*, not invalid.
 
 **Verifying a paired relationship** (FORKS F48): verify each half as a
 claim, in its own repo; require the two ids equal and each half's
-`subject` to be the other's `claimant`; require both in force. A half
+`did` to be the other's `claimant`; require both in force. A half
 gone from a reachable repo is severed; a half in an unreachable repo is
 *not checkable* — never severed, never in force. No attestation is
 required for consent; attestations on either half are reported, and
@@ -841,6 +841,12 @@ private layer exists to prevent.
   claim pre-image is defined (§Signing); the verdict is a report, not a
   boolean (§Verification); the permanent mode is retired; the owner
   roster is N paired `owner` halves, no kind of its own.
+- **2026-10-11** — the relationship payload names its counterpart in
+  `did`, everywhere (Engineer ruling 2026-10-10). The payload example
+  (§Self-claim), the edge id's counterpart, §Relationships and the
+  paired-relationship verification said `subject`, while §Claim kinds and
+  `docs/ccs.md` already said `did`. The attestation record's own `subject`
+  field, which names the repo owner, is unchanged.
 
 ## References
 

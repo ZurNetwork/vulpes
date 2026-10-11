@@ -218,6 +218,11 @@ not rediscover it):
    distinction §Status lists already draws for lists). The report says
    which.
 
+**Renamed 2026-10-10 (Engineer ruling):** the payload names the
+counterpart in `did`, not `subject`; the examples above read
+`{role: owner, did: fox}` and `{role: owned, did: kit}` today
+(`docs/acp.md` §Changelog, 2026-10-11). Nothing else in this ruling changes.
+
 ### F47. Administration and claims are two lanes — ownership is claims-only
 
 **Where:** `docs/acp.md` §Relationships are attestations, §Claim kinds,
