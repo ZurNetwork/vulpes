@@ -19,7 +19,7 @@
   creation, handle-less (amended 2026-08-30). Private characters need none of
   the VC machinery; per-character rotation-key material keeps the public PLC
   log from correlating one owner's characters.
-- **Characters get a PDS account** — a full repo (ref sheets, bio, art
+- **Public characters get a PDS account** — a full repo (ref sheets, bio, art
   records via custom lexicons). Zurfur-hosted by default, **migratable** per
   no-lock-in.
 - **Ownership is atproto-native — no VC needed.** Three facts must agree
@@ -164,6 +164,9 @@ is parked with it.
 - **Zurfur also vanishes**: DIDs persist (PLC directory); repos on other
   PDSes untouched; public data survives via relays and renders in any other
   AppView. Zurfur-hosted accounts re-point their DIDs elsewhere (senior-key
-  rule) and restore from CAR backups. The Index — private characters — dies
-  with its custodian, by definition: private here *means* kept out of the
-  decentralized layer on purpose.
+  rule) and restore from CAR backups. A private character's **content** dies
+  with the Index — nothing of it was ever published — but its **DID and
+  creation timestamp persist in the PLC directory permanently**, an empty
+  identity asserting nothing (amended 2026-08-30; an accepted cost).
+  Per-character key material means the husk cannot be correlated to its
+  owner or its siblings.
