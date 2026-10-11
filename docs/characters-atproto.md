@@ -56,10 +56,10 @@
   account (characters included) — the owner holds an equal-or-senior rotation
   key; routine CAR export/mirroring so restore-elsewhere is a real path.
   The user's key is generated client-side (FORKS F46). vulpes's own
-  `MintPolicy` default stays layout D (Engineer, 2026-09-12); Zurfur mints
+  `MintPolicy` default stays layout D (Engineer, 2026-09-13); Zurfur mints
   its hosted repos as `[owner, pds, zurfur]` — `vulpes_recovery` is dropped
   because a stateless crate holding no keys cannot hold index 1. Where
-  Zurfur also operates the PDS that is a **one-operator list**, not layout
+  Zurfur also operates the PDS, that is a **one-operator list**, not layout
   D: one breach reaches both custodian keys. The owner stays senior either
   way, so the senior-key rule and recovery-against-the-custodian hold.
 
