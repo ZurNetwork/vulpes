@@ -26,21 +26,36 @@ infrastructure down and every issued vouch still verifies.
       `verify_attestation`). Adversarially reviewed 2026-08-21/22 (three
       security passes + Copilot, PR #10): F36 CID-first binding, algorithm
       confusion, high-S and the transplant defense all held.
-- [ ] **Talk to a PDS** — record create/get/list/delete over XRPC, strongRef
-      fetch-and-check, local PDS in Docker as the test bed. Now concretely:
-      jacquard-backed `RepoReader` / `DidResolver` / `StatusSource` (and a
-      `RepoWriter`), the `$bytes` JSON↔DAG-CBOR boundary, and the kill test
-      re-run against the container. The HTTP `StatusSource` meets FORKS
-      F42: redirects off · resolve A/AAAA and refuse non-global addresses at
-      connect time · injected egress-guarded client · response capped at
-      `MAX_STATUS_LIST_BYTES` · at most `MAX_STATUS_COPIES` copies returned.
-      The `DidResolver` reads rotation keys from `/data` in directory order.
+- [ ] **vulpes is a pure ACP library** (FORKS F49, ruled 2026-10-01) — it
+      enforces the ACP; the consumer owns storage, transport and
+      randomness. In order:
+      - [x] `advisories` green on `main` (rustls 0.23.45, chacha20 0.10.2,
+            clear_on_drop allow-listed until `vc` leaves), so the NODE.json
+            migration could land first.
+      - [ ] cut the non-ACP shells — `oauth`, `axum`, `vc`, `broker`, the
+            reqwest `HttpPlcDirectory` (the `PlcDirectory` trait stays).
+      - [ ] cut Postgres — the sqlx stores, `migrations/`, `queries/`,
+            `build.rs`, the testcontainers suite; the F35 reorder-on-read
+            case moves to a minter unit test.
+      - [ ] randomness from the caller — `rng: &mut impl CryptoRngCore` on
+            `SecretVault::seal`, `CustodyKeys::seal{,_current}`,
+            `Minter::mint`; no RNG of vulpes' own left to reach for.
+- [ ] **Talk to a PDS** — re-scoped by F49: vulpes owns the ports
+      (`RepoReader` / `DidResolver` / `StatusSource`, F40; a `RepoWriter`
+      when a writer needs one) and the `$bytes` JSON↔DAG-CBOR boundary
+      they hand across. The jacquard-backed implementations and the Docker
+      PDS test bed are Zurfur's (see "Zurfur consumes the ACP"). F42 binds
+      whoever implements `StatusSource`: redirects off · resolve A/AAAA and
+      refuse non-global addresses at connect time · injected egress-guarded
+      client · response capped at `MAX_STATUS_LIST_BYTES` · at most
+      `MAX_STATUS_COPIES` copies returned. A `DidResolver` reads rotation
+      keys from `/data` in directory order.
 - [x] **`verify_attestation` end-to-end** — the spec's 7 steps as one public
       function (+ mutual-claim verification, retired by F45), over three ports (`RepoReader`,
       `DidResolver`, `StatusSource`; FORKS F40) with the status-list
       artifact (F39) and `TrustPolicy`. Contains the **`kill_test`** —
-      passing against in-memory fakes; it re-runs against the Docker PDS
-      when "Talk to a PDS" lands.
+      passing against in-memory fakes, which is where it stays (F49); the
+      run against a real PDS is Zurfur's integration suite.
       **Ship-gates review 2026-08-21** (security, code, critique) landed:
       judgment before the status fetch + `StatusUri` (SSRF), signed `list`
       identifier on status lists, ownership key control against a
@@ -51,14 +66,9 @@ infrastructure down and every issued vouch still verifies.
       order-independent counterpart search, `BasicPolicy::default()`
       checks revocation — and bounds that status age at 30 days
       (F43, ruled 2026-08-22), which retires the soft/hard freshness dial.
-- [ ] **The first attestor** — email challenge → sign → deliver; Kit's story
-      from the explainer running against the local PDS. Decides the
-      deferred sub-fork (F47): the `list` identifier the reference
-      tooling mints (baked into every signed attestation, so it must
-      outlive hosts).
-- [ ] **Expiry & renewal** — per-kind lifetimes, the auto-renew loop
-      (re-runs diligence), human vouches never auto-renew, the
-      strand-on-attestor-death test.
+- [ ] **Expiry & renewal** — per-kind lifetimes, human vouches never
+      auto-renew, the strand-on-attestor-death test. The auto-renew loop
+      (re-runs diligence) is a service, so it is Zurfur's (F49).
 - [ ] **CCS as attestations** (FORKS F45, ruled 2026-08-22; lanes
       separated by F47, 2026-08-23), in order:
       - [x] delete the relationship path — `Relationship`, `RelKind`,
@@ -103,9 +113,9 @@ infrastructure down and every issued vouch still verifies.
       load-bearing: it is also the answer to self-ownership (F45).
 - [ ] Confluence Ruling Record (49184769): record F45 (CCS is attestations),
       F46 (rotation layout D), F47 (two lanes; claims-only ownership;
-      Rules of Claims) and F48 (four shapes; paired claims; the edge id;
-      witnesses) — they supersede the 2026-08-11
-      `owns ↔ ownedBy + keys` shape.
+      Rules of Claims), F48 (four shapes; paired claims; the edge id;
+      witnesses) and F49 (pure ACP library) — F45–F48 supersede the
+      2026-08-11 `owns ↔ ownedBy + keys` shape.
 
 ## Later (in rough order)
 
@@ -116,13 +126,20 @@ infrastructure down and every issued vouch still verifies.
   ticket (ZMVP, FORKS F9) and characters-on-ATProto (ZMVP-197). Includes
   the ownership pattern (F47): verify the ownership attestation — the
   whole verdict — with `acp::custody` as due diligence where stakes
-  demand it.
+  demand it. Since F49 it also carries what a library can't: the
+  jacquard-backed ports and the Docker PDS test bed (the kill test re-run
+  against a real PDS); **the first attestor** — email challenge → sign →
+  deliver, Kit's story end to end — which decides the deferred sub-fork
+  (F47): the `list` identifier the reference tooling mints (baked into
+  every signed attestation, so it must outlive hosts); and the auto-renew
+  loop.
 - **PLC-log watcher** (Zurfur-side) — alert a user to any operation on
   their DID they did not initiate, inside the 72 h window. The window is
   did:plc's; detection is the lever (F46).
 - **The private lane** — holder-held VC/OID4VP for claims whose existence is
   private; Path A (BBS) vs Path B (SD-JWT-VC) decided then. The old VUL-2
-  scaffolding re-scopes here.
+  scaffolding (`vc`, `broker`) was removed by F49; the lane starts from its
+  ruling, not from that wrap.
 - **Active + permanent vouch modes** — additive; taxonomy parked on The
   Claims Model page.
 - **Announcement** — the manifesto ships publicly once the reference
