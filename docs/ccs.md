@@ -22,15 +22,15 @@ with the counterpart as attestor — nothing else is added.
 1. **A consensual claim exists iff the counterpart has answered it** — in
    one of two shapes (FORKS F48). **Paired** (recommended): each party
    writes an ordinary ACP self-claim of the same `kind` in its *own* repo,
-   naming the other as `subject` with its own `role`, and the two halves
-   share an edge `id` computed from the two DIDs, the agreed `expiresAt`
-   and a shared `nonce`; consent is the other half existing. **Asymmetric**
-   (still valid): one party claims, the counterpart signs an ordinary ACP
-   attestation of that claim, stored in the claimant's repo. An unanswered
-   claim is a mere claim, not a relationship. Third parties may attest
-   either half, or sign it as a **witness** (an embedded signature on the
-   half itself — a notary, never required); the verifier's trust policy
-   decides whose signature counts.
+   naming the other in the payload's `did` with its own `role`, and the two
+   halves share an edge `id` computed from the two DIDs, the agreed
+   `expiresAt` and a shared `nonce`; consent is the other half existing.
+   **Asymmetric** (still valid): one party claims, the counterpart signs an
+   ordinary ACP attestation of that claim, stored in the claimant's repo.
+   An unanswered claim is a mere claim, not a relationship. Third parties
+   may attest either half, or sign it as a **witness** (an embedded
+   signature on the half itself — a notary, never required); the verifier's
+   trust policy decides whose signature counts.
 2. **One kind, two roles; authority is partitioned by role.** Both sides
    of a relationship use the *same* kind and say which side they are in the
    payload's `role` — never an `owns`/`ownedBy` pair of kinds. Each side's
@@ -82,8 +82,8 @@ with the counterpart as attestor — nothing else is added.
 A consumer accepts a consensual claim of kind *K* between A and B iff
 **either**:
 
-- *paired* — A's repo holds a valid claim of kind *K* with `subject` B and
-  A's `role`, B's repo holds one with `subject` A and B's `role`, the two
+- *paired* — A's repo holds a valid claim of kind *K* with `did` B and
+  A's `role`, B's repo holds one with `did` A and B's `role`, the two
   `id`s are equal and recompute, and both are **in force** per
   `docs/acp.md` §Verification (canonical bytes, `claimant` = repo, expiry,
   status); **or**
@@ -118,8 +118,8 @@ differ only in `role`. The seeds:
 
 | kind | roles | who claims | who attests (asymmetric) | consumer rule |
 |---|---|---|---|---|
-| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | **paired** (F48): the owner writes `{role: owner, subject: <character>}`; the character writes `{role: owned, subject: <owner>}` | — (the pair is the consent; asymmetric still accepted) | at most **one** in force per character (F47); more is a conflict state. N humans behind an account-owned character = N `owner` halves; transfer = sever + new term (new `id`). |
-| `net.got-paws.acp.relationship.membership` | `member` / `account` | paired: the member `{role: member, subject: <account>}`; the account `{role: account, subject: <member>, grant: …}` | — | a consumer reads the grant only from the account's half. |
+| `net.got-paws.acp.relationship.ownership` | `owner` / `owned` | **paired** (F48): the owner writes `{role: owner, did: <character>}`; the character writes `{role: owned, did: <owner>}` | — (the pair is the consent; asymmetric still accepted) | at most **one** in force per character (F47); more is a conflict state. N humans behind an account-owned character = N `owner` halves; transfer = sever + new term (new `id`). |
+| `net.got-paws.acp.relationship.membership` | `member` / `account` | paired: the member `{role: member, did: <account>}`; the account `{role: account, did: <member>, grant: …}` | — | a consumer reads the grant only from the account's half. |
 | `app.zurfur.acp.identity.character` | — | the character DID | Zurfur | Zurfur's kind, not ACP's: "this DID is a character". |
 
 The identity kinds (`net.got-paws.acp.identity.email`, `….externalAccount`)

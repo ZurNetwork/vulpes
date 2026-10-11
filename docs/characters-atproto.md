@@ -67,10 +67,11 @@
 
 Lifecycle:
 
-1. **Create public character** — mint did:plc (layout D), PDS account,
-   profile records, the owner's `ownership` claim and the character's attestation
-   of it. Fully atproto-native; vulpes is just the toolkit (minting,
-   custody, attestation).
+1. **Create public character** — Zurfur mints the did:plc with its own
+   minter (`[owner, pds, zurfur]`, above), then the PDS account, profile
+   records, the owner's `ownership` claim and the character's attestation
+   of it. Fully atproto-native; vulpes is just the toolkit (the claim
+   halves, their checks and the custody read).
 2. **Create private character** — Index row. Zero ATProto footprint.
 3. **Publicize** — consent gate → flow 1 → Index links the DID.
 4. **De-publicize** — teardown per the ruling above.
@@ -151,8 +152,8 @@ is parked with it.
 ## Kill tests
 
 - **vulpes vanishes**: every claim still verifies (see `docs/ccs.md`);
-  accounts on layout D lose their recovery net at index 1 until they add
-  another, and nothing else.
+  vulpes holds no key on any Zurfur-minted DID — none is on layout D — so
+  nothing at all is lost.
 - **Zurfur also vanishes**: DIDs persist (PLC directory); repos on other
   PDSes untouched; public data survives via relays and renders in any other
   AppView. Zurfur-hosted accounts re-point their DIDs elsewhere (senior-key
