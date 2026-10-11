@@ -2,8 +2,11 @@
 
 > Zurfur characters become first-class ATProto subjects, with ownership
 > expressed through the Consensual Claims System (`docs/ccs.md`).
-> **Post-alpha roadmap.** Recorded here because the design fell out of the
-> vulpes pivot and validates it.
+> **Alpha** (amended 2026-09-12, Engineer): the PDS half ships in the alpha
+> for public Characters, and Accounts get repos too. Zurfur mints first with
+> its own minter; the repo attaches afterwards. First repo content at
+> publicize is the CCS `owned` half alone — art records follow the Gallery.
+> This file is the source of record for Zurfur DD 54427650.
 
 ## The rulings
 
@@ -32,10 +35,16 @@
   log is the free, native provenance chain. **72h finality rule:** did:plc's recovery window
   lets a senior old key undo a rotation for ~72 hours, so sales/transfers are
   final only after the window closes (escrow or hold).
-- **Co-ownership** = multiple priority-ordered rotation keys + an
-  `ownership` claim from each co-owner, each attested by the character. Key priority
-  implies seniority — co-owners must understand that; each must sit above
-  the custodian to count.
+- **One ownership edge per character, always character ↔ user** (amended
+  2026-09-12, Engineer; supersedes the co-owner-claims shape). Ownership has
+  two lanes, the F47 split: **administrative** — who holds a rotation key,
+  never rendered; **semantic** — the claims, which are what renders. The
+  character's `owned` half names a **user** DID, never an account.
+  **Co-ownership is not expressed in claims.** A shared character puts the
+  **account** in the owner slot of the rotation list as administrative
+  custodian, while the claims keep pointing at the real owning user. Key
+  priority still implies seniority, and the owner must sit above the
+  custodian to count.
 - **Publicize = consent-gated one-way door.** Index → ATProto (mint DID,
   publish, link). The PLC log is append-only and public history may be
   archived; accepted.
@@ -46,17 +55,23 @@
 - **Senior-key rule + CAR export (HARD REQUIREMENTS)**: every Zurfur-hosted
   account (characters included) — the owner holds an equal-or-senior rotation
   key; routine CAR export/mirroring so restore-elsewhere is a real path.
-  Minted layout is D, `[user_cold, vulpes_recovery, zurfur_operational]`,
-  the user's key generated client-side (FORKS F46).
+  The user's key is generated client-side (FORKS F46). vulpes's own
+  `MintPolicy` default stays layout D (Engineer, 2026-09-13); Zurfur mints
+  its hosted repos as `[owner, pds, zurfur]` — `vulpes_recovery` is dropped
+  because a stateless crate holding no keys cannot hold index 1. Where
+  Zurfur also operates the PDS, that is a **one-operator list**, not layout
+  D: one breach reaches both custodian keys. The owner stays senior either
+  way, so the senior-key rule and recovery-against-the-custodian hold.
 
 ## The validated flows (13)
 
 Lifecycle:
 
-1. **Create public character** — mint did:plc (layout D), PDS account,
-   profile records, the owner's `ownership` claim and the character's attestation
-   of it. Fully atproto-native; vulpes is just the toolkit (minting,
-   custody, attestation).
+1. **Create public character** — Zurfur mints the did:plc with its own
+   minter (`[owner, pds, zurfur]`, above), then the PDS account, profile
+   records, the owner's `ownership` claim and the character's attestation
+   of it. Fully atproto-native; vulpes is just the toolkit (the claim
+   halves, their checks and the custody read).
 2. **Create private character** — Index row. Zero ATProto footprint.
 3. **Publicize** — consent gate → flow 1 → Index links the DID.
 4. **De-publicize** — teardown per the ruling above.
@@ -67,8 +82,9 @@ Ownership operations:
    sharpest finding: a scam seller could otherwise reclaim via the recovery
    window). The window is did:plc's; the defense against a silent hostile
    rotation is a PLC-log watcher that alerts the owner (Zurfur roadmap).
-6. **Co-ownership** — multiple rotation keys + per-owner claims, each
-   attested by the character.
+6. **Shared characters** — an administrative arrangement, not a claims one:
+   the account takes the owner slot in the rotation list; the ownership edge
+   stays character ↔ user and renders that user alone.
 7. **Key loss** — custodied: the custodian's recovery flow (bounded by the
    senior-key rule); self-held: native rotation-window recovery.
 
@@ -136,8 +152,8 @@ is parked with it.
 ## Kill tests
 
 - **vulpes vanishes**: every claim still verifies (see `docs/ccs.md`);
-  accounts on layout D lose their recovery net at index 1 until they add
-  another, and nothing else.
+  vulpes holds no key on any Zurfur-minted DID — none is on layout D — so
+  nothing at all is lost.
 - **Zurfur also vanishes**: DIDs persist (PLC directory); repos on other
   PDSes untouched; public data survives via relays and renders in any other
   AppView. Zurfur-hosted accounts re-point their DIDs elsewhere (senior-key

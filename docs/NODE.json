@@ -40,7 +40,7 @@
     },
     {
       "name": "characters-atproto.md",
-      "role": "characters as ATProto subjects via CCS (ruled 2026-08-11, re-based on F45 2026-08-22)",
+      "role": "characters as ATProto subjects via CCS (ruled 2026-08-11, re-based on F45 2026-08-22, amended 2026-09-12: one ownership edge per character, the PDS half ships in the alpha); source of record for Zurfur DD 54427650",
       "node": false
     },
     {
