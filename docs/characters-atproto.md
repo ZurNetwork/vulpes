@@ -14,22 +14,26 @@
   "character" is a new **in-code identity kind** (NQ3 catalog) —
   `app.zurfur.acp.identity.character`, Zurfur's kind.
 - **Default PUBLIC.** Public characters live on ATProto. **Private characters
-  live in the Index** (Zurfur-internal) with **no ATProto footprint** — the
-  Class A/B boundary applied literally. Private characters need none of the
-  VC/unlinkability machinery.
-- **Characters get a PDS account** — a full repo (ref sheets, bio, art
+  live in the Index** (Zurfur-internal) **in content** — no repo, no published
+  records — but every character, private ones included, mints its did:plc at
+  creation, handle-less (amended 2026-08-30). Private characters need none of
+  the VC machinery; per-character rotation-key material keeps the public PLC
+  log from correlating one owner's characters.
+- **Public characters get a PDS account** — a full repo (ref sheets, bio, art
   records via custom lexicons). Zurfur-hosted by default, **migratable** per
   no-lock-in.
 - **Ownership is atproto-native — no VC needed.** Three facts must agree
-  (FORKS F45; `docs/ccs.md`):
-  1. owner's repo: an `ownership` claim
+  (FORKS F45, F47, F48; `docs/ccs.md`). The first two are the two halves of
+  one paired edge, sharing one edge `id`:
+  1. the owner's repo: the `owner` half — an `ownership` claim
      (`net.got-paws.acp.relationship.ownership`, role `owner`, `did` = the
      character),
-  2. the character's **attestation** of that claim (signed with the
-     character's key, stored beside the claim in the owner's repo),
+  2. the character's repo: the `owned` half — the same kind, role `owned`,
+     `did` = the owning user,
   3. the owner holds a rotation key on the character senior to every
-     custodian's (PLC directory) — checked by the consumer, not the
-     verifier: the attestation proves consent, seniority proves control.
+     custodian's (PLC directory). This fact is administrative and never
+     rendered; the consumer checks it, not the verifier. The two halves
+     prove consent; seniority proves control.
 - **Transfer = PLC key rotation + claim swap** (the new owner's `ownership`
   claim, attested by the character; the old owner's deleted). The PLC
   log is the free, native provenance chain. **72h finality rule:** did:plc's recovery window
@@ -45,13 +49,13 @@
   custodian, while the claims keep pointing at the real owning user. Key
   priority still implies seniority, and the owner must sit above the
   custodian to count.
-- **Publicize = consent-gated one-way door.** Index → ATProto (mint DID,
-  publish, link). The PLC log is append-only and public history may be
-  archived; accepted.
+- **Publicize = consent-gated one-way door.** Index → ATProto (attach the
+  repo to the DID the character has had since creation, publish, link). The
+  PLC log is append-only and public history may be archived; accepted.
 - **De-publicize = teardown, not rollback**: delete the repo records,
   deactivate/tombstone the account, revoke/remove ownership records, **NULL
-  the Index's ATProto pointers**. The character continues internally; the DID
-  husk stays in the PLC log asserting nothing.
+  the Index's ATProto repo pointers**. The character continues internally on
+  its unchanged DID; the DID husk stays in the PLC log asserting nothing.
 - **Senior-key rule + CAR export (HARD REQUIREMENTS)**: every Zurfur-hosted
   account (characters included) — the owner holds an equal-or-senior rotation
   key; routine CAR export/mirroring so restore-elsewhere is a real path.
@@ -68,12 +72,15 @@
 Lifecycle:
 
 1. **Create public character** — Zurfur mints the did:plc with its own
-   minter (`[owner, pds, zurfur]`, above), then the PDS account, profile
-   records, the owner's `ownership` claim and the character's attestation
-   of it. Fully atproto-native; vulpes is just the toolkit (the claim
-   halves, their checks and the custody read).
-2. **Create private character** — Index row. Zero ATProto footprint.
-3. **Publicize** — consent gate → flow 1 → Index links the DID.
+   minter (`[owner, pds, zurfur]`, above), the PDS account attaches to it,
+   and the ownership edge is written as its two halves: the `owned` half in
+   the character's repo, the `owner` half in the owning user's. Fully
+   atproto-native; vulpes is just the toolkit (the claim halves, their
+   checks and the custody read).
+2. **Create private character** — Zurfur mints the handle-less did:plc and
+   writes the Index row. No repo, no published records.
+3. **Publicize** — consent gate → the PDS account attaches to the existing
+   DID and the two halves are written, as in flow 1 → Index links the repo.
 4. **De-publicize** — teardown per the ruling above.
 
 Ownership operations:
@@ -157,6 +164,9 @@ is parked with it.
 - **Zurfur also vanishes**: DIDs persist (PLC directory); repos on other
   PDSes untouched; public data survives via relays and renders in any other
   AppView. Zurfur-hosted accounts re-point their DIDs elsewhere (senior-key
-  rule) and restore from CAR backups. The Index — private characters — dies
-  with its custodian, by definition: private here *means* kept out of the
-  decentralized layer on purpose.
+  rule) and restore from CAR backups. A private character's **content** dies
+  with the Index — nothing of it was ever published — but its **DID and
+  creation timestamp persist in the PLC directory permanently**, an empty
+  identity asserting nothing (amended 2026-08-30; an accepted cost).
+  Per-character key material means the husk cannot be correlated to its
+  owner or its siblings.
