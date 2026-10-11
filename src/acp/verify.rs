@@ -1092,7 +1092,7 @@ mod tests {
         let w = World::new();
         let claim = Claim::new(
             ClaimKind::OWNERSHIP,
-            serde_json::json!({ "subject": mallory().as_str(), "role": "owner" }),
+            serde_json::json!({ "did": mallory().as_str(), "role": "owner" }),
             dt("2026-08-20T09:00:00Z"),
         )
         .unwrap();
